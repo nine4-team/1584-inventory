@@ -1,7 +1,11 @@
-import { Bookmark, Camera, ChevronDown, Edit, Copy } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Bookmark, Camera, ChevronDown, Edit, Copy, Receipt } from 'lucide-react'
 import ContextLink from '@/components/ContextLink'
 import { Item } from '@/types'
 import { normalizeDisposition, dispositionsEqual, displayDispositionLabel, DISPOSITION_OPTIONS } from '@/utils/dispositionUtils'
+import { getTransactionDisplayInfo, getTransactionRoute } from '@/utils/transactionDisplayUtils'
+import { useNavigationContext } from '@/hooks/useNavigationContext'
+import { useAccount } from '@/contexts/AccountContext'
 import type { ItemDisposition } from '@/types'
 
 interface InventoryItemRowProps {
@@ -41,6 +45,30 @@ export default function InventoryItemRow({
   duplicateCount,
   duplicateIndex
 }: InventoryItemRowProps) {
+  const { currentAccountId } = useAccount()
+  const { buildContextUrl } = useNavigationContext()
+  const [transactionDisplayInfo, setTransactionDisplayInfo] = useState<{title: string, amount: string} | null>(null)
+  const [transactionRoute, setTransactionRoute] = useState<{path: string, projectId: string | null} | null>(null)
+
+  // Fetch transaction display info and route when component mounts or transactionId changes
+  useEffect(() => {
+    const fetchTransactionData = async () => {
+      if (item.transactionId && currentAccountId) {
+        const [displayInfo, route] = await Promise.all([
+          getTransactionDisplayInfo(currentAccountId, item.transactionId, 20),
+          getTransactionRoute(item.transactionId, currentAccountId, projectId)
+        ])
+        setTransactionDisplayInfo(displayInfo)
+        setTransactionRoute(route)
+      } else {
+        setTransactionDisplayInfo(null)
+        setTransactionRoute(null)
+      }
+    }
+
+    fetchTransactionData()
+  }, [item.transactionId, currentAccountId, projectId])
+
   const formatCurrency = (amount?: string | number | null) => {
     const value =
       typeof amount === 'number'
@@ -179,15 +207,21 @@ export default function InventoryItemRow({
                 {priceLabel && (
                   <span className="text-sm text-gray-500">
                     {priceLabel}
-                    {hasNonEmptyMoneyString(item.taxAmountPurchasePrice) && (
-                      <>
-                        {' • Tax: '}
-                        {formatCurrency(item.taxAmountPurchasePrice)}
-                      </>
-                    )}
                   </span>
                 )}
-                {!priceLabel && item.source && (
+                {transactionDisplayInfo && (
+                  <span className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors ml-2">
+                    <Receipt className="h-3 w-3 mr-1" />
+                    <ContextLink
+                      to={transactionRoute ? buildContextUrl(transactionRoute.path, transactionRoute.projectId ? { project: transactionRoute.projectId } : undefined) : ''}
+                      className="hover:underline font-medium"
+                      title={`View transaction: ${transactionDisplayInfo.title}`}
+                    >
+                      {transactionDisplayInfo.title} {transactionDisplayInfo.amount}
+                    </ContextLink>
+                  </span>
+                )}
+                {!priceLabel && !transactionDisplayInfo && item.source && (
                   <span className="text-sm text-gray-500">{item.source}</span>
                 )}
               </div>
@@ -220,6 +254,7 @@ export default function InventoryItemRow({
                   <span className="font-medium">Notes:</span> {item.notes}
                 </div>
               )}
+
             </div>
           </ContextLink>
 

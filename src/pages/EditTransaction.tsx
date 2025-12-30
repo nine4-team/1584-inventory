@@ -98,6 +98,7 @@ export default function EditTransaction() {
   const [isLoading, setIsLoading] = useState(true)
   const [isUploadingImages, setIsUploadingImages] = useState(false)
   const [existingOtherImages, setExistingOtherImages] = useState<TransactionImage[]>([])
+  const [existingReceiptImages, setExistingReceiptImages] = useState<TransactionImage[]>([])
 
   // Transaction items state
   const [items, setItems] = useState<TransactionItemFormData[]>([])
@@ -213,6 +214,9 @@ export default function EditTransaction() {
 
           const otherImages = transaction.otherImages || []
           setExistingOtherImages(Array.isArray(otherImages) ? otherImages : [])
+
+          const receiptImages = transaction.receiptImages || []
+          setExistingReceiptImages(Array.isArray(receiptImages) ? receiptImages : [])
 
           // Load transaction items
           try {
@@ -457,11 +461,39 @@ export default function EditTransaction() {
         otherImages = existingOtherImages
       }
 
+      // Upload receipt images
+      let receiptImages: TransactionImage[] = [...existingReceiptImages]
+      if (formData.receiptImages && formData.receiptImages.length > 0) {
+        try {
+          const uploadResults = await ImageUploadService.uploadMultipleReceiptAttachments(
+            formData.receiptImages,
+            projectName,
+            transactionId,
+            handleImageUploadProgress
+          )
+
+          // Convert to TransactionImage format and combine with existing images
+          const newReceiptImages = ImageUploadService.convertFilesToReceiptImages(uploadResults)
+          receiptImages = [...existingReceiptImages, ...newReceiptImages]
+        } catch (error) {
+          console.error('Error uploading receipt images:', error)
+          setErrors({ receiptImages: 'Failed to upload receipt images. Please try again.' })
+          setIsSubmitting(false)
+          setIsUploadingImages(false)
+          return
+        }
+      } else {
+        // Use existing images if no new ones uploaded
+        receiptImages = existingReceiptImages
+      }
+
       // Update transaction with new data and images
-      const { otherImages: _, receiptImages: __, transactionImages: ___, ...formDataWithoutImages } = formData
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { transactionImages: _transactionImages, otherImages: _formOtherImages, receiptImages: _formReceiptImages, ...formDataWithoutImages } = formData
       const updateData = {
         ...formDataWithoutImages,
         otherImages: otherImages,
+        receiptImages: receiptImages,
         // Include tax fields only when a tax rate preset is explicitly selected.
         ...(taxRatePreset ? { taxRatePreset: taxRatePreset, subtotal: taxRatePreset === 'Other' ? subtotal : '' } : { subtotal: '' })
       }
@@ -519,6 +551,14 @@ export default function EditTransaction() {
     }
   }
 
+
+  const handleReceiptImagesChange = (files: File[]) => {
+    setFormData(prev => ({ ...prev, receiptImages: files }))
+    // Clear any existing image errors
+    if (errors.receiptImages) {
+      setErrors(prev => ({ ...prev, receiptImages: undefined }))
+    }
+  }
 
   const handleImageUploadProgress = (fileIndex: number, progress: UploadProgress) => {
     // Progress tracking removed to fix TypeScript errors
@@ -1024,6 +1064,24 @@ export default function EditTransaction() {
             />
             {errors.items && (
               <p className="mt-1 text-sm text-red-600">{errors.items}</p>
+            )}
+          </div>
+
+          {/* Receipts */}
+          <div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">
+              Receipts
+            </h3>
+            <ImageUpload
+              onImagesChange={handleReceiptImagesChange}
+              maxImages={5}
+              maxFileSize={10}
+              acceptedTypes={['image/jpeg','image/jpg','image/png','image/gif','image/webp','image/heic','image/heif','application/pdf']}
+              disabled={isSubmitting || isUploadingImages}
+              className="mb-2"
+            />
+            {errors.receiptImages && (
+              <p className="mt-1 text-sm text-red-600">{errors.receiptImages}</p>
             )}
           </div>
 

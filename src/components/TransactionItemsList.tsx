@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Edit, X, Plus, GitMerge, ChevronDown } from 'lucide-react'
+import { Edit, X, Plus, GitMerge, ChevronDown, Receipt } from 'lucide-react'
 import { TransactionItemFormData } from '@/types'
 import TransactionItemForm from './TransactionItemForm'
 import { normalizeMoneyToTwoDecimalString } from '@/utils/money'
@@ -7,7 +7,10 @@ import { getTransactionFormGroupKey } from '@/utils/itemGrouping'
 import CollapsedDuplicateGroup from './ui/CollapsedDuplicateGroup'
 import { normalizeDisposition, displayDispositionLabel, DISPOSITION_OPTIONS, dispositionsEqual } from '@/utils/dispositionUtils'
 import { unifiedItemsService, integrationService } from '@/services/inventoryService'
+import { getTransactionDisplayInfo, getTransactionRoute } from '@/utils/transactionDisplayUtils'
+import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
+import ContextLink from './ContextLink'
 import type { ItemDisposition } from '@/types'
 
 interface TransactionItemsListProps {
@@ -29,7 +32,10 @@ export default function TransactionItemsList({ items, onItemsChange, projectId, 
   const [mergeMasterId, setMergeMasterId] = useState<string | null>(null)
   const [openDispositionMenu, setOpenDispositionMenu] = useState<string | null>(null)
   const [deletingItemIds, setDeletingItemIds] = useState<Set<string>>(new Set())
+  const [transactionDisplayInfos, setTransactionDisplayInfos] = useState<Map<string, {title: string, amount: string} | null>>(new Map())
+  const [transactionRoutes, setTransactionRoutes] = useState<Map<string, {path: string, projectId: string | null}>>(new Map())
   const { currentAccountId } = useAccount()
+  const { buildContextUrl } = useNavigationContext()
 
   useEffect(() => {
     setSelectedItemIds(prev => {
@@ -55,6 +61,47 @@ export default function TransactionItemsList({ items, onItemsChange, projectId, 
       document.removeEventListener('mousedown', handleClickOutside)
     }
   }, [])
+
+  // Fetch transaction display texts and links for all items
+  useEffect(() => {
+    const fetchTransactionData = async () => {
+      if (!currentAccountId) return
+
+      const newDisplayTexts = new Map<string, string | null>()
+      const newLinks = new Map<string, string>()
+
+      // Process items that have transactionIds
+      const itemsWithTransactionIds = items.filter(item => item.transactionId)
+
+      // Fetch display infos and routes in parallel
+      const promises = itemsWithTransactionIds.map(async (item) => {
+        const [displayInfo, route] = await Promise.all([
+          getTransactionDisplayInfo(currentAccountId, item.transactionId, 20),
+          getTransactionRoute(item.transactionId, currentAccountId, projectId)
+        ])
+        return { itemId: item.id, displayInfo, route }
+      })
+
+      const results = await Promise.all(promises)
+
+      // Update the maps
+      results.forEach(({ itemId, displayInfo, route }) => {
+        newDisplayTexts.set(itemId, displayInfo)
+        transactionRoutes.set(itemId, route)
+      })
+
+      // Set items without transactionIds to null/empty
+      items.filter(item => !item.transactionId).forEach(item => {
+        newDisplayTexts.set(item.id, null)
+        transactionRoutes.set(item.id, { path: '', projectId: null })
+      })
+
+      setTransactionDisplayInfos(newDisplayTexts)
+      setTransactionRoutes(transactionRoutes)
+    }
+
+    fetchTransactionData()
+  }, [items, currentAccountId, projectId])
 
   const selectedItems = useMemo(
     () => items.filter(item => selectedItemIds.has(item.id)),
@@ -310,13 +357,22 @@ export default function TransactionItemsList({ items, onItemsChange, projectId, 
             </span>
             <span className="text-sm text-gray-500">
               {formatCurrency(item.projectPrice || item.purchasePrice || '')}
-              {hasNonEmptyMoneyString(item.taxAmountPurchasePrice) && (
-                <>
-                  {' • Tax: '}
-                  {formatCurrency(item.taxAmountPurchasePrice as string)}
-                </>
-              )}
             </span>
+            {transactionDisplayInfos.get(item.id) && (
+              <span className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors ml-2">
+                <Receipt className="h-3 w-3 mr-1" />
+                <ContextLink
+                  to={buildContextUrl(
+                    transactionRoutes.get(item.id)!.path,
+                    transactionRoutes.get(item.id)!.projectId ? { project: transactionRoutes.get(item.id)!.projectId! } : undefined
+                  )}
+                  className="hover:underline font-medium"
+                  title={`View transaction: ${transactionDisplayInfos.get(item.id)?.title}`}
+                >
+                  {transactionDisplayInfos.get(item.id)?.title} {transactionDisplayInfos.get(item.id)?.amount}
+                </ContextLink>
+              </span>
+            )}
           </div>
 
           <h4 className="text-sm font-medium text-gray-900 mb-1">
@@ -341,6 +397,7 @@ export default function TransactionItemsList({ items, onItemsChange, projectId, 
               <span className="font-medium">Notes:</span> {item.notes}
             </div>
           )}
+
         </div>
 
         <div className="flex items-center space-x-2 ml-auto">
@@ -586,28 +643,6 @@ export default function TransactionItemsList({ items, onItemsChange, projectId, 
                           <span className="text-xs text-gray-400">
                             {' ('}{formatCurrency((totalProjectPrice / groupItems.length).toString())}{' each)'}
                           </span>
-                        )}
-                        {hasAnyTaxPurchase && totalTaxPurchase > 0 && (
-                          <>
-                            {' • Tax: '}
-                            {formatCurrency(totalTaxPurchase.toString())}
-                            {totalTaxPurchase !== (parseFloat(firstItem.taxAmountPurchasePrice || '0') || 0) && (
-                              <span className="text-xs text-gray-400">
-                                {' ('}{formatCurrency((totalTaxPurchase / groupItems.length).toString())}{' each)'}
-                              </span>
-                            )}
-                          </>
-                        )}
-                        {hasAnyTaxProject && totalTaxProject > 0 && !hasAnyTaxPurchase && (
-                          <>
-                            {' • Tax: '}
-                            {formatCurrency(totalTaxProject.toString())}
-                            {totalTaxProject !== (parseFloat(firstItem.taxAmountProjectPrice || '0') || 0) && (
-                              <span className="text-xs text-gray-400">
-                                {' ('}{formatCurrency((totalTaxProject / groupItems.length).toString())}{' each)'}
-                              </span>
-                            )}
-                          </>
                         )}
                       </span>
                     </div>

@@ -707,16 +707,6 @@ export default function InventoryList({ projectId, projectName, items: propItems
                 const hasAnyPrice = groupItems.some(item => getPrimaryPrice(item) !== undefined)
                 const totalPrice = groupItems.reduce((sum, item) => sum + parseMoney(getPrimaryPrice(item)), 0)
                 const firstItemPrice = parseMoney(getPrimaryPrice(firstItem))
-                const hasAnyTaxPurchase = groupItems.some(item => hasNonEmptyMoneyString(item.taxAmountPurchasePrice))
-                const hasAnyTaxProject = groupItems.some(item => hasNonEmptyMoneyString(item.taxAmountProjectPrice))
-                const totalTaxPurchase = groupItems.reduce(
-                  (sum, item) => sum + parseMoney(item.taxAmountPurchasePrice as string | number | null),
-                  0
-                )
-                const totalTaxProject = groupItems.reduce(
-                  (sum, item) => sum + parseMoney(item.taxAmountProjectPrice as string | number | null),
-                  0
-                )
 
                 return (
                   <li key={groupKey} className="relative">
@@ -760,28 +750,6 @@ export default function InventoryList({ projectId, projectName, items: propItems
                                     <span className="text-xs text-gray-400">
                                       {' ('}{formatCurrency(totalPrice / groupItems.length)} each)
                                     </span>
-                                  )}
-                                  {hasAnyTaxPurchase && totalTaxPurchase > 0 && (
-                                    <>
-                                      {' • Tax: '}
-                                      {formatCurrency(totalTaxPurchase)}
-                                      {groupItems.length > 1 && (
-                                        <span className="text-xs text-gray-400">
-                                          {' ('}{formatCurrency(totalTaxPurchase / groupItems.length)} each)
-                                        </span>
-                                      )}
-                                    </>
-                                  )}
-                                  {!hasAnyTaxPurchase && hasAnyTaxProject && totalTaxProject > 0 && (
-                                    <>
-                                      {' • Tax: '}
-                                      {formatCurrency(totalTaxProject)}
-                                      {groupItems.length > 1 && (
-                                        <span className="text-xs text-gray-400">
-                                          {' ('}{formatCurrency(totalTaxProject / groupItems.length)} each)
-                                        </span>
-                                      )}
-                                    </>
                                   )}
                                 </span>
                               )}
