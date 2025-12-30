@@ -1041,7 +1041,7 @@ export const transactionService = {
             throw new Error('Subtotal cannot exceed the total amount.')
           }
           const rate = ((amountNum - subtotalNum) / subtotalNum) * 100
-          dbTransaction.tax_rate_pct = Math.round(rate * 10000) / 10000 // 4 decimal places
+          dbTransaction.tax_rate_pct = rate
         } else {
           // Look up preset by ID
           const preset = await getTaxPresetById(accountId, dbTransaction.tax_rate_preset)
@@ -1148,7 +1148,7 @@ export const transactionService = {
         const subtotalVal = finalUpdates.subtotal !== undefined ? parseFloat(finalUpdates.subtotal) : parseFloat(existingData?.subtotal || '0')
         if (!isNaN(amountVal) && !isNaN(subtotalVal) && subtotalVal > 0 && amountVal >= subtotalVal) {
           const rate = ((amountVal - subtotalVal) / subtotalVal) * 100
-          finalUpdates.taxRatePct = Math.round(rate * 10000) / 10000
+          finalUpdates.taxRatePct = rate
         }
       } else {
         // Look up preset by ID

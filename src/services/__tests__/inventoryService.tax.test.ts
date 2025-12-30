@@ -95,17 +95,17 @@ describe('Tax System Integration', () => {
   })
 
   describe('Tax Rate Precision', () => {
-    it('should round tax rates to 4 decimal places', () => {
-      // Test the rounding logic used in the service
+    it('should maintain full precision for tax rates', () => {
+      // Test that tax rates maintain full precision without rounding
       const amount = 108.375 // Amount with tax
       const subtotal = 100.00 // Subtotal before tax
       const rate = ((amount - subtotal) / subtotal) * 100
 
-      // Service rounds to 4 decimal places
-      const roundedRate = Math.round(rate * 10000) / 10000
+      // Service should maintain full precision
+      const preciseRate = rate
 
-      expect(roundedRate).toBeCloseTo(8.375, 4)
-      expect(typeof roundedRate).toBe('number')
+      expect(preciseRate).toBeCloseTo(8.375, 4)
+      expect(typeof preciseRate).toBe('number')
     })
   })
 
