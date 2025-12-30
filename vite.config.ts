@@ -17,6 +17,9 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'public',
+      filename: 'sw-custom.js',
       registerType: process.env.NODE_ENV === 'production' ? 'autoUpdate' : null,
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg', 'index.html'],
       manifest: {
@@ -42,27 +45,6 @@ export default defineConfig({
             type: 'image/png',
             purpose: 'maskable any'
           }
-        ]
-      },
-      workbox: {
-        globPatterns: ['index.html', '**/*.{ico,png,svg}'], // Only cache static assets, precache shell
-        // Don't cache app files in service worker - always fetch fresh versions
-        cacheId: `1584-inventory-${timestamp}`,
-        swSrc: 'public/sw-custom.js', // Use custom service worker
-        runtimeCaching: [
-          {
-            urlPattern: /^https:\/\/.*\.supabase\.co\/storage\/v1\/object\/public\/.*/i,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: `supabase-storage-cache-${timestamp}`,
-              expiration: {
-                maxEntries: 100,
-                maxAgeSeconds: 60 * 60 * 24 // 24 hours for images is fine
-              }
-            }
-          },
-          // DON'T cache app files (js, css, html) - always fetch fresh versions
-          // This ensures immediate deployment updates are visible
         ]
       },
       // PWA enabled in both dev and prod for consistent behavior
