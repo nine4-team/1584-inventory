@@ -102,6 +102,19 @@ export class ImageUploadService {
   }
 
   /**
+   * Upload a project main image to Supabase Storage
+   */
+  static async uploadProjectImage(
+    file: File,
+    projectName: string,
+    projectId: string,
+    onProgress?: (progress: UploadProgress) => void,
+    retryCount: number = 0
+  ): Promise<ImageUploadResult> {
+    return this.uploadImageInternal(file, projectName, projectId, 'project-images', onProgress, retryCount)
+  }
+
+  /**
    * Upload business logo to Supabase Storage
    */
   static async uploadBusinessLogo(
@@ -221,7 +234,7 @@ export class ImageUploadService {
     file: File,
     projectName: string,
     id: string,
-    imageType: 'item-images' | 'transaction-images' | 'receipt-images' | 'other-images',
+    imageType: 'item-images' | 'transaction-images' | 'receipt-images' | 'other-images' | 'project-images',
     onProgress?: (progress: UploadProgress) => void,
     retryCount: number = 0
   ): Promise<ImageUploadResult> {
@@ -499,6 +512,151 @@ export class ImageUploadService {
     // Check file size (10MB limit)
     const maxSize = 10 * 1024 * 1024 // 10MB
     return file.size <= maxSize
+  }
+
+  /**
+   * Validate receipt attachment file (images + PDF)
+   *
+   * Note: Receipt attachments are stored in the `receipt-images` bucket for historical reasons.
+   * This validator allows PDFs in addition to standard image formats.
+   */
+  static validateReceiptAttachmentFile(file: File): boolean {
+    const maxSize = 10 * 1024 * 1024 // 10MB
+    if (file.size > maxSize) return false
+
+    const allowedTypes = [
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/gif',
+      'image/webp',
+      'image/heic',
+      'image/heif',
+      'application/pdf'
+    ]
+
+    if (file.type && allowedTypes.includes(file.type.toLowerCase())) {
+      return true
+    }
+
+    const lowerName = file.name.toLowerCase()
+    const allowedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif', '.pdf']
+    return allowedExtensions.some(ext => lowerName.endsWith(ext))
+  }
+
+  /**
+   * Upload a receipt attachment (PDF or image) to Supabase Storage.
+   *
+   * This differs from `uploadReceiptImage` in that it does NOT enforce image-only validation,
+   * enabling PDF invoice uploads (e.g., Wayfair invoice imports).
+   */
+  static async uploadReceiptAttachment(
+    file: File,
+    projectName: string,
+    transactionId: string,
+    onProgress?: (progress: UploadProgress) => void,
+    retryCount: number = 0
+  ): Promise<ImageUploadResult> {
+    const MAX_RETRIES = 3
+
+    console.log(`Receipt attachment upload attempt ${retryCount + 1}/${MAX_RETRIES + 1}`)
+
+    await this.ensureAuthentication()
+
+    const isStorageAvailable = await this.checkStorageAvailability()
+    if (!isStorageAvailable) {
+      throw new Error('Storage service is not available. Please check your connection and try again.')
+    }
+
+    if (!this.validateReceiptAttachmentFile(file)) {
+      throw new Error('Invalid receipt attachment. Please upload a PDF or image under 10MB.')
+    }
+
+    const timestamp = Date.now()
+    const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
+    const sanitizedProjectName = projectName.replace(/[^a-zA-Z0-9-]/g, '_')
+    const dateTime = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -1)
+
+    // Store under a dedicated folder within the bucket for clarity.
+    const fileName = `${sanitizedProjectName}/receipt-attachments/${dateTime}/${timestamp}_${sanitizedFileName}`
+
+    try {
+      const { data, error } = await supabase.storage
+        .from('receipt-images')
+        .upload(fileName, file, {
+          cacheControl: '3600',
+          upsert: false
+        })
+
+      if (error) throw error
+
+      const uploadedPath = data?.path || fileName
+
+      if (onProgress) {
+        onProgress({ loaded: file.size, total: file.size, percentage: 100 })
+      }
+
+      const { data: urlData } = supabase.storage
+        .from('receipt-images')
+        .getPublicUrl(uploadedPath)
+
+      if (!urlData?.publicUrl) {
+        throw new Error('Failed to get public URL for uploaded file')
+      }
+
+      return {
+        url: urlData.publicUrl,
+        fileName: uploadedPath,
+        size: file.size,
+        mimeType: file.type || 'application/octet-stream'
+      }
+    } catch (error: any) {
+      if (retryCount < MAX_RETRIES) {
+        console.log(`Retrying receipt attachment upload (attempt ${retryCount + 2}/${MAX_RETRIES + 1})...`)
+        await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)))
+        return this.uploadReceiptAttachment(file, projectName, transactionId, onProgress, retryCount + 1)
+      }
+
+      const friendlyMessage = getUserFriendlyErrorMessage(error)
+      throw new ImageUploadError(friendlyMessage, error.code, error)
+    }
+  }
+
+  /**
+   * Upload multiple receipt attachments (images + PDFs).
+   *
+   * - Images go through the existing image pipeline (compression/HEIC conversion).
+   * - PDFs (and other non-image receipt attachments) are uploaded as-is.
+   */
+  static async uploadMultipleReceiptAttachments(
+    files: File[],
+    projectName: string,
+    transactionId: string,
+    onProgress?: (fileIndex: number, progress: UploadProgress) => void
+  ): Promise<ImageUploadResult[]> {
+    const results: ImageUploadResult[] = []
+
+    const isPdfFile = (file: File) => {
+      const mime = (file.type || '').toLowerCase()
+      if (mime === 'application/pdf' || mime.includes('pdf')) return true
+      return file.name.toLowerCase().endsWith('.pdf')
+    }
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      try {
+        const result = isPdfFile(file)
+          ? await this.uploadReceiptAttachment(file, projectName, transactionId, onProgress ? (p) => onProgress(i, p) : undefined)
+          : await this.uploadReceiptImage(file, projectName, transactionId, onProgress ? (p) => onProgress(i, p) : undefined)
+
+        results.push(result)
+      } catch (error) {
+        console.error(`Error uploading receipt attachment ${i + 1}:`, error)
+        throw error
+      }
+    }
+
+    return results
   }
 
   /**

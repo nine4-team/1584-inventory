@@ -184,7 +184,7 @@ export const createMockItem = (overrides?: Partial<any>) => ({
   projectPrice: '150.00',
   marketValue: '120.00',
   paymentMethod: 'Credit Card',
-  disposition: 'Available',
+  disposition: 'purchased',
   notes: 'Test notes',
   space: 'Living Room',
   qrKey: 'test-qr-key',
@@ -194,7 +194,6 @@ export const createMockItem = (overrides?: Partial<any>) => ({
   lastUpdated: new Date().toISOString(),
   images: [],
   taxRatePct: 8.375,
-  taxAmount: '8.38',
   ...overrides
 })
 
@@ -214,7 +213,6 @@ export const createMockTransaction = (overrides?: Partial<any>) => ({
   taxState: 'NV',
   subtotal: '92.38',
   taxRatePct: 8.25,
-  taxAmount: '7.62',
   reimbursementType: CLIENT_OWES_COMPANY,
   status: 'pending',
   notes: 'Test transaction',

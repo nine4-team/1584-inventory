@@ -9,6 +9,7 @@ import { useAccount } from '@/contexts/AccountContext'
 import ProjectForm from '@/components/ProjectForm'
 import BudgetProgress from '@/components/ui/BudgetProgress'
 import ContextLink from '@/components/ContextLink'
+import { projectItems } from '@/utils/routes'
 
 export default function Projects() {
   const { buildContextUrl } = useNavigationContext()
@@ -107,7 +108,7 @@ export default function Projects() {
     }
   }, [currentAccountId, accountLoading])
 
-  const handleCreateProject = async (projectData: any) => {
+  const handleCreateProject = async (projectData: any): Promise<string> => {
     if (!user?.email) {
       throw new Error('User must be authenticated to create projects')
     }
@@ -116,12 +117,17 @@ export default function Projects() {
     }
 
     try {
-      await projectService.createProject(currentAccountId, {
+      const projectId = await projectService.createProject(currentAccountId, {
         ...projectData,
         createdBy: user.id
       })
+      
+      // Handle image upload if imageFile is provided (stored in formData)
+      // Note: Image upload for new projects is handled in ProjectForm after creation
+      
       // The subscription will handle the update
       setShowCreateForm(false)
+      return projectId
     } catch (error) {
       console.error('Error creating project:', error)
       throw error // Let the form handle the error
@@ -221,12 +227,22 @@ export default function Projects() {
       ) : (
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {projects.map((project) => (
-            <div key={project.id} className="bg-white shadow rounded-lg border border-gray-200">
+            <div key={project.id} className="bg-white shadow rounded-lg border border-gray-200 overflow-hidden">
+              {/* Project Image */}
+              {project.mainImageUrl && (
+                <div className="w-full h-48 bg-gray-200 overflow-hidden">
+                  <img
+                    src={project.mainImageUrl}
+                    alt={project.name}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              )}
               <div className="p-6">
                 {/* Project Header */}
                 <div className="flex items-center justify-between">
                   <div className="flex items-center">
-                    <FolderOpen className="h-8 w-8 text-primary-600 mr-3" />
+                    <FolderOpen className={`h-8 w-8 text-primary-600 mr-3 ${project.mainImageUrl ? 'mt-2' : ''}`} />
                     <h3 className="text-lg font-semibold text-gray-900">
                       {project.name}
                     </h3>
@@ -257,7 +273,7 @@ export default function Projects() {
                 {/* Action Button */}
                 <div className="flex justify-center">
                   <ContextLink
-                    to={buildContextUrl(`/project/${project.id}`)}
+                    to={buildContextUrl(projectItems(project.id))}
                     className="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
                   >
                     <FolderOpen className="h-4 w-4 mr-2" />

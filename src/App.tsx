@@ -1,78 +1,196 @@
 import { Routes, Route } from 'react-router-dom'
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, ReactNode, useEffect } from 'react'
 import Layout from './components/layout/Layout'
 import LoadingSpinner from './components/ui/LoadingSpinner'
 import { ToastProvider } from './components/ui/ToastContext'
 import { AccountProvider } from './contexts/AccountContext'
 import { BusinessProfileProvider } from './contexts/BusinessProfileContext'
 import ProtectedRoute from './components/auth/ProtectedRoute'
+import { NetworkStatus } from './components/NetworkStatus'
+import { SyncStatus } from './components/SyncStatus'
+import { offlineStore } from './services/offlineStore'
+import { operationQueue } from './services/operationQueue'
+
+const withRouteSuspense = (element: ReactNode, fallback?: ReactNode) => (
+  <Suspense fallback={fallback ?? <LoadingSpinner />}>{element}</Suspense>
+)
 
 function App() {
-  // No longer initializing anonymous authentication
-  // Users must explicitly sign in with Google for security
+  useEffect(() => {
+    // Initialize offline store and operation queue on app startup
+    const initOfflineServices = async () => {
+      try {
+        await offlineStore.init()
+        console.log('Offline store initialized')
+
+        await operationQueue.init()
+        console.log('Operation queue initialized')
+      } catch (error) {
+        console.error('Failed to initialize offline services:', error)
+      }
+    }
+
+    initOfflineServices()
+  }, [])
 
   return (
-      <AccountProvider>
-        <BusinessProfileProvider>
-          <ToastProvider>
-            <Suspense fallback={<LoadingSpinner />}>
-              <Routes>
-                {/* Public routes */}
-                <Route path="/auth/callback" element={<AuthCallback />} />
-                <Route path="/invite/:token" element={<InviteAccept />} />
-                
-                {/* Protected routes */}
-                <Route path="*" element={
-                  <ProtectedRoute>
-                    <Layout>
-                      <Routes>
-                        <Route path="/" element={<Projects />} />
-                        <Route path="/projects" element={<Projects />} />
-                        <Route path="/settings" element={<Settings />} />
-                        <Route path="/item/:id" element={<ItemDetail />} />
-                        <Route path="/project/:id" element={<ProjectDetail />} />
-                        <Route path="/project/:id/invoice" element={<ProjectInvoice />} />
-                        <Route path="/project/:id/property-management-summary" element={<PropertyManagementSummary />} />
-                        <Route path="/project/:id/client-summary" element={<ClientSummary />} />
-                        <Route path="/project/:id/item/:itemId" element={<ItemDetail />} />
-                        <Route path="/project/:id/item/add" element={<AddItem />} />
-                        <Route path="/project/:id/edit-item/:itemId" element={<EditItem />} />
-                        <Route path="/project/:id/transaction/add" element={<AddTransaction />} />
-                        <Route path="/project/:id/transaction/:transactionId/edit" element={<EditTransaction />} />
-                        <Route path="/project/:id/transaction/:transactionId" element={<TransactionDetail />} />
+    <AccountProvider>
+      <BusinessProfileProvider>
+        <ToastProvider>
+          <NetworkStatus />
+          <SyncStatus />
+          <Routes>
+            <Route path="/auth/callback" element={withRouteSuspense(<AuthCallback />)} />
+            <Route path="/invite/:token" element={withRouteSuspense(<InviteAccept />)} />
 
-                        {/* Business Inventory Routes */}
-                        <Route path="/business-inventory" element={<BusinessInventory />} />
-                        <Route path="/business-inventory/add" element={<AddBusinessInventoryItem />} />
-                        <Route path="/business-inventory/:id" element={<BusinessInventoryItemDetail />} />
-                        <Route path="/business-inventory/:id/edit" element={<EditBusinessInventoryItem />} />
-                        <Route path="/business-inventory/transaction/add" element={<AddBusinessInventoryTransaction />} />
-                        <Route path="/business-inventory/transaction/:transactionId" element={<TransactionDetail />} />
-                        <Route path="/business-inventory/transaction/:projectId/:transactionId/edit" element={<EditBusinessInventoryTransaction />} />
-                      </Routes>
-                    </Layout>
-                  </ProtectedRoute>
-                } />
-              </Routes>
-            </Suspense>
-          </ToastProvider>
-        </BusinessProfileProvider>
-      </AccountProvider>
+            <Route
+              path="*"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <Routes>
+                      <Route path="/" element={withRouteSuspense(<Projects />)} />
+                      <Route path="/projects" element={withRouteSuspense(<Projects />)} />
+                      <Route path="/settings" element={withRouteSuspense(<Settings />)} />
+                      <Route path="/item/:id" element={withRouteSuspense(<ItemDetail />)} />
+
+                      <Route path="/project/:projectId/*" element={withRouteSuspense(<ProjectLayout />)}>
+                        <Route index element={withRouteSuspense(<ProjectLegacyTabRedirect />)} />
+                        <Route path="items" element={withRouteSuspense(<ProjectItemsPage />)} />
+                        <Route path="transactions" element={withRouteSuspense(<ProjectTransactionsPage />)} />
+                        <Route path="budget" element={withRouteSuspense(<ProjectBudgetPage />)} />
+                      </Route>
+
+                      <Route path="/project/:projectId/invoice" element={withRouteSuspense(<ProjectInvoice />)} />
+                      <Route
+                        path="/project/:projectId/property-management-summary"
+                        element={withRouteSuspense(<PropertyManagementSummary />)}
+                      />
+                      <Route
+                        path="/project/:projectId/client-summary"
+                        element={withRouteSuspense(<ClientSummary />)}
+                      />
+
+                      <Route path="/project/:projectId/items/new" element={withRouteSuspense(<AddItem />)} />
+                      <Route path="/project/:projectId/items/:itemId" element={withRouteSuspense(<ItemDetail />)} />
+                      <Route
+                        path="/project/:projectId/items/:itemId/edit"
+                        element={withRouteSuspense(<EditItem />)}
+                      />
+                      <Route
+                        path="/project/:projectId/transactions/new"
+                        element={withRouteSuspense(<AddTransaction />)}
+                      />
+                      <Route
+                        path="/project/:projectId/transactions/import-wayfair"
+                        element={withRouteSuspense(<ImportWayfairInvoice />)}
+                      />
+                      <Route
+                        path="/project/:projectId/transactions/:transactionId"
+                        element={withRouteSuspense(<TransactionDetail />)}
+                      />
+                      <Route
+                        path="/project/:projectId/transactions/:transactionId/edit"
+                        element={withRouteSuspense(<EditTransaction />)}
+                      />
+
+                      <Route
+                        path="/project/:id/item/:itemId"
+                        element={withRouteSuspense(
+                          <ProjectLegacyEntityRedirect type="item-detail" />
+                        )}
+                      />
+                      <Route
+                        path="/project/:id/item/add"
+                        element={withRouteSuspense(
+                          <ProjectLegacyEntityRedirect type="item-new" />
+                        )}
+                      />
+                      <Route
+                        path="/project/:id/edit-item/:itemId"
+                        element={withRouteSuspense(
+                          <ProjectLegacyEntityRedirect type="item-edit" />
+                        )}
+                      />
+                      <Route
+                        path="/project/:id/transaction/add"
+                        element={withRouteSuspense(
+                          <ProjectLegacyEntityRedirect type="transaction-new" />
+                        )}
+                      />
+                      <Route
+                        path="/project/:id/transaction/import-wayfair"
+                        element={withRouteSuspense(
+                          <ProjectLegacyEntityRedirect type="transaction-import" />
+                        )}
+                      />
+                      <Route
+                        path="/project/:id/transaction/:transactionId/edit"
+                        element={withRouteSuspense(
+                          <ProjectLegacyEntityRedirect type="transaction-edit" />
+                        )}
+                      />
+                      <Route
+                        path="/project/:id/transaction/:transactionId"
+                        element={withRouteSuspense(
+                          <ProjectLegacyEntityRedirect type="transaction-detail" />
+                        )}
+                      />
+
+                      <Route path="/business-inventory" element={withRouteSuspense(<BusinessInventory />)} />
+                      <Route
+                        path="/business-inventory/add"
+                        element={withRouteSuspense(<AddBusinessInventoryItem />)}
+                      />
+                      <Route
+                        path="/business-inventory/:id"
+                        element={withRouteSuspense(<BusinessInventoryItemDetail />)}
+                      />
+                      <Route
+                        path="/business-inventory/:id/edit"
+                        element={withRouteSuspense(<EditBusinessInventoryItem />)}
+                      />
+                      <Route
+                        path="/business-inventory/transaction/add"
+                        element={withRouteSuspense(<AddBusinessInventoryTransaction />)}
+                      />
+                      <Route
+                        path="/business-inventory/transaction/:transactionId"
+                        element={withRouteSuspense(<TransactionDetail />)}
+                      />
+                      <Route
+                        path="/business-inventory/transaction/:projectId/:transactionId/edit"
+                        element={withRouteSuspense(<EditBusinessInventoryTransaction />)}
+                      />
+                    </Routes>
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+          </Routes>
+        </ToastProvider>
+      </BusinessProfileProvider>
+    </AccountProvider>
   )
 }
 
-// Lazy load pages for better performance
 const AuthCallback = lazy(() => import('./pages/AuthCallback'))
 const InviteAccept = lazy(() => import('./pages/InviteAccept'))
 const Projects = lazy(() => import('./pages/Projects'))
 const ItemDetail = lazy(() => import('./pages/ItemDetail'))
-const ProjectDetail = lazy(() => import('./pages/ProjectDetail'))
+const ProjectLayout = lazy(() => import('./pages/ProjectLayout'))
+const ProjectItemsPage = lazy(() => import('./pages/ProjectItemsPage'))
+const ProjectTransactionsPage = lazy(() => import('./pages/ProjectTransactionsPage'))
+const ProjectBudgetPage = lazy(() => import('./pages/ProjectBudgetPage'))
+const ProjectLegacyTabRedirect = lazy(() => import('./pages/ProjectLegacyTabRedirect'))
+const ProjectLegacyEntityRedirect = lazy(() => import('./pages/ProjectLegacyEntityRedirect'))
 const ProjectInvoice = lazy(() => import('./pages/ProjectInvoice'))
 const PropertyManagementSummary = lazy(() => import('./pages/PropertyManagementSummary'))
 const ClientSummary = lazy(() => import('./pages/ClientSummary'))
 const AddItem = lazy(() => import('./pages/AddItem'))
 const EditItem = lazy(() => import('./pages/EditItem'))
 const AddTransaction = lazy(() => import('./pages/AddTransaction'))
+const ImportWayfairInvoice = lazy(() => import('./pages/ImportWayfairInvoice'))
 const EditTransaction = lazy(() => import('./pages/EditTransaction'))
 const TransactionDetail = lazy(() => import('./pages/TransactionDetail'))
 const Settings = lazy(() => import('./pages/Settings'))

@@ -63,4 +63,30 @@ export async function setDefaultCategory(accountId: string, categoryId: string |
   await upsertAccountPresets(accountId, { defaultCategoryId: categoryId })
 }
 
+/**
+ * Get the budget category order for an account
+ * @param accountId - The account ID
+ * @returns Array of category IDs in order, or null if not set
+ */
+export async function getBudgetCategoryOrder(accountId: string): Promise<string[] | null> {
+  const ap = await getAccountPresets(accountId)
+  const order = ap?.presets?.budget_category_order
+  return Array.isArray(order) ? order : null
+}
+
+/**
+ * Set the budget category order for an account
+ * @param accountId - The account ID
+ * @param categoryIds - Array of category IDs in the desired order
+ */
+export async function setBudgetCategoryOrder(accountId: string, categoryIds: string[]): Promise<void> {
+  const ap = await getAccountPresets(accountId)
+  const currentPresets = ap?.presets || {}
+  const updatedPresets = {
+    ...currentPresets,
+    budget_category_order: categoryIds
+  }
+  await upsertAccountPresets(accountId, { presets: updatedPresets })
+}
+
 

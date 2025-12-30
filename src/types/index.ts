@@ -9,6 +9,9 @@ export interface TaxPreset {
   rate: number; // percentage, e.g., 8.375
 }
 
+// Item disposition union type - canonical values for item disposition
+export type ItemDisposition = 'to purchase' | 'purchased' | 'to return' | 'returned' | 'inventory'
+
 export interface BudgetCategory {
   id: string;
   accountId: string;
@@ -73,6 +76,7 @@ export interface Project {
   designFee?: number;
   budgetCategories?: ProjectBudgetCategories;
   defaultCategoryId?: string;
+  mainImageUrl?: string;
   createdAt: Date;
   updatedAt: Date;
   createdBy: string;
@@ -80,15 +84,10 @@ export interface Project {
   metadata?: ProjectMetadata;
 }
 
-export interface ProjectBudgetCategories {
-  designFee: number;
-  furnishings: number;
-  propertyManagement: number;
-  kitchen: number;
-  install: number;
-  storageReceiving: number;
-  fuel: number;
-}
+// ProjectBudgetCategories maps category IDs to budget amounts
+// Format: { [categoryId: string]: number }
+// This allows projects to use dynamic budget categories from the budget_categories table
+export type ProjectBudgetCategories = Record<string, number>
 
 export interface ProjectSettings {
   allowPublicAccess: boolean;
@@ -119,7 +118,7 @@ export interface Item {
   projectPrice?: string;       // What we sell it for (Design Business project price) - formerly resale_price
   marketValue?: string;        // Current market value - direct mapping
   paymentMethod: string;
-  disposition?: string;
+  disposition?: ItemDisposition | null;
   notes?: string;
   space?: string;               // Space/location where item is placed
   qrKey: string;
@@ -129,7 +128,6 @@ export interface Item {
   images?: ItemImage[];         // Images associated with this item
   // Tax fields
   taxRatePct?: number; // percentage, e.g., 8.25
-  taxAmount?: string; // Legacy single tax amount (kept for compatibility)
   taxAmountPurchasePrice?: string; // Tax amount applied to `purchasePrice` (stored as four-decimal string; display as 2-decimal)
   taxAmountProjectPrice?: string;  // Tax amount applied to `projectPrice` (stored as four-decimal string; display as 2-decimal)
   createdBy?: string;
@@ -190,7 +188,7 @@ export interface QRCodeData {
 }
 
 export interface FilterOptions {
-  disposition?: string;
+  disposition?: ItemDisposition | string;
   source?: string;
   status?: string; // For filtering by item status
   category?: string; // For filtering by category
@@ -302,8 +300,14 @@ export interface TransactionItemFormData {
   marketValue?: string;
   space?: string;
   notes?: string;
+  disposition?: ItemDisposition | string | null;
+  // Item-level tax amounts (stored as strings; persisted to `items.tax_amount_*` columns)
+  taxAmountPurchasePrice?: string;
+  taxAmountProjectPrice?: string;
   images?: ItemImage[]; // Images associated with this item
   imageFiles?: File[]; // File objects for upload (not persisted)
+  // UI-only field for grouping duplicate items (not persisted)
+  uiGroupKey?: string;
 }
 
 export interface TransactionValidationErrors {

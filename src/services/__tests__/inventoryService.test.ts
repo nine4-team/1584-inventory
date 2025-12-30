@@ -16,7 +16,7 @@ vi.mock('../databaseService', () => ({
 }))
 
 // Import after mocks are set up
-import { projectService } from '../inventoryService'
+import { projectService, transactionService } from '../inventoryService'
 import * as supabaseModule from '../supabase'
 
 describe('projectService', () => {
@@ -184,3 +184,58 @@ describe('projectService', () => {
   })
 })
 
+describe('transactionService', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  describe('_recomputeNeedsReview', () => {
+    it('should never flag canonical sale transactions for review', async () => {
+      const mockQueryBuilder = createMockSupabaseClient().from('transactions')
+
+      // Mock the update query to capture what gets written
+      let capturedNeedsReview: boolean | undefined
+      vi.mocked(supabaseModule.supabase.from).mockReturnValue({
+        ...mockQueryBuilder,
+        update: vi.fn((data: any) => {
+          capturedNeedsReview = data.needs_review
+          return {
+            eq: vi.fn().mockReturnThis(),
+            then: vi.fn((onResolve) => {
+              return Promise.resolve({ data: null, error: null }).then(onResolve)
+            })
+          }
+        })
+      } as any)
+
+      // Test INV_SALE_ transaction
+      await (transactionService as any)._recomputeNeedsReview('test-account', 'project-1', 'INV_SALE_project-1')
+
+      expect(capturedNeedsReview).toBe(false)
+    })
+
+    it('should never flag canonical purchase transactions for review', async () => {
+      const mockQueryBuilder = createMockSupabaseClient().from('transactions')
+
+      // Mock the update query to capture what gets written
+      let capturedNeedsReview: boolean | undefined
+      vi.mocked(supabaseModule.supabase.from).mockReturnValue({
+        ...mockQueryBuilder,
+        update: vi.fn((data: any) => {
+          capturedNeedsReview = data.needs_review
+          return {
+            eq: vi.fn().mockReturnThis(),
+            then: vi.fn((onResolve) => {
+              return Promise.resolve({ data: null, error: null }).then(onResolve)
+            })
+          }
+        })
+      } as any)
+
+      // Test INV_PURCHASE_ transaction
+      await (transactionService as any)._recomputeNeedsReview('test-account', 'project-1', 'INV_PURCHASE_project-1')
+
+      expect(capturedNeedsReview).toBe(false)
+    })
+  })
+})

@@ -36,7 +36,7 @@ interface InventoryItem {
   notes: string        // Additional notes
   qrKey: string        // QR code identifier
   bookmark: boolean    // Bookmark status (true/false)
-  disposition: string  // Item status: "keep" or "return"
+  disposition: string  // Item status: "to purchase" | "purchased" | "to return" | "returned" | "inventory"
   dateCreated: string  // Creation date in YYYY-MM-DD format
   lastUpdated: string  // Last modification date in YYYY-MM-DD format
   transactionId: string // Associated transaction ID
@@ -164,7 +164,7 @@ const searchItems = (query: string) => {
 ```
 
 ### Filter Options (Ready for Implementation)
-- **By Status**: Filter by disposition (keep/return)
+- **By Status**: Filter by disposition (to purchase, purchased, to return, returned, inventory)
 - **By Bookmark**: Show only bookmarked items
 - **By Project**: Filter items by project
 - **By Date Range**: Filter by creation/update dates

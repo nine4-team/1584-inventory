@@ -9,6 +9,9 @@ interface UseDuplicationOptions<T extends { itemId: string }> {
   duplicationService?: (itemId: string) => Promise<string>
 }
 
+// Track in-flight duplication operations across all hook instances
+const inFlightDuplications = new Set<string>()
+
 export function useDuplication<T extends { itemId: string }>({
   items,
   setItems: _setItems,
@@ -19,7 +22,16 @@ export function useDuplication<T extends { itemId: string }>({
   const { showSuccess, showError } = useToast()
 
   const duplicateItem = useCallback(async (itemId: string) => {
+    // Prevent concurrent duplication of the same item
+    if (inFlightDuplications.has(itemId)) {
+      console.log('Duplication already in progress for item:', itemId)
+      return
+    }
+
     try {
+      // Mark this item as being duplicated
+      inFlightDuplications.add(itemId)
+
       const item = items.find(item => item.itemId === itemId)
       if (!item) {
         showError('Item not found')
@@ -36,6 +48,12 @@ export function useDuplication<T extends { itemId: string }>({
         const { unifiedItemsService } = await import('@/services/inventoryService')
         newItemId = await unifiedItemsService.duplicateItem(accountId, projectId, itemId)
       } else {
+        console.error('No duplication service available:', {
+          itemId,
+          hasCustomDuplicationService: Boolean(duplicationService),
+          projectId,
+          accountId
+        })
         showError('No duplication service available')
         return
       }
@@ -48,6 +66,9 @@ export function useDuplication<T extends { itemId: string }>({
     } catch (error) {
       console.error('Failed to duplicate item:', error)
       showError('Failed to duplicate item. Please try again.')
+    } finally {
+      // Remove from in-flight set when done (success or error)
+      inFlightDuplications.delete(itemId)
     }
   }, [items, projectId, accountId, duplicationService, showSuccess, showError])
 

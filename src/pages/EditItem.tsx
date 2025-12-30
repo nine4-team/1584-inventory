@@ -13,6 +13,7 @@ import { UserRole } from '../types'
 import { Shield } from 'lucide-react'
 
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, COMPANY_NAME } from '@/constants/company'
+import { projectItemDetail, projectItems } from '@/utils/routes'
 
 // Get canonical transaction title for display
 const getCanonicalTransactionTitle = (transaction: Transaction): string => {
@@ -28,7 +29,8 @@ const getCanonicalTransactionTitle = (transaction: Transaction): string => {
 }
 
 export default function EditItem() {
-  const { id: projectId, itemId } = useParams<{ id: string; itemId: string }>()
+  const { id, projectId: routeProjectId, itemId } = useParams<{ id?: string; projectId?: string; itemId?: string }>()
+  const projectId = routeProjectId || id
   const navigate = useStackedNavigate()
   const { hasRole } = useAuth()
   const { currentAccountId } = useAccount()
@@ -37,7 +39,10 @@ export default function EditItem() {
   const getBackDestination = () => {
     const searchParams = new URLSearchParams(window.location.search)
     const returnTo = searchParams.get('returnTo')
-    return returnTo ? decodeURIComponent(returnTo) : `/project/${projectId}?tab=inventory`
+    if (returnTo) return decodeURIComponent(returnTo)
+    if (projectId && itemId) return projectItemDetail(projectId, itemId)
+    if (projectId) return projectItems(projectId)
+    return '/projects'
   }
 
   // Check if user has permission to edit items (USER role or higher)
@@ -221,7 +226,11 @@ export default function EditItem() {
       if (returnTo) {
         navigate(returnTo)
       } else {
-        navigate(`/project/${projectId}?tab=inventory`)
+        if (projectId) {
+          navigate(projectItems(projectId))
+        } else {
+          navigate('/projects')
+        }
       }
     } catch (error) {
       console.error('Error updating item:', error)

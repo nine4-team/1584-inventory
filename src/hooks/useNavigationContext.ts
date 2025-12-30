@@ -1,5 +1,6 @@
 import { useLocation } from 'react-router-dom'
 import { useNavigationStack } from '../contexts/NavigationStackContext'
+import { projectTransactionDetail } from '@/utils/routes'
 
 export interface NavigationContext {
   getBackDestination: (defaultPath: string) => string
@@ -44,7 +45,7 @@ export function useNavigationContext(): NavigationContext {
             const projectId = searchParams.get('project')
             const transactionId = searchParams.get('transactionId')
             if (projectId && transactionId) {
-              return `/project/${projectId}/transaction/${transactionId}`
+              return projectTransactionDetail(projectId, transactionId)
             }
           }
           break

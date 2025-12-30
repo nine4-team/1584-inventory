@@ -4,7 +4,7 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import ContextBackLink from '@/components/ContextBackLink'
 import { Item, ItemImage } from '@/types'
-import { normalizeDisposition, dispositionsEqual, displayDispositionLabel } from '@/utils/dispositionUtils'
+import { normalizeDisposition, dispositionsEqual, displayDispositionLabel, DISPOSITION_OPTIONS } from '@/utils/dispositionUtils'
 import { formatDate, formatCurrency } from '@/utils/dateUtils'
 import { unifiedItemsService, projectService, integrationService } from '@/services/inventoryService'
 import { ImageUploadService } from '@/services/imageService'
@@ -17,9 +17,10 @@ import { useDuplication } from '@/hooks/useDuplication'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
+import { projectItemEdit, projectItems, projectTransactionDetail } from '@/utils/routes'
 
 export default function ItemDetail() {
-  const { id, itemId } = useParams<{ id?: string; itemId?: string }>()
+  const { id, projectId: routeProjectId, itemId } = useParams<{ id?: string; projectId?: string; itemId?: string }>()
   const ENABLE_QR = import.meta.env.VITE_ENABLE_QR === 'true'
   const navigate = useStackedNavigate()
   const { currentAccountId } = useAccount()
@@ -34,12 +35,13 @@ export default function ItemDetail() {
   const { buildContextUrl, getBackDestination } = useNavigationContext()
   const stickyRef = useRef<HTMLDivElement>(null)
 
-  // Use itemId if available (from /project/:id/item/:itemId), otherwise use id (from /item/:id)
+  // Use itemId if available (from /project/:projectId/items/:itemId), otherwise use id (from /item/:id)
   const actualItemId = itemId || id
 
-  // Get project ID from URL path (for /project/:id/item/:itemId) or search parameters (for /item/:id)
-  // For business inventory items, the URL structure is /business-inventory/:id
-  const projectId = searchParams.get('project') || id
+  const queryProjectId = searchParams.get('project') || ''
+
+  // Determine project context from nested routes or search params (legacy deep links)
+  const projectId = routeProjectId || queryProjectId || ''
 
   // Check if this is a business inventory item (no project context)
   const isBusinessInventoryItem = !projectId && location.pathname.startsWith('/business-inventory/')
@@ -60,13 +62,13 @@ export default function ItemDetail() {
 
   // Determine back navigation destination using navigation context
   const backDestination = useMemo(() => {
-    // If item is not loaded yet (null), use appropriate default
-    if (!item) {
-      return isBusinessInventoryItem ? '/business-inventory' : `/project/${projectId}?tab=inventory`
-    }
+    const defaultPath = isBusinessInventoryItem
+      ? '/business-inventory'
+      : projectId
+        ? projectItems(projectId)
+        : '/projects'
 
-    // Use navigation context's getBackDestination function
-    const defaultPath = isBusinessInventoryItem ? '/business-inventory' : `/project/${projectId}?tab=inventory`
+    if (!item) return defaultPath
     return getBackDestination(defaultPath)
   }, [item, projectId, getBackDestination, isBusinessInventoryItem])
 
@@ -125,18 +127,19 @@ export default function ItemDetail() {
     }
 
     fetchItem()
-  }, [actualItemId, id, searchParams, currentAccountId])
+  }, [actualItemId, id, projectId, currentAccountId, isBusinessInventoryItem])
 
   // Set up real-time listener for item updates
+  const subscriptionProjectId = id || queryProjectId
+
   useEffect(() => {
-    const currentProjectId = id || searchParams.get('project')
-    if (!currentProjectId || !actualItemId || !currentAccountId) return
+    if (!subscriptionProjectId || !actualItemId || !currentAccountId) return
 
     console.log('Setting up real-time listener for item:', actualItemId)
 
     const unsubscribe = unifiedItemsService.subscribeToProjectItems(
       currentAccountId,
-      currentProjectId,
+      subscriptionProjectId,
       (items: Item[]) => {
         console.log('Real-time items update:', items.length, 'items')
         const updatedItem = items.find((item: Item) => item.itemId === actualItemId)
@@ -151,7 +154,7 @@ export default function ItemDetail() {
       console.log('Cleaning up real-time listener for item:', actualItemId)
       unsubscribe()
     }
-  }, [searchParams, actualItemId, id, currentAccountId])
+  }, [subscriptionProjectId, actualItemId, currentAccountId])
 
   // Subscribe to item-lineage edges for this item and refetch the item when an edge arrives
   useEffect(() => {
@@ -221,7 +224,7 @@ export default function ItemDetail() {
     }
   }
 
-  const updateDisposition = async (newDisposition: string) => {
+  const updateDisposition = async (newDisposition: ItemDisposition) => {
     console.log('🎯 updateDisposition called with:', newDisposition, 'Current item:', item?.itemId)
 
     if (!item || !currentAccountId) {
@@ -279,12 +282,14 @@ export default function ItemDetail() {
     setOpenDispositionMenu(!openDispositionMenu)
   }
 
-  const getDispositionBadgeClasses = (disposition: string) => {
+  const getDispositionBadgeClasses = (disposition?: string | null) => {
     const baseClasses = 'inline-flex items-center px-3 py-2 rounded-full text-sm font-medium cursor-pointer transition-colors hover:opacity-80'
     const d = normalizeDisposition(disposition)
 
     switch (d) {
-      case 'keep':
+      case 'to purchase':
+        return `${baseClasses} bg-amber-100 text-amber-800`
+      case 'purchased':
         return `${baseClasses} bg-green-100 text-green-800`
       case 'to return':
         return `${baseClasses} bg-red-100 text-red-700`
@@ -306,7 +311,13 @@ export default function ItemDetail() {
 
     try {
       await unifiedItemsService.deleteItem(currentAccountId, item.itemId)
-      navigate(isBusinessInventoryItem ? '/business-inventory' : `/project/${projectId}?tab=inventory`)
+      if (isBusinessInventoryItem) {
+        navigate('/business-inventory')
+      } else if (projectId) {
+        navigate(projectItems(projectId))
+      } else {
+        navigate('/projects')
+      }
     } catch (error) {
       console.error('Failed to delete item:', error)
       showError('Failed to delete item. Please try again.')
@@ -515,7 +526,9 @@ export default function ItemDetail() {
             <ContextLink
               to={isBusinessInventoryItem
                 ? buildContextUrl(`/business-inventory/${item.itemId}/edit`)
-              : buildContextUrl(`/project/${projectId}/edit-item/${item.itemId}`, { project: projectId || '' })
+              : projectId
+                ? buildContextUrl(projectItemEdit(projectId, item.itemId), { project: projectId })
+                : buildContextUrl(`/business-inventory/${item.itemId}/edit`)
               }
               className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
               title="Edit Item"
@@ -545,7 +558,7 @@ export default function ItemDetail() {
             <div className="relative">
               <span
                 onClick={toggleDispositionMenu}
-                className={`disposition-badge ${getDispositionBadgeClasses(item.disposition || 'keep')}`}
+                className={`disposition-badge ${getDispositionBadgeClasses(item.disposition)}`}
               >
                 {displayDispositionLabel(item.disposition)}
                 <ChevronDown className="h-3 w-3 ml-1" />
@@ -555,7 +568,7 @@ export default function ItemDetail() {
               {openDispositionMenu && (
                 <div className="disposition-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-20">
                   <div className="py-2">
-                    {['keep', 'to return', 'returned', 'inventory'].map((disposition) => (
+                    {DISPOSITION_OPTIONS.map((disposition) => (
                       <button
                         key={disposition}
                         onClick={() => updateDisposition(disposition)}
@@ -563,7 +576,7 @@ export default function ItemDetail() {
                           dispositionsEqual(item.disposition, disposition) ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
                         }`}
                       >
-                        {disposition === 'to return' ? 'To Return' : disposition.charAt(0).toUpperCase() + disposition.slice(1)}
+                        {displayDispositionLabel(disposition)}
                       </button>
                     ))}
                   </div>
@@ -629,7 +642,7 @@ export default function ItemDetail() {
               <FileText className="h-5 w-5 mr-2" />
               Item Details
             </h3>
-            <dl className="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2">
+            <dl className="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-3">
               {item.source && (
                 <div>
                   <dt className="text-sm font-medium text-gray-500">Source</dt>
@@ -696,7 +709,7 @@ export default function ItemDetail() {
               )}
 
               {item.notes && item.notes !== 'No notes' && (
-                <div className="sm:col-span-2">
+                <div className="sm:col-span-3">
                   <dt className="text-sm font-medium text-gray-500">Notes</dt>
                   <dd className="mt-1 text-sm text-gray-900 bg-gray-50 p-3 rounded-md">{item.notes}</dd>
                 </div>
@@ -723,7 +736,11 @@ export default function ItemDetail() {
                     <ContextLink
                       to={isBusinessInventoryItem
                         ? buildContextUrl(`/business-inventory/transaction/${item.transactionId}`)
-                        : buildContextUrl(`/project/${projectId}/transaction/${item.transactionId}`)
+                        : projectId
+                          ? buildContextUrl(projectTransactionDetail(projectId, item.transactionId))
+                          : item.projectId
+                            ? buildContextUrl(projectTransactionDetail(item.projectId, item.transactionId))
+                            : buildContextUrl('/projects')
                       }
                       className="text-primary-600 hover:text-primary-800 underline"
                     >

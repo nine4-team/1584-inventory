@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react'
-import { Plus, ChevronDown, Trash2, Star, ExternalLink, Crown } from 'lucide-react'
+import React, { useState, useEffect, useMemo } from 'react'
+import { Plus, ChevronDown, Trash2, Star, ExternalLink, Crown, FileText } from 'lucide-react'
 import { ItemImage, TransactionImage } from '@/types'
 import ImageGallery from './ImageGallery'
 
@@ -21,7 +21,7 @@ interface TransactionImagePreviewProps {
   showControls?: boolean
   size?: 'sm' | 'md' | 'lg'
   className?: string
-  onImageClick?: (index: number) => void
+  onImageClick?: (imageUrl: string) => void
 }
 
 export default function ImagePreview({
@@ -238,13 +238,48 @@ export function TransactionImagePreview({
     lg: 'w-28 h-28 sm:w-24 sm:h-24'
   }
 
-  const handleImageClick = (index: number) => {
-    if (onImageClick) {
-      onImageClick(index)
-    } else {
-      setGalleryInitialIndex(index)
-      setShowGallery(true)
+  const isRenderableImage = (img: TransactionImage): boolean => {
+    const mime = (img.mimeType || '').toLowerCase()
+    if (mime.startsWith('image/')) return true
+    const name = (img.fileName || img.url || '').toLowerCase()
+    return /\.(png|jpe?g|gif|webp|heic|heif)$/.test(name)
+  }
+
+  const isPdfAttachment = (img: TransactionImage): boolean => {
+    const mime = (img.mimeType || '').toLowerCase()
+    if (mime === 'application/pdf' || mime.includes('pdf')) return true
+    const name = (img.fileName || img.url || '').toLowerCase()
+    return name.endsWith('.pdf')
+  }
+
+  const galleryImages = useMemo(() => {
+    return images.filter(isRenderableImage)
+  }, [images])
+
+  const openAttachment = (url: string) => {
+    try {
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch {
+      // Fallback
+      window.location.assign(url)
     }
+  }
+
+  const handleImageClick = (image: TransactionImage) => {
+    if (isRenderableImage(image)) {
+      if (onImageClick) {
+        onImageClick(image.url)
+        return
+      }
+
+      const idx = galleryImages.findIndex(i => i.url === image.url)
+      setGalleryInitialIndex(Math.max(0, idx))
+      setShowGallery(true)
+      return
+    }
+
+    // Non-image attachments (e.g., PDFs) open in a new tab.
+    openAttachment(image.url)
   }
 
   const handleGalleryClose = () => {
@@ -262,7 +297,7 @@ export function TransactionImagePreview({
 
     switch (action) {
       case 'open':
-        handleImageClick(index)
+        openAttachment(imageUrl)
         break
       case 'delete':
         onRemoveImage?.(imageUrl)
@@ -295,13 +330,22 @@ export function TransactionImagePreview({
             <div
               key={image.url}
               className={`${sizeClasses[size]} relative group cursor-pointer rounded-lg overflow-visible border-2 border-gray-200`}
-              onClick={() => handleImageClick(index)}
+              onClick={() => handleImageClick(image)}
             >
-              <img
-                src={image.url}
-                alt={image.fileName}
-                className="w-full h-full object-cover transition-transform group-hover:scale-105"
-              />
+              {isRenderableImage(image) ? (
+                <img
+                  src={image.url}
+                  alt={image.fileName}
+                  className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                />
+              ) : (
+                <div className="w-full h-full bg-gray-50 flex flex-col items-center justify-center text-gray-600 p-2">
+                  <FileText className="h-6 w-6" />
+                  <div className="mt-1 text-[10px] font-medium text-gray-700 text-center line-clamp-2">
+                    {isPdfAttachment(image) ? 'PDF' : 'File'}
+                  </div>
+                </div>
+              )}
 
               {/* Controls overlay - Mobile-first design with chevron menu */}
               {showControls && (
@@ -328,7 +372,7 @@ export function TransactionImagePreview({
                           className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
                         >
                           <ExternalLink className="h-4 w-4 mr-2" />
-                          <span>Open</span>
+                            <span>{isRenderableImage(image) ? 'Open' : 'Open file'}</span>
                         </button>
                         {onRemoveImage && (
                           <button
@@ -352,14 +396,14 @@ export function TransactionImagePreview({
       {/* Image gallery modal */}
       {showGallery && (
         <ImageGallery
-          images={images.map(img => ({
+          images={galleryImages.map(img => ({
             url: img.url,
             alt: img.fileName,
             isPrimary: false,
             uploadedAt: new Date(),
             fileName: img.fileName,
-            size: 0,
-            mimeType: 'image/jpeg'
+            size: img.size || 0,
+            mimeType: img.mimeType || 'image/jpeg'
           }))}
           initialIndex={galleryInitialIndex}
           onClose={handleGalleryClose}

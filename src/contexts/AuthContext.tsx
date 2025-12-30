@@ -88,21 +88,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, [user])
 
   useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        debugLog(`${authLogPrefix} [VISIBILITY] Tab is visible, refreshing session...`);
-        supabase.auth.refreshSession();
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, []);
-
-  useEffect(() => {
     if (timedOutWithoutAuth && (supabaseUser || user)) {
       setTimedOutWithoutAuth(false)
     }

@@ -6,6 +6,7 @@ import { lineageService } from '@/services/lineageService'
 import { transactionService } from '@/services/inventoryService'
 import type { ItemLineageEdge } from '@/types'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
+import { projectTransactionDetail } from '@/utils/routes'
 
 interface ItemLineageBreadcrumbProps {
   itemId: string
@@ -109,8 +110,8 @@ export default function ItemLineageBreadcrumb({ itemId, compact = true }: ItemLi
           const to = isInventory
             ? buildContextUrl('/business-inventory')
             : projectId
-              ? buildContextUrl(`/project/${projectId}/transaction/${node}`, { project: projectId })
-              : buildContextUrl(`/project/unknown/transaction/${node}`)
+              ? buildContextUrl(projectTransactionDetail(projectId, node!), { project: projectId })
+              : buildContextUrl('/projects')
 
           return (
             <li key={`${node ?? 'inventory'}-${idx}`} className="flex items-center">

@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useNavigate, useLocation, To, NavigateOptions } from 'react-router-dom'
 import { useNavigationStack } from '../contexts/NavigationStackContext'
 
@@ -8,6 +8,11 @@ export function useStackedNavigate() {
   const navigate = useNavigate()
   const location = useLocation()
   const navigationStack = useNavigationStack()
+  const locationRef = useRef(location)
+
+  useEffect(() => {
+    locationRef.current = location
+  }, [location])
 
   const stackedNavigate = useCallback(
     (to: To, options?: NavigateOptions) => {
@@ -17,8 +22,12 @@ export function useStackedNavigate() {
         // which causes the previous page to treat the back destination as the page we just left,
         // creating an endless back/forward loop.
         // Only push for non-numeric navigations or forward numeric jumps.
-        if (typeof to !== 'number' || to > 0) {
-          navigationStack.push(location.pathname + location.search)
+        const currentLocation = locationRef.current
+        if (
+          currentLocation &&
+          (typeof to !== 'number' || to > 0)
+        ) {
+          navigationStack.push(currentLocation.pathname + currentLocation.search)
         }
       } catch {
         // ignore if stack not available
@@ -26,7 +35,7 @@ export function useStackedNavigate() {
 
       navigate(to, options)
     },
-    [navigate, navigationStack, location.pathname, location.search]
+    [navigate, navigationStack]
   )
 
   return stackedNavigate

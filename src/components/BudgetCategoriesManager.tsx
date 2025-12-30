@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Save, AlertCircle, Plus, Edit2, Archive, ArchiveRestore, X, Trash2 } from 'lucide-react'
+import { Save, AlertCircle, Plus, Edit2, Archive, ArchiveRestore, X, Trash2, GripVertical } from 'lucide-react'
 import { budgetCategoriesService } from '@/services/budgetCategoriesService'
-import { getDefaultCategory, setDefaultCategory } from '@/services/accountPresetsService'
+import { getDefaultCategory, setDefaultCategory, setBudgetCategoryOrder } from '@/services/accountPresetsService'
 import { BudgetCategory } from '@/types'
 import { useAccount } from '@/contexts/AccountContext'
 import { Button } from './ui/Button'
@@ -21,6 +21,9 @@ export default function BudgetCategoriesManager() {
   const [selectedDefaultCategoryId, setSelectedDefaultCategoryId] = useState<string | null>(null)
   const [isSavingDefault, setIsSavingDefault] = useState(false)
   const [defaultSaveMessage, setDefaultSaveMessage] = useState<string | null>(null)
+  const [draggedCategoryId, setDraggedCategoryId] = useState<string | null>(null)
+  const [dragOverCategoryId, setDragOverCategoryId] = useState<string | null>(null)
+  const [isSavingOrder, setIsSavingOrder] = useState(false)
 
   const loadCategories = useCallback(async () => {
     if (!currentAccountId) return
@@ -199,6 +202,71 @@ export default function BudgetCategoriesManager() {
     // bulk archive removed
   }
 
+  const handleDragStart = (categoryId: string) => {
+    setDraggedCategoryId(categoryId)
+  }
+
+  const handleDragOver = (e: React.DragEvent, categoryId: string) => {
+    e.preventDefault()
+    if (draggedCategoryId && draggedCategoryId !== categoryId) {
+      setDragOverCategoryId(categoryId)
+    }
+  }
+
+  const handleDragLeave = () => {
+    setDragOverCategoryId(null)
+  }
+
+  const handleDrop = async (e: React.DragEvent, targetCategoryId: string) => {
+    e.preventDefault()
+    setDragOverCategoryId(null)
+
+    if (!draggedCategoryId || !currentAccountId || draggedCategoryId === targetCategoryId) {
+      setDraggedCategoryId(null)
+      return
+    }
+
+    const activeCategories = categories.filter(c => !c.isArchived)
+    const draggedIndex = activeCategories.findIndex(c => c.id === draggedCategoryId)
+    const targetIndex = activeCategories.findIndex(c => c.id === targetCategoryId)
+
+    if (draggedIndex === -1 || targetIndex === -1) {
+      setDraggedCategoryId(null)
+      return
+    }
+
+    // Reorder categories
+    const reorderedCategories = [...activeCategories]
+    const [draggedCategory] = reorderedCategories.splice(draggedIndex, 1)
+    reorderedCategories.splice(targetIndex, 0, draggedCategory)
+
+    // Update local state immediately for better UX
+    const archivedCategories = categories.filter(c => c.isArchived)
+    setCategories([...reorderedCategories, ...archivedCategories])
+
+    // Save order to presets
+    try {
+      setIsSavingOrder(true)
+      const categoryIds = reorderedCategories.map(c => c.id)
+      await setBudgetCategoryOrder(currentAccountId, categoryIds)
+      setSuccessMessage('Category order saved')
+      setTimeout(() => setSuccessMessage(null), 3000)
+    } catch (err) {
+      console.error('Error saving category order:', err)
+      setError('Failed to save category order')
+      // Reload categories to revert to original order
+      await loadCategories()
+    } finally {
+      setIsSavingOrder(false)
+      setDraggedCategoryId(null)
+    }
+  }
+
+  const handleDragEnd = () => {
+    setDraggedCategoryId(null)
+    setDragOverCategoryId(null)
+  }
+
   if (isLoading) {
     return (
       <div className="flex justify-center items-center py-8">
@@ -345,7 +413,10 @@ export default function BudgetCategoriesManager() {
         <table className="min-w-full divide-y divide-gray-300">
           <thead className="bg-gray-50">
             <tr>
-              <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900 sm:pl-6">
+              <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900 sm:pl-6 w-8">
+                {/* Drag handle column */}
+              </th>
+              <th scope="col" className="py-3.5 pl-3 pr-3 text-left text-sm font-semibold text-gray-900">
                 Name
               </th>
               {/* slug and transactions columns removed */}
@@ -362,12 +433,35 @@ export default function BudgetCategoriesManager() {
                 </td>
               </tr>
             ) : activeCategories.map((category) => {
+                  const isDragging = draggedCategoryId === category.id
+                  const isDragOver = dragOverCategoryId === category.id
                   return (
                   <tr 
                     key={category.id} 
-                    className={`${editingId === category.id ? 'bg-gray-50' : ''}`}
+                    className={`
+                      ${editingId === category.id ? 'bg-gray-50' : ''}
+                      ${isDragging ? 'opacity-50' : ''}
+                      ${isDragOver ? 'bg-primary-50 border-t-2 border-primary-500' : ''}
+                      transition-colors
+                    `}
+                    draggable={!editingId && !isSavingOrder}
+                    onDragStart={() => handleDragStart(category.id)}
+                    onDragOver={(e) => handleDragOver(e, category.id)}
+                    onDragLeave={handleDragLeave}
+                    onDrop={(e) => handleDrop(e, category.id)}
+                    onDragEnd={handleDragEnd}
                   >
-                    <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900 sm:pl-6">
+                    <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm text-gray-500 sm:pl-6">
+                      {!editingId && (
+                        <div
+                          className="cursor-move hover:text-gray-700"
+                          title="Drag to reorder"
+                        >
+                          <GripVertical className="h-5 w-5" />
+                        </div>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap py-4 pl-3 pr-3 text-sm font-medium text-gray-900">
                       {editingId === category.id ? (
                         <input
                           type="text"
@@ -446,7 +540,10 @@ export default function BudgetCategoriesManager() {
                 {showArchived &&
                   archivedCategories.map((category) => (
                     <tr key={category.id} className="bg-gray-50">
-                      <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-500 sm:pl-6">
+                      <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm text-gray-500 sm:pl-6">
+                        {/* Empty cell for drag handle column */}
+                      </td>
+                      <td className="whitespace-nowrap py-4 pl-3 pr-3 text-sm font-medium text-gray-500">
                         {category.name}
                       </td>
                       <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">

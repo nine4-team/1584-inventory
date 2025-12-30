@@ -53,7 +53,12 @@ export default function CategorySelect({
         currentAccountId,
         includeArchived
       )
-      setCategories(loadedCategories)
+      // Filter out archived categories on the frontend as a safety measure
+      // This ensures archived categories never appear even if service returns them
+      const filteredCategories = includeArchived 
+        ? loadedCategories 
+        : loadedCategories.filter(cat => !cat.isArchived)
+      setCategories(filteredCategories)
     } catch (err) {
       console.error('Error loading budget categories:', err)
       setLoadError('Failed to load categories')
@@ -209,8 +214,13 @@ export function useCategories(includeArchived: boolean = false): {
           currentAccountId,
           includeArchived
         )
+        // Filter out archived categories on the frontend as a safety measure
+        // This ensures archived categories never appear even if service returns them
+        const filteredCategories = includeArchived 
+          ? loadedCategories 
+          : loadedCategories.filter(cat => !cat.isArchived)
         setCategories(
-          loadedCategories.map(cat => ({
+          filteredCategories.map(cat => ({
             id: cat.id,
             name: cat.name
           }))

@@ -1,13 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
+import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { Button } from '@/components/ui/Button'
 import type { Item, Project, Transaction } from '@/types'
 import { formatDate } from '@/utils/dateUtils'
 import { projectService, transactionService, unifiedItemsService } from '@/services/inventoryService'
 import { useAccount } from '@/contexts/AccountContext'
 import { useBusinessProfile } from '@/contexts/BusinessProfileContext'
-import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT, COMPANY_PROJECT_PORTAL_LOGO_ALT } from '@/constants/company'
+import {
+  COMPANY_INVENTORY_SALE,
+  COMPANY_INVENTORY_PURCHASE,
+  CLIENT_OWES_COMPANY,
+  COMPANY_OWES_CLIENT,
+} from '@/constants/company'
+import { projectTransactions, projectsRoot } from '@/utils/routes'
 
 type InvoiceItemLine = {
   item: Item
@@ -40,10 +47,12 @@ function toNumber(value: string | number | null | undefined): number {
 }
 
 export default function ProjectInvoice() {
-  const { id: projectId } = useParams<{ id: string }>()
-  const navigate = useStackedNavigate()
+  const { id, projectId } = useParams<{ id?: string; projectId?: string }>()
+  const resolvedProjectId = projectId || id
+  const stackedNavigate = useStackedNavigate()
   const { currentAccountId } = useAccount()
   const { businessName, businessLogoUrl } = useBusinessProfile()
+  const { getBackDestination } = useNavigationContext()
 
   const [project, setProject] = useState<Project | null>(null)
   const [clientOwesLines, setClientOwesLines] = useState<InvoiceTransactionLine[]>([])
@@ -55,9 +64,9 @@ export default function ProjectInvoice() {
 
   useEffect(() => {
     const load = async () => {
-      if (!projectId || !currentAccountId) {
+      if (!resolvedProjectId || !currentAccountId) {
         if (!currentAccountId) return // Wait for account to load
-        navigate('/projects')
+        stackedNavigate(projectsRoot())
         return
       }
 
@@ -65,12 +74,12 @@ export default function ProjectInvoice() {
       setError(null)
       try {
         const [proj, txs] = await Promise.all([
-          projectService.getProject(currentAccountId, projectId),
-          transactionService.getTransactions(currentAccountId, projectId)
+          projectService.getProject(currentAccountId, resolvedProjectId),
+          transactionService.getTransactions(currentAccountId, resolvedProjectId)
         ])
 
         if (!proj) {
-          navigate('/projects')
+          stackedNavigate(projectsRoot())
           return
         }
 
@@ -83,7 +92,11 @@ export default function ProjectInvoice() {
         // Sort by transaction_date ascending within each group later
         // Fetch items for each transaction in parallel
         const lines = await Promise.all(invoiceable.map(async (tx): Promise<InvoiceTransactionLine> => {
-        const items: Item[] = await unifiedItemsService.getItemsForTransaction(currentAccountId, projectId, tx.transactionId)
+          const items: Item[] = await unifiedItemsService.getItemsForTransaction(
+            currentAccountId,
+            resolvedProjectId,
+            tx.transactionId
+          )
 
           const itemLines: InvoiceItemLine[] = items.map((it) => {
             const projectPriceValue = it.projectPrice
@@ -119,16 +132,16 @@ export default function ProjectInvoice() {
     }
 
     load()
-  }, [projectId, currentAccountId, navigate])
+  }, [resolvedProjectId, currentAccountId, stackedNavigate])
 
   const clientOwesSubtotal = useMemo(() => clientOwesLines.reduce((sum, l) => sum + l.lineTotal, 0), [clientOwesLines])
   const creditsSubtotal = useMemo(() => creditLines.reduce((sum, l) => sum + l.lineTotal, 0), [creditLines])
   const netDue = useMemo(() => clientOwesSubtotal - creditsSubtotal, [clientOwesSubtotal, creditsSubtotal])
 
   const handlePrint = () => window.print()
+  const defaultBackTarget = resolvedProjectId ? projectTransactions(resolvedProjectId) : projectsRoot()
   const handleBack = () => {
-    if (!projectId) return navigate('/projects')
-    navigate(`/project/${projectId}?tab=transactions&budgetTab=accounting`)
+    stackedNavigate(getBackDestination(defaultBackTarget))
   }
 
   if (isLoading) {

@@ -4,7 +4,7 @@ import { toDateOnlyString } from '@/utils/dateUtils'
 import { getTaxPresetById } from './taxPresetsService'
 import { CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { lineageService } from './lineageService'
-import type { Item, Project, FilterOptions, PaginationOptions, Transaction, TransactionItemFormData, TransactionCompleteness, CompletenessStatus } from '@/types'
+import type { Item, Project, FilterOptions, PaginationOptions, Transaction, TransactionItemFormData, TransactionCompleteness, CompletenessStatus, ItemImage } from '@/types'
 
 // Audit Logging Service for allocation/de-allocation events
 export const auditService = {
@@ -112,6 +112,7 @@ export const projectService = {
         budget: converted.budget ? parseFloat(converted.budget) : undefined,
         designFee: converted.design_fee ? parseFloat(converted.design_fee) : undefined,
         budgetCategories: converted.budget_categories || undefined,
+        mainImageUrl: converted.main_image_url || undefined,
         createdAt: converted.created_at,
         updatedAt: converted.updated_at,
         createdBy: converted.created_by,
@@ -154,6 +155,7 @@ export const projectService = {
       budget: converted.budget ? parseFloat(converted.budget) : undefined,
       designFee: converted.design_fee ? parseFloat(converted.design_fee) : undefined,
       budgetCategories: converted.budget_categories || undefined,
+      mainImageUrl: converted.main_image_url || undefined,
       createdAt: converted.created_at,
       updatedAt: converted.updated_at,
       createdBy: converted.created_by,
@@ -179,6 +181,7 @@ export const projectService = {
         budget: projectData.budget || null,
         design_fee: projectData.designFee || null,
         budget_categories: projectData.budgetCategories || {},
+        main_image_url: projectData.mainImageUrl || null,
         // default_category_id removed - default category is now account-wide preset
         settings: projectData.settings || {},
         metadata: projectData.metadata || {},
@@ -210,6 +213,7 @@ export const projectService = {
     if (updates.budget !== undefined) updateData.budget = updates.budget
     if (updates.designFee !== undefined) updateData.design_fee = updates.designFee
     if (updates.budgetCategories !== undefined) updateData.budget_categories = updates.budgetCategories
+    if (updates.mainImageUrl !== undefined) updateData.main_image_url = updates.mainImageUrl || null
     // defaultCategoryId updates removed - default category is now account-wide preset
     if (updates.settings !== undefined) updateData.settings = updates.settings
     if (updates.metadata !== undefined) updateData.metadata = updates.metadata
@@ -252,7 +256,7 @@ export const projectService = {
           event: '*',
           schema: 'public',
           table: 'projects',
-          filter: `account_id=eq.${accountId}`
+          filter: 'account_id=eq.' + accountId
         },
         (payload) => {
           console.log('Projects change received!', payload)
@@ -456,6 +460,65 @@ async function _adjustSumItemPurchasePrices(accountId: string, transactionId: st
 
   if (updateError) throw updateError
   return newSumStr
+}
+
+async function _updateTransactionItemIds(
+  accountId: string,
+  transactionId: string | null | undefined,
+  itemIdsInput: string | string[],
+  action: 'add' | 'remove'
+): Promise<void> {
+  if (!transactionId) return
+
+  const pendingItemIds = (Array.isArray(itemIdsInput) ? itemIdsInput : [itemIdsInput])
+    .filter((id): id is string => Boolean(id && id.trim()))
+  if (pendingItemIds.length === 0) return
+
+  await ensureAuthenticatedForDatabase()
+
+  const { data, error } = await supabase
+    .from('transactions')
+    .select('item_ids')
+    .eq('account_id', accountId)
+    .eq('transaction_id', transactionId)
+    .single()
+
+  if (error || !data) {
+    console.warn('⚠️ Failed to load transaction for item_ids sync:', transactionId, error)
+    return
+  }
+
+  const currentItemIds: string[] = Array.isArray(data.item_ids) ? data.item_ids : []
+  let updatedItemIds: string[] = currentItemIds
+
+  if (action === 'add') {
+    let mutated = false
+    updatedItemIds = [...currentItemIds]
+    for (const id of pendingItemIds) {
+      if (!updatedItemIds.includes(id)) {
+        updatedItemIds.push(id)
+        mutated = true
+      }
+    }
+    if (!mutated) return
+  } else {
+    const removalSet = new Set(pendingItemIds)
+    updatedItemIds = currentItemIds.filter(id => !removalSet.has(id))
+    if (updatedItemIds.length === currentItemIds.length) return
+  }
+
+  const { error: updateError } = await supabase
+    .from('transactions')
+    .update({
+      item_ids: updatedItemIds,
+      updated_at: new Date().toISOString()
+    })
+    .eq('account_id', accountId)
+    .eq('transaction_id', transactionId)
+
+  if (updateError) {
+    console.warn('⚠️ Failed to update transaction item_ids during sync:', transactionId, updateError)
+  }
 }
 
 // Transaction Services
@@ -706,9 +769,19 @@ export const transactionService = {
    */
   async _recomputeNeedsReview(accountId: string, projectId: string | null | undefined, transactionId: string): Promise<void> {
     try {
-      // Use canonical completeness computation
-      const completeness = await this.getTransactionCompleteness(accountId, projectId || '', transactionId)
-      const needs = completeness.completenessStatus !== 'complete'
+      // Canonical sale and purchase transactions (INV_SALE_*, INV_PURCHASE_*) are system-generated
+      // and represent internal inventory movements, so they should never require review
+      const isCanonicalTransaction = transactionId.startsWith('INV_SALE_') || transactionId.startsWith('INV_PURCHASE_')
+
+      let needs: boolean
+      if (isCanonicalTransaction) {
+        // Canonical transactions are never flagged for review
+        needs = false
+      } else {
+        // Use canonical completeness computation for regular transactions
+        const completeness = await this.getTransactionCompleteness(accountId, projectId || '', transactionId)
+        needs = completeness.completenessStatus !== 'complete'
+      }
 
       // Persist the boolean directly to the transactions table to avoid calling updateTransaction
       await ensureAuthenticatedForDatabase()
@@ -1004,6 +1077,20 @@ export const transactionService = {
           dbTransaction.tax_rate_pct
         )
         console.log('Created items:', createdItemIds)
+
+        // Update the transaction's itemIds field to include the newly created items
+        if (createdItemIds.length > 0) {
+          const { error: updateError } = await supabase
+            .from('transactions')
+            .update({ item_ids: createdItemIds })
+            .eq('account_id', accountId)
+            .eq('transaction_id', transactionId)
+
+          if (updateError) {
+            console.warn('Failed to update transaction itemIds:', updateError)
+            // Don't fail the transaction creation if this update fails
+          }
+        }
       }
       // Ensure the denormalized needs_review flag is computed and persisted
       try {
@@ -1164,7 +1251,7 @@ export const transactionService = {
           schema: 'public',
           table: 'transactions',
           // Listen at account scope so we receive updates when project_id changes
-          filter: `account_id=eq.${accountId}`
+          filter: 'account_id=eq.' + accountId
         },
         async (payload) => {
           console.log('Transactions change received (account scope)!', payload)
@@ -1240,7 +1327,7 @@ export const transactionService = {
           event: '*',
           schema: 'public',
           table: 'transactions',
-          filter: `account_id=eq.${accountId}`
+          filter: 'account_id=eq.' + accountId
         },
         async (payload) => {
           console.log('All transactions change received!', payload)
@@ -1292,7 +1379,7 @@ export const transactionService = {
           event: '*',
           schema: 'public',
           table: 'transactions',
-          filter: `account_id=eq.${accountId} AND transaction_id=eq.${transactionId}`
+          filter: 'account_id=eq.' + accountId + ' AND transaction_id=eq.' + transactionId
         },
         async () => {
           // Refetch transaction on any change
@@ -1487,7 +1574,6 @@ export const unifiedItemsService = {
       inventoryStatus: converted.inventory_status || undefined,
       businessInventoryLocation: converted.business_inventory_location || undefined,
       taxRatePct: converted.tax_rate_pct ? parseFloat(converted.tax_rate_pct) : undefined,
-      taxAmount: converted.tax_amount || undefined,
       taxAmountPurchasePrice: converted.tax_amount_purchase_price || undefined,
       taxAmountProjectPrice: converted.tax_amount_project_price || undefined,
       createdBy: converted.created_by || undefined,
@@ -1526,7 +1612,6 @@ export const unifiedItemsService = {
     if (item.inventoryStatus !== undefined) dbItem.inventory_status = item.inventoryStatus
     if (item.businessInventoryLocation !== undefined) dbItem.business_inventory_location = item.businessInventoryLocation
     if (item.taxRatePct !== undefined) dbItem.tax_rate_pct = item.taxRatePct
-    if (item.taxAmount !== undefined) dbItem.tax_amount = item.taxAmount
     if (item.taxAmountPurchasePrice !== undefined) dbItem.tax_amount_purchase_price = item.taxAmountPurchasePrice
     if (item.taxAmountProjectPrice !== undefined) dbItem.tax_amount_project_price = item.taxAmountProjectPrice
     if (item.createdBy !== undefined) dbItem.created_by = item.createdBy
@@ -1535,6 +1620,31 @@ export const unifiedItemsService = {
     if (item.latestTransactionId !== undefined) dbItem.latest_transaction_id = item.latestTransactionId ?? null
     
     return dbItem
+  },
+
+  async bulkUpdateItemImages(
+    accountId: string,
+    updates: Array<{ itemId: string; images: ItemImage[] }>
+  ): Promise<void> {
+    await ensureAuthenticatedForDatabase()
+    if (!updates || updates.length === 0) return
+
+    await Promise.all(
+      updates.map(async update => {
+        const { error } = await supabase
+          .from('items')
+          .update({
+            images: update.images,
+            last_updated: new Date().toISOString()
+          })
+          .eq('account_id', accountId)
+          .eq('item_id', update.itemId)
+
+        if (error) {
+          throw error
+        }
+      })
+    )
   },
 
   // Get items for a project (project_id == projectId) (account-scoped)
@@ -1571,8 +1681,10 @@ export const unifiedItemsService = {
       query = query.or(`description.ilike.%${filters.searchQuery}%,source.ilike.%${filters.searchQuery}%,sku.ilike.%${filters.searchQuery}%,payment_method.ilike.%${filters.searchQuery}%`)
     }
 
-    // Apply sorting
-    query = query.order('last_updated', { ascending: false })
+    // Apply sorting that remains stable when an item is edited
+    query = query
+      .order('created_at', { ascending: false, nullsFirst: false })
+      .order('date_created', { ascending: false, nullsFirst: false })
 
     // Apply pagination
     if (pagination) {
@@ -1605,7 +1717,7 @@ export const unifiedItemsService = {
           schema: 'public',
           table: 'items',
           // Broaden filter to account-level to catch updates where project_id changes
-          filter: `account_id=eq.${accountId}`
+          filter: 'account_id=eq.' + accountId
         },
         (payload) => {
           console.log('Project items change received (broad filter)!', payload)
@@ -1681,8 +1793,10 @@ export const unifiedItemsService = {
       query = query.or(`description.ilike.%${filters.searchQuery}%,source.ilike.%${filters.searchQuery}%,sku.ilike.%${filters.searchQuery}%,business_inventory_location.ilike.%${filters.searchQuery}%`)
     }
 
-    // Apply sorting
-    query = query.order('last_updated', { ascending: false })
+    // Apply sorting that remains stable when an item is edited
+    query = query
+      .order('created_at', { ascending: false, nullsFirst: false })
+      .order('date_created', { ascending: false, nullsFirst: false })
 
     // Apply pagination
     if (pagination) {
@@ -1713,7 +1827,7 @@ export const unifiedItemsService = {
           event: '*',
           schema: 'public',
           table: 'items',
-          filter: `account_id=eq.${accountId}`
+          filter: 'account_id=eq.' + accountId
         },
         (payload) => {
           console.log('Business inventory change received!', payload)
@@ -1819,6 +1933,15 @@ export const unifiedItemsService = {
       .insert(dbItem)
 
     if (error) throw error
+
+    try {
+      if (dbItem.transaction_id) {
+        await _updateTransactionItemIds(accountId, dbItem.transaction_id, itemId, 'add')
+      }
+    } catch (e) {
+      console.warn('Failed to sync transaction item_ids after createItem:', e)
+    }
+
     // If this item was created attached to a transaction, adjust that transaction's derived sum and recompute
     try {
       if (dbItem.transaction_id) {
@@ -1852,6 +1975,12 @@ export const unifiedItemsService = {
     } catch (e) {
       console.warn('Failed to fetch existing item before update:', e)
     }
+
+    const previousTransactionId = existingItem?.transactionId ?? null
+    const explicitTransactionUpdate = updates.transactionId !== undefined
+    const nextTransactionId = explicitTransactionUpdate
+      ? (updates.transactionId as string | null | undefined) ?? null
+      : previousTransactionId
 
     // Convert camelCase updates to database format
     const dbUpdates = this._convertItemToDb({
@@ -1937,12 +2066,26 @@ export const unifiedItemsService = {
       .eq('item_id', itemId)
 
     if (error) throw error
+
+    if (previousTransactionId !== nextTransactionId) {
+      try {
+        // NOTE: We no longer remove items from source transaction's item_ids when they move
+        // This preserves historical completeness. Items stay in item_ids forever once added.
+        // if (previousTransactionId) {
+        //   await _updateTransactionItemIds(accountId, previousTransactionId, itemId, 'remove')
+        // }
+        if (nextTransactionId) {
+          await _updateTransactionItemIds(accountId, nextTransactionId, itemId, 'add')
+        }
+      } catch (e) {
+        console.warn('Failed to sync transaction item_ids after updateItem:', e)
+      }
+    }
+
     // Adjust persisted derived sums and recompute needs_review for affected transactions (old and new)
     try {
-      const prevTx = existingItem?.transactionId ?? null
-      const newTx = updates.transactionId !== undefined ? (updates.transactionId as string | null) : prevTx
       const projectForTx = (updates.projectId !== undefined ? updates.projectId : existingItem?.projectId) ?? null
-      const affected = Array.from(new Set([prevTx, newTx]).values()).filter(Boolean) as string[]
+      const affected = Array.from(new Set([previousTransactionId, nextTransactionId]).values()).filter(Boolean) as string[]
       const prevPrice = parseFloat(existingItem?.purchasePrice || '0')
       const newPrice = updates.purchasePrice !== undefined ? parseFloat(String(updates.purchasePrice || '0')) : prevPrice
 
@@ -1950,7 +2093,7 @@ export const unifiedItemsService = {
         try {
           if (!transactionService._isBatchActive(accountId, txId)) {
             // Same transaction updated: send delta (new - prev)
-            if (prevTx && newTx && prevTx === newTx && txId === prevTx) {
+            if (previousTransactionId && nextTransactionId && previousTransactionId === nextTransactionId && txId === previousTransactionId) {
               const delta = newPrice - prevPrice
               if (delta !== 0) {
                 transactionService.notifyTransactionChanged(accountId, txId, { deltaSum: delta }).catch((e: any) => {
@@ -1959,13 +2102,13 @@ export const unifiedItemsService = {
               }
             } else {
               // Moved between transactions: subtract from old and add to new
-              if (txId === prevTx) {
+              if (txId === previousTransactionId) {
                 const delta = -prevPrice
                 transactionService.notifyTransactionChanged(accountId, txId, { deltaSum: delta }).catch((e: any) => {
                   console.warn('Failed to notifyTransactionChanged for old tx after moving item', txId, e)
                 })
               }
-              if (txId === newTx) {
+              if (txId === nextTransactionId) {
                 const delta = newPrice
                 transactionService.notifyTransactionChanged(accountId, txId, { deltaSum: delta }).catch((e: any) => {
                   console.warn('Failed to notifyTransactionChanged for new tx after moving item', txId, e)
@@ -2000,6 +2143,12 @@ export const unifiedItemsService = {
       .eq('item_id', itemId)
 
     if (error) throw error
+
+    if (existingItem?.transactionId) {
+      _updateTransactionItemIds(accountId, existingItem.transactionId, itemId, 'remove').catch(e => {
+        console.warn('Failed to sync transaction item_ids after deleteItem:', e)
+      })
+    }
 
     // Adjust persisted sum and recompute for the transaction the item belonged to (if any)
     try {
@@ -2145,7 +2294,7 @@ export const unifiedItemsService = {
       projectId: projectId,
       inventoryStatus: 'allocated',
       transactionId: purchaseTransactionId,
-      disposition: 'keep',
+      disposition: 'purchased',
       space: space,
       previousProjectTransactionId: null,
       previousProjectId: null
@@ -2198,7 +2347,7 @@ export const unifiedItemsService = {
       projectId: projectId,
       inventoryStatus: 'allocated' as const,
       transactionId: null as string | null,
-      disposition: 'keep' as const,
+      disposition: 'purchased' as const,
       notes: notes,
       space: space ?? '',
       previousProjectTransactionId: null as string | null,
@@ -2341,7 +2490,7 @@ export const unifiedItemsService = {
       projectId: newProjectId,
       inventoryStatus: 'allocated',
       transactionId: purchaseTransactionId,
-      disposition: 'keep',
+      disposition: 'purchased',
       space: space,
       previousProjectTransactionId: null,
       previousProjectId: null
@@ -2498,7 +2647,7 @@ export const unifiedItemsService = {
       projectId: projectId,
       inventoryStatus: 'allocated',
       transactionId: purchaseTransactionId,
-      disposition: 'keep',
+      disposition: 'purchased',
       space: space,
       previousProjectTransactionId: null,
       previousProjectId: null
@@ -2845,7 +2994,7 @@ export const unifiedItemsService = {
             projectId: projectId,
             inventoryStatus: 'allocated',
             transactionId: canonicalTransactionId,
-            disposition: 'keep',
+            disposition: 'purchased',
             space: allocationData.space || '',
             previousProjectTransactionId: null,
             previousProjectId: null
@@ -2869,7 +3018,7 @@ export const unifiedItemsService = {
           projectId: projectId,
           inventoryStatus: 'allocated',
           transactionId: canonicalTransactionId,
-          disposition: 'keep',
+          disposition: 'purchased',
           space: allocationData.space || '',
           previousProjectTransactionId: null,
           previousProjectId: null
@@ -2891,7 +3040,7 @@ export const unifiedItemsService = {
         projectId: projectId,
         inventoryStatus: 'allocated',
         transactionId: canonicalTransactionId,
-        disposition: 'keep',
+        disposition: 'purchased',
         space: allocationData.space || '',
         previousProjectTransactionId: null,
         previousProjectId: null
@@ -3297,7 +3446,7 @@ export const unifiedItemsService = {
       project_price: originalItem.projectPrice || null,
       market_value: originalItem.marketValue || null,
       payment_method: originalItem.paymentMethod || '',
-      disposition: 'keep', // Default disposition for duplicates
+      disposition: 'purchased', // Default disposition for duplicates
       notes: originalItem.notes || null,
       space: originalItem.space || null,
       qr_key: newQrKey,
@@ -3310,7 +3459,8 @@ export const unifiedItemsService = {
       last_updated: now.toISOString(),
       images: originalItem.images || [], // Copy images from original item
       tax_rate_pct: originalItem.taxRatePct || null,
-      tax_amount: originalItem.taxAmount || null,
+      tax_amount_purchase_price: originalItem.taxAmountPurchasePrice || null,
+      tax_amount_project_price: originalItem.taxAmountProjectPrice || null,
       created_by: originalItem.createdBy || null,
       created_at: now.toISOString()
     }
@@ -3328,6 +3478,14 @@ export const unifiedItemsService = {
       .insert(duplicatedItem)
 
     if (error) throw error
+
+    try {
+      if (duplicatedItem.transaction_id) {
+        await _updateTransactionItemIds(accountId, duplicatedItem.transaction_id, newItemId, 'add')
+      }
+    } catch (e) {
+      console.warn('Failed to sync transaction item_ids after duplicateItem:', e)
+    }
 
     return newItemId
   },
@@ -3377,6 +3535,13 @@ export const unifiedItemsService = {
       return tax.toFixed(4)
     }
 
+    const normalizeMoneyStringToFourDecimals = (input: string | null | undefined): string | null => {
+      if (!input) return null
+      const n = Number.parseFloat(String(input))
+      if (!Number.isFinite(n)) return null
+      return n.toFixed(4)
+    }
+
     for (const itemData of items) {
       const itemId = `I-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
       createdItemIds.push(itemId)
@@ -3393,7 +3558,7 @@ export const unifiedItemsService = {
         project_price: itemData.projectPrice || null,
         market_value: itemData.marketValue || null,
         payment_method: 'Client Card', // Default payment method
-        disposition: 'keep',
+        disposition: 'purchased',
         notes: itemData.notes || null,
         qr_key: qrKey,
         bookmark: false,
@@ -3412,9 +3577,12 @@ export const unifiedItemsService = {
       } else if (inheritedTax !== undefined) {
         item.tax_rate_pct = inheritedTax
       }
-      // Compute and attach derived tax amounts (purchase and project) as two-decimal strings
-      item.tax_amount_purchase_price = computeTaxString(item.purchase_price, item.tax_rate_pct)
-      item.tax_amount_project_price = computeTaxString(item.project_price, item.tax_rate_pct)
+      // Attach item-level tax amounts. If provided explicitly (e.g. importer parsed line-item tax),
+      // prefer those; otherwise compute from the tax rate.
+      const explicitPurchaseTax = normalizeMoneyStringToFourDecimals(itemData.taxAmountPurchasePrice)
+      const explicitProjectTax = normalizeMoneyStringToFourDecimals(itemData.taxAmountProjectPrice)
+      item.tax_amount_purchase_price = explicitPurchaseTax ?? computeTaxString(item.purchase_price, item.tax_rate_pct)
+      item.tax_amount_project_price = explicitProjectTax ?? computeTaxString(item.project_price, item.tax_rate_pct)
 
       itemsToInsert.push(item)
     }
@@ -3426,6 +3594,14 @@ export const unifiedItemsService = {
         .insert(itemsToInsert)
 
       if (error) throw error
+
+      if (transactionId && createdItemIds.length > 0) {
+        try {
+          await _updateTransactionItemIds(accountId, transactionId, createdItemIds, 'add')
+        } catch (e) {
+          console.warn('Failed to sync transaction item_ids after createTransactionItems:', e)
+        }
+      }
     }
     // Recompute and persist needs_review for the transaction we just mutated (fire-and-forget,
     // but skip if a top-level batch is active for this transaction).
@@ -3732,7 +3908,7 @@ export const deallocationService = {
         project_id: projectId,
         transaction_date: toDateOnlyString(now),
         source: projectName,  // Project name as source (project moving to inventory)
-        transaction_type: 'To Inventory',  // Project is moving item TO inventory
+        transaction_type: 'Sale',  // Project is moving item TO inventory
         payment_method: 'Pending',
         amount: parseFloat(calculatedAmount || '0').toFixed(2),
         budget_category: 'Furnishings',

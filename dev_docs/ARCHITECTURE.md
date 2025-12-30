@@ -111,7 +111,7 @@ const [searchQuery, setSearchQuery] = useState('')
 - Clean list view (not card grid) for better usability
 - Search and filtering within project context
 - Bookmark functionality
-- Return/Keep status tracking
+- Disposition tracking (to purchase, purchased, to return, returned, inventory)
 - Select all/multi-select functionality
 - Direct navigation to item details from list
 
@@ -125,7 +125,7 @@ const [searchQuery, setSearchQuery] = useState('')
 ### ✅ Item Details
 - Complete item view with all fields
 - Bookmark toggle functionality
-- Return/Keep status toggle
+- Disposition status toggle
 - QR code printing
 - Proper navigation back to inventory
 
@@ -152,7 +152,7 @@ interface InventoryItem {
   notes: string        // Additional notes
   qrKey: string        // QR code identifier
   bookmark: boolean    // Bookmark status
-  disposition: string  // 'keep' or 'return'
+  disposition: string  // 'to purchase' | 'purchased' | 'to return' | 'returned' | 'inventory'
   dateCreated: string  // Creation date
   lastUpdated: string  // Last modification date
   transactionId: string // Associated transaction
@@ -216,7 +216,7 @@ interface Project {
 - Inventory item management with all original fields
 - QR code generation functionality
 - Bookmarking system
-- Return/Keep tracking
+- Disposition tracking
 - Item search and filtering
 - Multi-select operations
 - Mobile-responsive design

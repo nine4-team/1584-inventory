@@ -80,7 +80,7 @@ export default function EditBusinessInventoryItem() {
           purchasePrice: itemData.purchasePrice || '',
           projectPrice: itemData.projectPrice || '',
           marketValue: itemData.marketValue || '',
-          disposition: itemData.disposition === 'keep' ? 'inventory' : (itemData.disposition || 'inventory'),
+          disposition: itemData.disposition === 'keep' ? 'purchased' : (itemData.disposition || 'inventory'),
           notes: itemData.notes || '',
           bookmark: itemData.bookmark,
           businessInventoryLocation: itemData.businessInventoryLocation || '',
@@ -361,6 +361,8 @@ export default function EditBusinessInventoryItem() {
                   onChange={(e) => handleInputChange('disposition', e.target.value)}
                   className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
                 >
+                  <option value="to purchase">To Purchase</option>
+                  <option value="purchased">Purchased</option>
                   <option value="to return">To Return</option>
                   <option value="returned">Returned</option>
                   <option value="inventory">Inventory</option>

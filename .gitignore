@@ -2,4 +2,7 @@ node_modules
 .env
 .env.local
 .env.*.local
-dist
+
+# Build outputs (generated)
+dist/
+dev-dist/

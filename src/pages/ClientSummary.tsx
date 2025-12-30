@@ -10,6 +10,7 @@ import { useAccount } from '@/contexts/AccountContext'
 import { useBusinessProfile } from '@/contexts/BusinessProfileContext'
 import { CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { useCategories } from '@/components/CategorySelect'
+import { projectItems, projectInvoice, projectsRoot } from '@/utils/routes'
 
 const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
 
@@ -23,11 +24,13 @@ function toNumber(value: string | number | null | undefined): number {
 }
 
 export default function ClientSummary() {
-  const { id: projectId } = useParams<{ id: string }>()
-  const navigate = useStackedNavigate()
+  const { id, projectId } = useParams<{ id?: string; projectId?: string }>()
+  const resolvedProjectId = projectId || id
+  const stackedNavigate = useStackedNavigate()
   const { currentAccountId } = useAccount()
   const { businessName, businessLogoUrl } = useBusinessProfile()
   const { categories: accountCategories } = useCategories(false)
+  const { buildContextUrl, getBackDestination } = useNavigationContext()
 
   const [project, setProject] = useState<Project | null>(null)
   const [items, setItems] = useState<Item[]>([])
@@ -39,28 +42,28 @@ export default function ClientSummary() {
 
   useEffect(() => {
     const load = async () => {
-      if (!projectId || !currentAccountId) {
+      if (!resolvedProjectId || !currentAccountId) {
         if (!currentAccountId) return // Wait for account to load
-        navigate('/projects')
+        stackedNavigate(projectsRoot())
         return
       }
 
       setIsLoading(true)
       setError(null)
       try {
-        const [proj, projectItems, projectTransactions] = await Promise.all([
-          projectService.getProject(currentAccountId, projectId),
-          unifiedItemsService.getItemsByProject(currentAccountId, projectId),
-          transactionService.getTransactions(currentAccountId, projectId)
+        const [proj, projectItemsData, projectTransactions] = await Promise.all([
+          projectService.getProject(currentAccountId, resolvedProjectId),
+          unifiedItemsService.getItemsByProject(currentAccountId, resolvedProjectId),
+          transactionService.getTransactions(currentAccountId, resolvedProjectId)
         ])
 
         if (!proj) {
-          navigate('/projects')
+          stackedNavigate(projectsRoot())
           return
         }
 
         setProject(proj)
-        setItems(projectItems)
+        setItems(projectItemsData)
         setTransactions(projectTransactions)
       } catch (e: any) {
         console.error('Failed to load client summary:', e)
@@ -71,7 +74,7 @@ export default function ClientSummary() {
     }
 
     load()
-  }, [projectId, currentAccountId, navigate])
+  }, [resolvedProjectId, currentAccountId, stackedNavigate])
 
   // Create a map of categoryId -> category name for quick lookup
   const categoryMap = useMemo(() => {
@@ -141,8 +144,8 @@ export default function ClientSummary() {
 
   const handlePrint = () => window.print()
   const handleBack = () => {
-    if (!projectId) return navigate('/projects')
-    navigate(`/project/${projectId}?tab=inventory`)
+    const fallback = resolvedProjectId ? projectItems(resolvedProjectId) : projectsRoot()
+    stackedNavigate(getBackDestination(fallback))
   }
 
   // Helper to get receipt link for an item.
@@ -152,7 +155,7 @@ export default function ClientSummary() {
   //   use the project invoice as the receipt link instead of the transaction page.
   // - No fallback searching other transactions for this item — return null when no transactionId.
   const getReceiptLink = (item: Item): { href: string; isInternal: boolean } | null => {
-    if (!projectId) return null
+    if (!resolvedProjectId) return null
 
     if (item.transactionId) {
       const tx = transactions.find((t) => t.transactionId === item.transactionId)
@@ -167,7 +170,7 @@ export default function ClientSummary() {
         tx.reimbursementType === CLIENT_OWES_COMPANY || tx.reimbursementType === COMPANY_OWES_CLIENT
 
       if (isCanonicalById || isInvoiceableByType) {
-        return { href: `/project/${projectId}/invoice`, isInternal: true }
+        return { href: projectInvoice(resolvedProjectId), isInternal: true }
       }
 
       const receiptImageUrl = tx.receiptImages?.[0]?.url

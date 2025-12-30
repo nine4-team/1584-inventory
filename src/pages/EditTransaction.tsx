@@ -1,8 +1,7 @@
 import { ArrowLeft, Save, X } from 'lucide-react'
-import { useParams, useLocation } from 'react-router-dom'
-import { useStackedNavigate } from '@/hooks/useStackedNavigate'
+import { useParams, useLocation, useNavigate } from 'react-router-dom'
 import { useNavigationStack } from '@/contexts/NavigationStackContext'
-import { useState, useEffect, useRef, FormEvent } from 'react'
+import { useState, useEffect, useRef, FormEvent, useMemo, useCallback } from 'react'
 import { TransactionFormData, TransactionValidationErrors, TransactionImage, TransactionItemFormData, TaxPreset } from '@/types'
 import { COMPANY_NAME, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { transactionService, projectService, unifiedItemsService } from '@/services/inventoryService'
@@ -18,15 +17,34 @@ import { toDateOnlyString } from '@/utils/dateUtils'
 import { getTaxPresets } from '@/services/taxPresetsService'
 import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import CategorySelect from '@/components/CategorySelect'
+import TransactionItemsList from '@/components/TransactionItemsList'
+import { projectTransactionDetail, projectTransactions } from '@/utils/routes'
 
 export default function EditTransaction() {
-  const { id: projectId, transactionId } = useParams<{ id: string; transactionId: string }>()
-  const navigate = useStackedNavigate()
+  const { id, projectId: routeProjectId, transactionId } = useParams<{ id?: string; projectId?: string; transactionId: string }>()
+  const projectId = routeProjectId || id
+  const navigate = useNavigate()
   const navigationStack = useNavigationStack()
   const location = useLocation()
   const { hasRole } = useAuth()
   const { currentAccountId } = useAccount()
-  const { buildContextUrl } = useNavigationContext()
+  const { buildContextUrl, getBackDestination } = useNavigationContext()
+
+  const defaultBackPath = useMemo(() => {
+    if (projectId && transactionId) {
+      return projectTransactionDetail(projectId, transactionId)
+    }
+    if (projectId) {
+      return projectTransactions(projectId)
+    }
+    return '/projects'
+  }, [projectId, transactionId])
+
+  const handleBackNavigation = useCallback(() => {
+    const fallback = getBackDestination(defaultBackPath)
+    const target = navigationStack.pop(location.pathname + location.search) || fallback
+    navigate(target)
+  }, [defaultBackPath, getBackDestination, location.pathname, location.search, navigationStack, navigate])
 
   // Check if user has permission to edit transactions (USER role or higher)
   if (!hasRole(UserRole.USER)) {
@@ -41,7 +59,7 @@ export default function EditTransaction() {
             You don't have permission to edit transactions. Please contact an administrator if you need access.
           </p>
           <ContextLink
-            to={buildContextUrl(`/project/${projectId}`)}
+            to={projectId ? buildContextUrl(projectTransactions(projectId)) : '/projects'}
             className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700"
           >
             Back to Project
@@ -392,7 +410,7 @@ export default function EditTransaction() {
                 marketValue: item.marketValue || '',
                 notes: item.notes || '',
                 space: item.space || '',
-                disposition: 'keep'
+                disposition: 'purchased'
               }
               return await unifiedItemsService.createItem(currentAccountId, itemData)
             })
@@ -449,7 +467,11 @@ export default function EditTransaction() {
       }
 
       await transactionService.updateTransaction(currentAccountId, projectId, transactionId, updateData)
-      navigate(`/project/${projectId}/transaction/${transactionId}`)
+      if (projectId) {
+        navigate(projectTransactionDetail(projectId, transactionId))
+      } else {
+        navigate('/projects')
+      }
     } catch (error) {
       console.error('Error updating transaction:', error)
       // Set a general error message instead of targeting specific fields
@@ -524,8 +546,7 @@ export default function EditTransaction() {
         <div className="flex items-center justify-between">
           <button
             onClick={() => {
-              const target = navigationStack.pop(location.pathname + location.search) || buildContextUrl(`/project/${projectId}`)
-              navigate(target)
+              handleBackNavigation()
             }}
             className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
           >
@@ -987,6 +1008,25 @@ export default function EditTransaction() {
             )}
           </div>
 
+          {/* Transaction Items */}
+          <div>
+            <TransactionItemsList
+              items={items}
+              onItemsChange={(newItems) => {
+                setItems(newItems)
+                // Clear items error if items are added
+                if (errors.items && newItems.length > 0) {
+                  setErrors(prev => ({ ...prev, items: undefined }))
+                }
+              }}
+              projectId={projectId}
+              projectName={projectName}
+            />
+            {errors.items && (
+              <p className="mt-1 text-sm text-red-600">{errors.items}</p>
+            )}
+          </div>
+
           {/* Other Images */}
           <div>
             <h3 className="text-lg font-medium text-gray-900 mb-2">
@@ -1009,8 +1049,7 @@ export default function EditTransaction() {
           <div className="hidden sm:flex justify-end sm:space-x-3 pt-4">
             <button
               onClick={() => {
-                const target = navigationStack.pop(location.pathname + location.search) || buildContextUrl(`/project/${projectId}`)
-                navigate(target)
+                handleBackNavigation()
               }}
               className="inline-flex justify-center items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
             >
@@ -1034,8 +1073,7 @@ export default function EditTransaction() {
         <div className="flex space-x-3">
           <button
             onClick={() => {
-              const target = navigationStack.pop(location.pathname + location.search) || buildContextUrl(`/project/${projectId}`)
-              navigate(target)
+              handleBackNavigation()
             }}
             className="flex-1 inline-flex justify-center items-center px-4 py-3 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
           >

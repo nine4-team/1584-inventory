@@ -5,6 +5,7 @@ import { formatCurrency } from '@/utils/dateUtils'
 import { ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, XCircle, Plus } from 'lucide-react'
 import { useToast } from './ToastContext'
 import { useAccount } from '@/contexts/AccountContext'
+import { projectItemEdit } from '@/utils/routes'
 
 interface TransactionAuditProps {
   transaction: Transaction
@@ -317,7 +318,7 @@ export default function TransactionAudit({
                         <td className="px-3 py-2 text-sm text-gray-500">{item.sku || '-'}</td>
                         <td className="px-3 py-2 text-sm">
                           <a
-                            href={`/project/${projectId}/item/${item.itemId}/edit`}
+                            href={projectItemEdit(projectId, item.itemId)}
                             className="text-primary-600 hover:text-primary-800"
                           >
                             Edit Price

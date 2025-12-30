@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
+import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { Button } from '@/components/ui/Button'
 import type { Item, Project } from '@/types'
 import { projectService, unifiedItemsService } from '@/services/inventoryService'
 import { useAccount } from '@/contexts/AccountContext'
 import { useBusinessProfile } from '@/contexts/BusinessProfileContext'
+import { projectItems, projectsRoot } from '@/utils/routes'
 
 const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
 
@@ -19,8 +21,10 @@ function toNumber(value: string | number | null | undefined): number {
 }
 
 export default function PropertyManagementSummary() {
-  const { id: projectId } = useParams<{ id: string }>()
-  const navigate = useStackedNavigate()
+  const { id, projectId } = useParams<{ id?: string; projectId?: string }>()
+  const resolvedProjectId = projectId || id
+  const stackedNavigate = useStackedNavigate()
+  const { getBackDestination } = useNavigationContext()
   const { currentAccountId } = useAccount()
   const { businessName, businessLogoUrl } = useBusinessProfile()
 
@@ -33,27 +37,27 @@ export default function PropertyManagementSummary() {
 
   useEffect(() => {
     const load = async () => {
-      if (!projectId || !currentAccountId) {
+      if (!resolvedProjectId || !currentAccountId) {
         if (!currentAccountId) return // Wait for account to load
-        navigate('/projects')
+        stackedNavigate(projectsRoot())
         return
       }
 
       setIsLoading(true)
       setError(null)
       try {
-        const [proj, projectItems] = await Promise.all([
-          projectService.getProject(currentAccountId, projectId),
-          unifiedItemsService.getItemsByProject(currentAccountId, projectId)
+        const [proj, projectItemsData] = await Promise.all([
+          projectService.getProject(currentAccountId, resolvedProjectId),
+          unifiedItemsService.getItemsByProject(currentAccountId, resolvedProjectId)
         ])
 
         if (!proj) {
-          navigate('/projects')
+          stackedNavigate(projectsRoot())
           return
         }
 
         setProject(proj)
-        setItems(projectItems)
+        setItems(projectItemsData)
       } catch (e: any) {
         console.error('Failed to load property management summary:', e)
         setError('Failed to load property management summary. Please try again.')
@@ -63,7 +67,7 @@ export default function PropertyManagementSummary() {
     }
 
     load()
-  }, [projectId, currentAccountId, navigate])
+  }, [resolvedProjectId, currentAccountId, stackedNavigate])
 
   const totalMarketValue = useMemo(() => {
     return items.reduce((sum, item) => {
@@ -74,8 +78,8 @@ export default function PropertyManagementSummary() {
 
   const handlePrint = () => window.print()
   const handleBack = () => {
-    if (!projectId) return navigate('/projects')
-    navigate(`/project/${projectId}?tab=inventory`)
+    const fallback = resolvedProjectId ? projectItems(resolvedProjectId) : projectsRoot()
+    stackedNavigate(getBackDestination(fallback))
   }
 
   if (isLoading) {

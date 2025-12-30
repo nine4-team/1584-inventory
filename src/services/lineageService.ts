@@ -249,9 +249,9 @@ export const lineageService = {
     itemId: string | undefined,
     callback: (edge: ItemLineageEdge) => void
   ): () => void {
-    const filterParts = [`account_id=eq.${accountId}`]
+    const filterParts = ['account_id=eq.' + accountId]
     if (itemId) {
-      filterParts.push(`item_id=eq.${itemId}`)
+      filterParts.push('item_id=eq.' + itemId)
     }
     const filter = filterParts.join(',')
 
@@ -277,7 +277,7 @@ export const lineageService = {
       )
       .subscribe((status, err) => {
         if (status === 'SUBSCRIBED') {
-          console.log('Subscribed to item_lineage_edges channel', channelName)
+          // console.log('Subscribed to item_lineage_edges channel', channelName)
         }
         if (err) {
           console.error('Error subscribing to item_lineage_edges channel', err)
@@ -302,7 +302,7 @@ export const lineageService = {
     fromTransactionId: string,
     callback: (edge: ItemLineageEdge) => void
   ): () => void {
-    const filter = `account_id=eq.${accountId},from_transaction_id=eq.${fromTransactionId}`
+    const filter = 'account_id=eq.' + accountId + ',from_transaction_id=eq.' + fromTransactionId
 
     const channelName = `item_lineage:from_tx:${accountId}:${fromTransactionId}`
     const channel = supabase
@@ -326,7 +326,7 @@ export const lineageService = {
       )
       .subscribe((status, err) => {
         if (status === 'SUBSCRIBED') {
-          console.log('Subscribed to item_lineage_edges from_transaction channel', channelName)
+          // console.log('Subscribed to item_lineage_edges from_transaction channel', channelName)
         }
         if (err) {
           console.error('Error subscribing to item_lineage_edges from_transaction channel', err)

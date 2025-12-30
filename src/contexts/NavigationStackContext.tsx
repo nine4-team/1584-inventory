@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useRef, useState, useEffect } from 'react'
+import React, { createContext, useContext, useEffect, useMemo, useRef, useCallback } from 'react'
 
 export interface NavigationStack {
   push: (entry: string) => void
@@ -24,8 +24,10 @@ export function NavigationStackProvider({
   maxLength = 200,
 }: NavigationStackProviderProps) {
   const stackRef = useRef<string[]>([])
-  const [, setVersion] = useState(0) // used to trigger re-renders when size changes
-  const debugEnabled = typeof window !== 'undefined' && sessionStorage.getItem('navStack:debug') === '1'
+  const debugEnabled = useMemo(
+    () => typeof window !== 'undefined' && sessionStorage.getItem('navStack:debug') === '1',
+    []
+  )
 
   // Hydrate from sessionStorage on mount
   useEffect(() => {
@@ -45,12 +47,11 @@ export function NavigationStackProvider({
     } catch {
       // Ignore malformed data
     }
-    // notify consumers
-    setVersion((v) => v + 1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const persist = () => {
+  const persist = useCallback(() => {
+    if (!mirrorToSessionStorage) return
     try {
       sessionStorage.setItem(SESSION_KEY, JSON.stringify(stackRef.current))
       if (debugEnabled) {
@@ -59,42 +60,46 @@ export function NavigationStackProvider({
     } catch {
       // ignore
     }
-  }
+  }, [debugEnabled, mirrorToSessionStorage])
 
-  const push = (entry: string) => {
-    if (!entry) return
-    const top = stackRef.current[stackRef.current.length - 1]
-    if (top === entry) return
-    stackRef.current.push(entry)
-    // trim to maxLength
-    if (stackRef.current.length > maxLength) {
-      stackRef.current = stackRef.current.slice(-maxLength)
-    }
-    persist()
-    setVersion((v) => v + 1)
-    if (debugEnabled) {
-      console.debug('NavigationStackProvider push:', entry, 'stack:', stackRef.current)
-    }
-  }
-
-  const pop = (currentLocation?: string): string | null => {
-    while (stackRef.current.length > 0) {
-      const top = stackRef.current.pop() as string
-      // skip entries equal to current location if provided
-      if (currentLocation && top === currentLocation) {
-        continue
+  const push = useCallback(
+    (entry: string) => {
+      if (!entry) return
+      const top = stackRef.current[stackRef.current.length - 1]
+      if (top === entry) return
+      stackRef.current.push(entry)
+      // trim to maxLength
+      if (stackRef.current.length > maxLength) {
+        stackRef.current = stackRef.current.slice(-maxLength)
       }
       persist()
-      setVersion((v) => v + 1)
       if (debugEnabled) {
-        console.debug('NavigationStackProvider pop ->', top, 'stack:', stackRef.current)
+        console.debug('NavigationStackProvider push:', entry, 'stack:', stackRef.current)
       }
-      return top
-    }
-    return null
-  }
+    },
+    [debugEnabled, maxLength, persist]
+  )
 
-  const peek = (currentLocation?: string): string | null => {
+  const pop = useCallback(
+    (currentLocation?: string): string | null => {
+      while (stackRef.current.length > 0) {
+        const top = stackRef.current.pop() as string
+        // skip entries equal to current location if provided
+        if (currentLocation && top === currentLocation) {
+          continue
+        }
+        persist()
+        if (debugEnabled) {
+          console.debug('NavigationStackProvider pop ->', top, 'stack:', stackRef.current)
+        }
+        return top
+      }
+      return null
+    },
+    [debugEnabled, persist]
+  )
+
+  const peek = useCallback((currentLocation?: string): string | null => {
     for (let i = stackRef.current.length - 1; i >= 0; i--) {
       const entry = stackRef.current[i]
       if (currentLocation && entry === currentLocation) {
@@ -103,23 +108,25 @@ export function NavigationStackProvider({
       return entry || null
     }
     return null
-  }
+  }, [])
 
-  const clear = () => {
+  const clear = useCallback(() => {
     stackRef.current = []
     persist()
-    setVersion((v) => v + 1)
-  }
+  }, [persist])
 
-  const size = () => stackRef.current.length
+  const size = useCallback(() => stackRef.current.length, [])
 
-  const value: NavigationStack = {
-    push,
-    pop,
-    peek,
-    clear,
-    size,
-  }
+  const value = useMemo<NavigationStack>(
+    () => ({
+      push,
+      pop,
+      peek,
+      clear,
+      size,
+    }),
+    [push, pop, peek, clear, size]
+  )
 
   return <NavigationStackContext.Provider value={value}>{children}</NavigationStackContext.Provider>
 }

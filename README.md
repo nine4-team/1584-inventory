@@ -70,6 +70,16 @@ VITE_SUPABASE_ANON_KEY=your-anon-key
 # Apply them through Supabase Dashboard or CLI
 ```
 
+### 4.5 Deploy Supabase Edge Functions (if applicable)
+
+```bash
+# Example: deploy the HighLevel onboarding webhook
+supabase functions deploy highlevel-onboard \
+  --project-ref <your-project-ref>
+```
+
+Set the secrets listed in the “HighLevel Onboarding Webhook” section before deploying.
+
 ### 5. Run Development Server
 
 ```bash
@@ -208,6 +218,21 @@ Set these environment variables in your hosting provider's dashboard:
 - `VITE_SUPABASE_ANON_KEY`: Your Supabase anon/public key
 
 **Important:** These are public environment variables that will be embedded in your client-side bundle. The anon key is safe to expose as it's designed for client-side use and respects Row Level Security policies.
+
+## 🔗 HighLevel Onboarding Webhook
+
+- **Function implementation**: `supabase/functions/highlevel-onboard/index.ts`
+- **Database log**: `public.highlevel_onboarding_events` (migration `20251223_create_highlevel_onboarding_events.sql`).
+ - **Execution flow**:
+  1. HighLevel issues a POST request to the Supabase Edge Function URL (or a vanity URL that proxies to it) after payment success.
+  2. The function validates the HMAC signature (`X-HL-Signature`), enforces the `Idempotency-Key`, provisions an account, and either attaches an existing user or creates a fresh invitation.
+  3. Response payload mirrors `{ status, account_id, invitation_link?, login_url?, idempotency_key }`, so HighLevel can drop the invite/login link directly into its outbound email.
+ - **Secrets to set before deploying** (via `supabase secrets set`):
+  - `APP_BASE_URL` (and optional `APP_LOGIN_URL`)
+  - `HL_WEBHOOK_HMAC_SECRET`
+  - `ONBOARDING_INVITER_USER_ID` (optional system user UUID for attribution)
+  - `ONBOARDING_INVITE_EXPIRATION_DAYS` (defaults to `7`)
+ - **Production endpoint**: `https://<project-ref>.functions.supabase.co/highlevel-onboard` — proxy behind `https://api.yoursite.com/hook/highlevel/onboard` if you prefer a branded URL.
 
 ### Cloudflare Pages Configuration
 

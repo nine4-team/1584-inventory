@@ -1,12 +1,12 @@
-import { Plus, Search, Package, Receipt, Filter, QrCode, Trash2, Camera, Edit, Bookmark, Copy, DollarSign, ChevronDown } from 'lucide-react'
+import { Plus, Search, Package, Receipt, Filter, QrCode, Trash2, Camera, DollarSign, ArrowUpDown } from 'lucide-react'
 import { useMemo } from 'react'
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
-import { Item, Transaction, ItemImage, Project } from '@/types'
+import { Item, Transaction, ItemImage, Project, ItemDisposition } from '@/types'
 import type { Transaction as TransactionType } from '@/types'
 import { unifiedItemsService, transactionService, projectService, integrationService } from '@/services/inventoryService'
-import { normalizeDisposition, dispositionsEqual, displayDispositionLabel } from '@/utils/dispositionUtils'
+import { normalizeDisposition, displayDispositionLabel, DISPOSITION_OPTIONS } from '@/utils/dispositionUtils'
 import { useToast } from '@/components/ui/ToastContext'
 import { lineageService } from '@/services/lineageService'
 import { ImageUploadService } from '@/services/imageService'
@@ -16,6 +16,9 @@ import { useBookmark } from '@/hooks/useBookmark'
 import { useDuplication } from '@/hooks/useDuplication'
 import { useAccount } from '@/contexts/AccountContext'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
+import { getInventoryListGroupKey } from '@/utils/itemGrouping'
+import CollapsedDuplicateGroup from '@/components/ui/CollapsedDuplicateGroup'
+import InventoryItemRow from '@/components/items/InventoryItemRow'
 
 interface FilterOptions {
   status?: string
@@ -47,6 +50,8 @@ export default function BusinessInventory() {
   // Filter and selection state for inventory items (matching InventoryList.tsx)
   const [filterMode, setFilterMode] = useState<'all' | 'bookmarked'>('all')
   const [showFilterMenu, setShowFilterMenu] = useState(false)
+  const [sortMode, setSortMode] = useState<'alphabetical' | 'creationDate'>('alphabetical')
+  const [showSortMenu, setShowSortMenu] = useState(false)
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
   const [openDispositionMenu, setOpenDispositionMenu] = useState<string | null>(null)
   const { showSuccess, showError } = useToast()
@@ -64,12 +69,13 @@ export default function BusinessInventory() {
   // Close filter menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if ((showFilterMenu || showTransactionFilterMenu) && !event.target) return
+      if ((showFilterMenu || showTransactionFilterMenu || showSortMenu) && !event.target) return
 
       const target = event.target as Element
-      if (!target.closest('.filter-menu') && !target.closest('.filter-button') && !target.closest('.transaction-filter-menu') && !target.closest('.transaction-filter-button')) {
+      if (!target.closest('.filter-menu') && !target.closest('.filter-button') && !target.closest('.transaction-filter-menu') && !target.closest('.transaction-filter-button') && !target.closest('.sort-menu') && !target.closest('.sort-button')) {
         setShowFilterMenu(false)
         setShowTransactionFilterMenu(false)
+        setShowSortMenu(false)
       }
     }
 
@@ -77,7 +83,7 @@ export default function BusinessInventory() {
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [showFilterMenu, showTransactionFilterMenu])
+  }, [showFilterMenu, showTransactionFilterMenu, showSortMenu])
 
   // Close disposition menu when clicking outside
   useEffect(() => {
@@ -96,29 +102,8 @@ export default function BusinessInventory() {
     }
   }, [openDispositionMenu])
 
-  const toggleDispositionMenu = (itemId: string) => {
-    setOpenDispositionMenu(openDispositionMenu === itemId ? null : itemId)
-  }
 
-  const getDispositionBadgeClasses = (disposition?: string) => {
-    const baseClasses = 'inline-flex items-center px-3 py-1 rounded-full text-sm font-medium cursor-pointer transition-colors hover:opacity-80'
-    const d = normalizeDisposition(disposition)
-
-    switch (d) {
-      case 'keep':
-        return `${baseClasses} bg-green-100 text-green-800`
-      case 'to return':
-        return `${baseClasses} bg-red-100 text-red-700`
-      case 'returned':
-        return `${baseClasses} bg-red-800 text-red-100`
-      case 'inventory':
-        return `${baseClasses} bg-primary-100 text-primary-600`
-      default:
-        return `${baseClasses} bg-gray-100 text-gray-800`
-    }
-  }
-
-  const updateDisposition = async (itemId: string, newDisposition: string) => {
+  const updateDisposition = async (itemId: string, newDisposition: ItemDisposition) => {
     try {
       const item = items.find((it: Item) => it.itemId === itemId)
       if (!item) {
@@ -152,7 +137,7 @@ export default function BusinessInventory() {
 
   // Compute filtered items (matching InventoryList.tsx)
   const filteredItems = useMemo(() => {
-    return items.filter(item => {
+    let filtered = items.filter(item => {
       // Apply search filter
       const matchesSearch = !inventorySearchQuery ||
         item.description?.toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
@@ -167,7 +152,40 @@ export default function BusinessInventory() {
 
       return matchesSearch && matchesStatus && matchesFilter
     })
-  }, [items, inventorySearchQuery, filters.status, filterMode])
+
+    // Apply sorting
+    filtered.sort((a, b) => {
+      if (sortMode === 'alphabetical') {
+        const aDesc = a.description || ''
+        const bDesc = b.description || ''
+        return aDesc.localeCompare(bDesc)
+      } else if (sortMode === 'creationDate') {
+        const aDate = new Date(a.dateCreated || 0).getTime()
+        const bDate = new Date(b.dateCreated || 0).getTime()
+        return bDate - aDate // Most recent first
+      }
+      return 0
+    })
+
+    return filtered
+  }, [items, inventorySearchQuery, filters.status, filterMode, sortMode])
+
+  // Group filtered items by their grouping key
+  const groupedItems = useMemo(() => {
+    const groups = new Map<string, Item[]>()
+
+    filteredItems.forEach(item => {
+      const groupKey = getInventoryListGroupKey(item, 'businessInventory')
+      if (!groups.has(groupKey)) {
+        groups.set(groupKey, [])
+      }
+      groups.get(groupKey)!.push(item)
+    })
+
+    // Convert to array - items are already sorted in filteredItems
+    return Array.from(groups.entries())
+      .map(([groupKey, items]) => ({ groupKey, items }))
+  }, [filteredItems])
 
   // Compute filtered transactions
   const filteredTransactions = useMemo(() => {
@@ -371,15 +389,6 @@ export default function BusinessInventory() {
     }
   }
 
-  const loadProjects = async () => {
-    if (!currentAccountId) return
-    try {
-      const projectsData = await projectService.getProjects(currentAccountId)
-      setProjects(projectsData)
-    } catch (error) {
-      console.error('Error loading projects:', error)
-    }
-  }
 
   const handleInventorySearchChange = (searchQuery: string) => {
     setInventorySearchQuery(searchQuery)
@@ -412,7 +421,7 @@ export default function BusinessInventory() {
         ...itemData,
         inventoryStatus: 'available',
         projectId: null,
-        disposition: itemData.disposition || 'keep' // Preserve existing disposition or default to 'keep'
+        disposition: 'inventory' // Business inventory duplicates should always be marked inventory
       })
     }
   })
@@ -602,6 +611,25 @@ export default function BusinessInventory() {
     setSelectedItems(newSelected)
   }
 
+  const handleSelectGroup = (groupItems: Item[], checked: boolean) => {
+    const newSelected = new Set(selectedItems)
+    groupItems.forEach(item => {
+      if (checked) {
+        newSelected.add(item.itemId)
+      } else {
+        newSelected.delete(item.itemId)
+      }
+    })
+    setSelectedItems(newSelected)
+  }
+
+  const getGroupSelectionState = (groupItems: Item[]) => {
+    const selectedInGroup = groupItems.filter(item => selectedItems.has(item.itemId)).length
+    if (selectedInGroup === 0) return 'unchecked'
+    if (selectedInGroup === groupItems.length) return 'checked'
+    return 'indeterminate'
+  }
+
   // Guard against no account when not loading
   if (!isLoading && !accountLoading && !currentAccountId) {
     return (
@@ -724,14 +752,65 @@ export default function BusinessInventory() {
 
               {/* Bulk action buttons */}
               <div className="flex items-center space-x-2">
+                {/* Sort Button */}
+                <div className="relative">
+                  <button
+                    onClick={() => setShowSortMenu(!showSortMenu)}
+                    className={`sort-button inline-flex items-center justify-center px-3 py-2 border text-sm font-medium rounded-md transition-colors duration-200 ${
+                      sortMode === 'alphabetical'
+                        ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
+                        : 'border-primary-500 text-primary-600 bg-primary-50 hover:bg-primary-100'
+                    }`}
+                    title="Sort items"
+                  >
+                    <ArrowUpDown className="h-4 w-4 mr-2" />
+                    Sort
+                  </button>
+
+                  {/* Sort Dropdown Menu */}
+                  {showSortMenu && (
+                    <div className="sort-menu absolute top-full left-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                      <div className="py-1">
+                        <button
+                          onClick={() => {
+                            setSortMode('alphabetical')
+                            setShowSortMenu(false)
+                          }}
+                          className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                            sortMode === 'alphabetical' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                          }`}
+                        >
+                          Alphabetical
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSortMode('creationDate')
+                            setShowSortMenu(false)
+                          }}
+                          className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                            sortMode === 'creationDate' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                          }`}
+                        >
+                          Creation Date
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* Filter Button */}
                 <div className="relative">
                   <button
                     onClick={() => setShowFilterMenu(!showFilterMenu)}
-                    className="filter-button inline-flex items-center justify-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors duration-200"
+                    className={`filter-button inline-flex items-center justify-center px-3 py-2 border text-sm font-medium rounded-md transition-colors duration-200 ${
+                      filterMode === 'all'
+                        ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
+                        : 'border-primary-500 text-primary-600 bg-primary-50 hover:bg-primary-100'
+                    }`}
                     title="Filter items"
                   >
-                    <Filter className="h-4 w-4" />
+                    <Filter className="h-4 w-4 mr-2" />
+                    Filter
                   </button>
 
                   {/* Filter Dropdown Menu */}
@@ -816,107 +895,47 @@ export default function BusinessInventory() {
               ) : (
                 <div className="bg-white shadow overflow-hidden sm:rounded-md">
                   <ul className="divide-y divide-gray-200">
-                    {filteredItems.map((item) => (
-                      <li key={item.itemId} className="relative bg-gray-50 transition-colors duration-200 hover:bg-gray-100">
-                        {/* Top row: Controls - stays outside Link */}
-                        <div className="flex items-center justify-between mb-0 px-4 py-3">
-                          <div className="flex items-center">
-                            <input
-                              type="checkbox"
-                              className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 h-4 w-4 flex-shrink-0"
-                              checked={selectedItems.has(item.itemId)}
-                              onChange={(e) => handleSelectItem(item.itemId, e.target.checked)}
-                            />
-                          </div>
+                    {groupedItems.map(({ groupKey, items: groupItems }) => {
+                      // Single item - render directly
+                      if (groupItems.length === 1) {
+                        const item = groupItems[0]
+                        return (
+                          <InventoryItemRow
+                            key={item.itemId}
+                            item={item}
+                            isSelected={selectedItems.has(item.itemId)}
+                            onSelect={handleSelectItem}
+                            onBookmark={toggleBookmark}
+                            onDuplicate={duplicateItem}
+                            onEdit={() => {}}
+                            onDispositionUpdate={updateDisposition}
+                            onAddImage={handleAddImage}
+                            uploadingImages={uploadingImages}
+                            openDispositionMenu={openDispositionMenu}
+                            setOpenDispositionMenu={setOpenDispositionMenu}
+                            context="businessInventory"
+                            itemNumber={groupIndex + 1}
+                          />
+                        )
+                      }
 
-                          {/* Action buttons */}
-                          <div className="flex items-center gap-2">
-                            <button
-                              className={`inline-flex items-center justify-center p-2 border text-sm font-medium rounded-md transition-colors ${
-                                item.bookmark
-                                  ? 'border-red-300 text-red-700 bg-red-50 hover:bg-red-100'
-                                  : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
-                              } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500`}
-                              title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
-                              onClick={(e) => {
-                                e.preventDefault()
-                                e.stopPropagation()
-                                toggleBookmark(item.itemId)
-                              }}
-                            >
-                              <Bookmark className="h-4 w-4" fill={item.bookmark ? 'currentColor' : 'none'} />
-                            </button>
-                            <ContextLink
-                              to={buildContextUrl(`/business-inventory/${item.itemId}/edit`)}
-                              onClick={(e) => e.stopPropagation()}
-                              className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors"
-                              title="Edit item"
-                            >
-                              <Edit className="h-4 w-4" />
-                            </ContextLink>
-                            <button
-                              onClick={(e) => {
-                                e.preventDefault()
-                                e.stopPropagation()
-                                duplicateItem(item.itemId)
-                              }}
-                              className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors"
-                              title="Duplicate item"
-                            >
-                              <Copy className="h-4 w-4" />
-                            </button>
-                            {/* Disposition badge (replaces inventory status badge) */}
-                            <div className="relative ml-1">
-                              <span
-                                onClick={(e) => {
-                                  e.preventDefault()
-                                  e.stopPropagation()
-                                  toggleDispositionMenu(item.itemId)
-                                }}
-                                className={`disposition-badge ${getDispositionBadgeClasses(item.disposition)}`}
-                              >
-                                {displayDispositionLabel(item.disposition) || 'Not Set'}
-                                <ChevronDown className="h-3 w-3 ml-1" />
-                              </span>
+                      // Multiple items - render as collapsed group
+                      const firstItem = groupItems[0]
+                      const groupSelectionState = getGroupSelectionState(groupItems)
 
-                              {/* Dropdown menu */}
-                              {openDispositionMenu === item.itemId && (
-                                <div className="disposition-menu absolute top-full left-0 mt-1 w-32 bg-white border border-gray-200 rounded-md shadow-lg z-10">
-                                  <div className="py-1">
-                                    {['keep', 'to return', 'returned', 'inventory'].map((disposition) => (
-                                      <button
-                                        key={disposition}
-                                        onClick={(e) => {
-                                          e.preventDefault()
-                                          e.stopPropagation()
-                                          updateDisposition(item.itemId, disposition)
-                                        }}
-                                        className={`block w-full text-left px-3 py-2 text-xs hover:bg-gray-50 ${
-                                          dispositionsEqual(item.disposition, disposition) ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
-                                        }`}
-                                        disabled={!item.disposition}
-                                      >
-                                        {disposition === 'to return' ? 'To Return' : disposition.charAt(0).toUpperCase() + disposition.slice(1)}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Main tappable content - wrapped in Link */}
-                        <ContextLink to={buildContextUrl(`/business-inventory/${item.itemId}`)}>
-                          <div className="block bg-transparent">
-                            <div className="px-4 pb-3 sm:px-6">
-                              {/* Middle row: Thumbnail and Description - now tappable */}
+                      return (
+                        <li key={groupKey} className="relative">
+                          <CollapsedDuplicateGroup
+                            groupId={groupKey}
+                            count={groupItems.length}
+                            selectionState={groupSelectionState}
+                            onToggleSelection={(checked) => handleSelectGroup(groupItems, checked)}
+                            summary={
                               <div className="flex items-center gap-3 py-3">
                                 <div className="flex-shrink-0">
-                                  {item.images && item.images.length > 0 ? (
-                                    // Show primary image thumbnail or first image if no primary
+                                  {firstItem.images && firstItem.images.length > 0 ? (
                                     (() => {
-                                      const primaryImage = item.images.find(img => img.isPrimary) || item.images[0]
+                                      const primaryImage = firstItem.images.find(img => img.isPrimary) || firstItem.images[0]
                                       return (
                                         <div className="w-16 h-16 rounded-lg overflow-hidden border-2 border-gray-200">
                                           <img
@@ -928,71 +947,67 @@ export default function BusinessInventory() {
                                       )
                                     })()
                                   ) : (
-                                    // Show camera placeholder when no images
-                                    <button
-                                      onClick={(e) => {
-                                        e.preventDefault()
-                                        e.stopPropagation()
-                                        handleAddImage(item.itemId)
-                                      }}
-                                      disabled={uploadingImages.has(item.itemId)}
-                                      className="w-16 h-16 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 hover:text-gray-600 hover:border-gray-400 transition-colors disabled:opacity-50"
-                                      title="Add image (camera or gallery)"
-                                    >
+                                    <div className="w-16 h-16 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400">
                                       <Camera className="h-6 w-6" />
-                                    </button>
+                                    </div>
                                   )}
                                 </div>
 
-                                {/* Item description - now tappable */}
-                                <div className="flex-1 min-w-0 flex items-center">
-                                  <div>
-                                    <h3 className="text-base font-medium text-gray-900 line-clamp-2 break-words">
-                                      {item.description}
-                                    </h3>
-                                    {/* Storage Location field */}
-                                    {item.businessInventoryLocation && (
-                                      <p className="text-sm text-gray-600 mt-1">
-                                        {item.businessInventoryLocation}
-                                      </p>
+                                <div className="flex-1 min-w-0">
+                                  <h3 className="text-base font-medium text-gray-900 line-clamp-2 break-words">
+                                    {firstItem.description}
+                                  </h3>
+                                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-500 mt-1">
+                                    {(firstItem.projectPrice || firstItem.purchasePrice) && (
+                                      <span className="font-medium text-gray-700">
+                                        ${firstItem.projectPrice || firstItem.purchasePrice}
+                                      </span>
+                                    )}
+                                    {firstItem.source && (
+                                      <>
+                                        {(firstItem.projectPrice || firstItem.purchasePrice) && <span className="hidden sm:inline">•</span>}
+                                        <span className="font-medium text-gray-700">{firstItem.source}</span>
+                                      </>
+                                    )}
+                                    {firstItem.sku && (
+                                      <>
+                                        {(firstItem.projectPrice || firstItem.purchasePrice || firstItem.source) && <span className="hidden sm:inline">•</span>}
+                                        <span className="font-medium text-gray-700">{firstItem.sku}</span>
+                                      </>
                                     )}
                                   </div>
                                 </div>
                               </div>
+                            }
+                          >
+                            {/* Render individual items in the expanded group */}
+                            <ul className="divide-y divide-gray-200 rounded-lg overflow-hidden list-none p-0 m-0">
+                              {groupItems.map((item, itemIndex) => (
+                                <InventoryItemRow
+                                  key={item.itemId}
+                                  item={item}
+                                  isSelected={selectedItems.has(item.itemId)}
+                                  onSelect={handleSelectItem}
+                                  onBookmark={toggleBookmark}
+                                  onDuplicate={duplicateItem}
+                                  onEdit={() => {}}
+                                  onDispositionUpdate={updateDisposition}
+                                  onAddImage={handleAddImage}
+                                  uploadingImages={uploadingImages}
+                                  openDispositionMenu={openDispositionMenu}
+                                  setOpenDispositionMenu={setOpenDispositionMenu}
+                                  context="businessInventory"
+                                  itemNumber={groupIndex + 1}
+                                  duplicateCount={groupItems.length}
+                                  duplicateIndex={itemIndex + 1}
+                                />
+                              ))}
+                            </ul>
+                          </CollapsedDuplicateGroup>
 
-                              {/* Bottom row: Content - now tappable */}
-                              <div className="space-y-2">
-                                {/* Project Price (or Purchase Price if project price not set), Source, SKU on same row */}
-                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-500">
-                                  {(item.projectPrice || item.purchasePrice) && (
-                                    <span className="font-medium text-gray-700">${item.projectPrice || item.purchasePrice}</span>
-                                  )}
-                                  {item.source && (
-                                    <>
-                                      {(item.projectPrice || item.purchasePrice) && <span className="hidden sm:inline">•</span>}
-                                      <span className="font-medium text-gray-700">{item.source}</span>
-                                    </>
-                                  )}
-                                  {item.sku && (
-                                    <>
-                                      {(item.projectPrice || item.purchasePrice || item.source) && <span className="hidden sm:inline">•</span>}
-                                      <span className="font-medium text-gray-700">{item.sku}</span>
-                                    </>
-                                  )}
-                                </div>
-
-                                {/* Notes */}
-                                {item.notes && (
-                                  <p className="text-sm text-gray-600 line-clamp-2">
-                                    {item.notes}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </ContextLink>
-                      </li>
-                    ))}
+                        </li>
+                      )
+                    })}
                   </ul>
                 </div>
               )}
@@ -1042,7 +1057,8 @@ export default function BusinessInventory() {
                         }`}
                         title="Filter transactions"
                       >
-                        <Filter className="h-4 w-4" />
+                        <Filter className="h-4 w-4 mr-2" />
+                        Filter
                       </button>
 
                       {/* Transaction Filter Dropdown Menu */}

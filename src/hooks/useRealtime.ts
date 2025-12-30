@@ -21,7 +21,7 @@ export function useRealtimeSubscription<T>(
           event: '*',
           schema: 'public',
           table: table,
-          filter: filter ? `${filter.column}=eq.${filter.value}` : undefined
+          filter: filter ? filter.column + '=eq.' + filter.value : undefined
         },
         (payload) => {
           console.log('Realtime update:', payload)

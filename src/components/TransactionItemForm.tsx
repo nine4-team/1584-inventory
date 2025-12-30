@@ -31,7 +31,9 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
       projectPrice: '',
       marketValue: '',
       space: '',
-      notes: ''
+      notes: '',
+      taxAmountPurchasePrice: '',
+      taxAmountProjectPrice: ''
     }
   )
 
@@ -56,7 +58,9 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
         projectPrice: item.projectPrice || '',
         marketValue: item.marketValue || '',
         space: item.space || '',
-        notes: item.notes || ''
+        notes: item.notes || '',
+        taxAmountPurchasePrice: item.taxAmountPurchasePrice || '',
+        taxAmountProjectPrice: item.taxAmountProjectPrice || ''
       })
     }
   }, [item])

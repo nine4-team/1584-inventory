@@ -14,6 +14,11 @@ const queryClient = new QueryClient({
       staleTime: 5 * 60 * 1000, // 5 minutes
       gcTime: 10 * 60 * 1000, // 10 minutes (was cacheTime)
       refetchOnWindowFocus: false,
+      retry: (failureCount, error) => {
+        // Don't retry on network errors when offline
+        if (!navigator.onLine && failureCount >= 1) return false
+        return failureCount < 3
+      },
     },
   },
 })

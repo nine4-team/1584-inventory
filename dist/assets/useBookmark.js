@@ -1,2 +1,0 @@
-import{r as l}from"./vendor.js";function u({items:t,setItems:e,updateItemService:n}){return{toggleBookmark:l.useCallback(async a=>{try{const o=t.find(r=>r.itemId===a);if(!o)return;const c=!o.bookmark;await n(a,{bookmark:c}),e(r=>r.map(k=>k.itemId===a?{...k,bookmark:c}:k))}catch(o){console.error("Failed to update bookmark:",o),alert("Failed to update bookmark. Please try again.")}},[t,e,n])}}export{u};
-//# sourceMappingURL=useBookmark.js.map

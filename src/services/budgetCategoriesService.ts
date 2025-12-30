@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 import { convertTimestamps, handleSupabaseError, ensureAuthenticatedForDatabase } from './databaseService'
 import { BudgetCategory } from '@/types'
+import { getBudgetCategoryOrder } from './accountPresetsService'
 
 /**
  * Budget Categories Service
@@ -14,7 +15,7 @@ export const budgetCategoriesService = {
    * Get all budget categories for an account
    * @param accountId - The account ID to fetch categories for
    * @param includeArchived - If true, includes archived categories (default: false)
-   * @returns Array of budget categories
+   * @returns Array of budget categories ordered by preset order (if set), otherwise alphabetically
    */
   async getCategories(accountId: string, includeArchived: boolean = false): Promise<BudgetCategory[]> {
     await ensureAuthenticatedForDatabase()
@@ -23,7 +24,6 @@ export const budgetCategoriesService = {
       .from('budget_categories')
       .select('*')
       .eq('account_id', accountId)
-      .order('name', { ascending: true })
 
     if (!includeArchived) {
       query = query.eq('is_archived', false)
@@ -33,7 +33,7 @@ export const budgetCategoriesService = {
 
     handleSupabaseError(error)
 
-    return (data || []).map(category => {
+    const categories = (data || []).map(category => {
       const converted = convertTimestamps(category)
       return {
         id: converted.id,
@@ -46,6 +46,41 @@ export const budgetCategoriesService = {
         updatedAt: converted.updated_at
       } as BudgetCategory
     })
+
+    // Get preset order if available
+    try {
+      const order = await getBudgetCategoryOrder(accountId)
+      if (order && order.length > 0) {
+        // Create a map for quick lookup
+        const categoryMap = new Map(categories.map(cat => [cat.id, cat]))
+        const orderedCategories: BudgetCategory[] = []
+        const seenIds = new Set<string>()
+
+        // Add categories in preset order
+        for (const categoryId of order) {
+          const category = categoryMap.get(categoryId)
+          if (category) {
+            orderedCategories.push(category)
+            seenIds.add(categoryId)
+          }
+        }
+
+        // Append any categories not in the order (new categories, etc.)
+        for (const category of categories) {
+          if (!seenIds.has(category.id)) {
+            orderedCategories.push(category)
+          }
+        }
+
+        return orderedCategories
+      }
+    } catch (err) {
+      // If getting order fails, fall back to alphabetical sorting
+      console.warn('Failed to get budget category order, using alphabetical:', err)
+    }
+
+    // Fallback to alphabetical sorting by name
+    return categories.sort((a, b) => a.name.localeCompare(b.name))
   },
 
   /**

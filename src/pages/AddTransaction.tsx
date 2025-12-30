@@ -18,9 +18,11 @@ import { getTaxPresets } from '@/services/taxPresetsService'
 import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import { getDefaultCategory } from '@/services/accountPresetsService'
 import CategorySelect from '@/components/CategorySelect'
+import { projectTransactions } from '@/utils/routes'
 
 export default function AddTransaction() {
-  const { id: projectId } = useParams<{ id: string }>()
+  const { id, projectId: routeProjectId } = useParams<{ id?: string; projectId?: string }>()
+  const projectId = routeProjectId || id
   const navigate = useStackedNavigate()
   const { user, isOwner } = useAuth()
   const { currentAccountId } = useAccount()
@@ -40,7 +42,7 @@ export default function AddTransaction() {
             You don't have permission to add transactions. Please contact an administrator if you need access.
           </p>
           <ContextBackLink
-            fallback={getBackDestination(`/project/${projectId}`)}
+            fallback={getBackDestination(projectId ? projectTransactions(projectId) : '/projects')}
             className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700"
           >
             Back to Project
@@ -241,12 +243,12 @@ export default function AddTransaction() {
       // Create transaction with items first to get the real transaction ID
       const transactionId = await transactionService.createTransaction(currentAccountId, projectId, transactionData, items)
 
-      // Now upload receipt images using the real transaction ID
+      // Now upload receipts (images + PDFs) using the real transaction ID
       if (formData.receiptImages && formData.receiptImages.length > 0) {
         setIsUploadingImages(true)
 
         try {
-          const uploadResults = await ImageUploadService.uploadMultipleReceiptImages(
+          const uploadResults = await ImageUploadService.uploadMultipleReceiptAttachments(
             formData.receiptImages,
             projectName,
             transactionId,
@@ -255,19 +257,19 @@ export default function AddTransaction() {
 
           // Convert to TransactionImage format
           const receiptImages = ImageUploadService.convertFilesToReceiptImages(uploadResults)
-          console.log('Receipt images uploaded successfully:', receiptImages.length, 'images')
-          console.log('Receipt images to save:', receiptImages)
+          console.log('Receipts uploaded successfully:', receiptImages.length, 'files')
+          console.log('Receipts to save:', receiptImages)
 
-          // Update the transaction with the uploaded receipt images
+          // Update the transaction with the uploaded receipts
           if (receiptImages && receiptImages.length > 0) {
-            console.log('Updating transaction with receipt images...')
+            console.log('Updating transaction with receipts...')
             try {
               await transactionService.updateTransaction(currentAccountId, projectId, transactionId, {
                 receiptImages: receiptImages
               })
-              console.log('Transaction updated successfully with receipt images')
+              console.log('Transaction updated successfully with receipts')
             } catch (updateError) {
-              console.error('Failed to update transaction with receipt images:', updateError)
+              console.error('Failed to update transaction with receipts:', updateError)
               // Don't fail the entire transaction if image update fails
             }
           }
@@ -275,10 +277,10 @@ export default function AddTransaction() {
           // Small delay to ensure the update is processed before continuing
           await new Promise(resolve => setTimeout(resolve, 500))
         } catch (error: any) {
-          console.error('Error uploading receipt images:', error)
+          console.error('Error uploading receipts:', error)
 
           // Provide specific error messages based on error type
-          let errorMessage = 'Failed to upload receipt images. Please try again.'
+          let errorMessage = 'Failed to upload receipts. Please try again.'
           if (error.message?.includes('Storage service is not available')) {
             errorMessage = 'Storage service is unavailable. Please check your internet connection.'
           } else if (error.message?.includes('Network error') || error.message?.includes('offline')) {
@@ -360,22 +362,33 @@ export default function AddTransaction() {
       }
 
       // Upload item images with the correct item IDs
-      if (imageFilesMap.size > 0) {
+      if (imageFilesMap.size > 0 && items.length > 0) {
         try {
           console.log('Starting image upload process...')
           // Get the created items and extract their IDs
           const createdItems = await unifiedItemsService.getItemsForTransaction(currentAccountId, projectId, transactionId)
           const createdItemIds = createdItems.map(item => item.itemId)
           console.log('Created item IDs:', createdItemIds)
+          console.log('Form items:', items.map(item => ({ id: item.id, description: item.description })))
+          console.log('Image files map keys:', Array.from(imageFilesMap.keys()))
 
-          // Upload images for each item
+          // Create a mapping from form item index to created item ID
+          // We need to match items by their order since they're created in the same order
+          // But we also need to match by temp ID from imageFilesMap
           for (let i = 0; i < items.length && i < createdItemIds.length; i++) {
-            const item = items[i]
+            const formItem = items[i]
             const itemId = createdItemIds[i]
-            const imageFiles = imageFilesMap.get(item.id)
+            
+            // Try to get image files using the form item's temp ID
+            let imageFiles = imageFilesMap.get(formItem.id)
+            
+            // Fallback: also check if the item has imageFiles directly
+            if (!imageFiles && formItem.imageFiles && formItem.imageFiles.length > 0) {
+              imageFiles = formItem.imageFiles
+            }
 
             if (imageFiles && imageFiles.length > 0) {
-              console.log(`Uploading ${imageFiles.length} images for item ${itemId}`)
+              console.log(`Uploading ${imageFiles.length} images for item ${itemId} (form item ID: ${formItem.id})`)
 
               // Upload each image file with the final item ID
               const uploadPromises = imageFiles.map(async (file, fileIndex) => {
@@ -392,7 +405,7 @@ export default function AddTransaction() {
                   const uploadedImage: ItemImage = {
                     url: uploadResult.url,
                     alt: file.name,
-                    isPrimary: item.images?.find(img => img.fileName === file.name)?.isPrimary || false,
+                    isPrimary: formItem.images?.find(img => img.fileName === file.name)?.isPrimary || (fileIndex === 0),
                     uploadedAt: new Date(),
                     fileName: file.name,
                     size: file.size,
@@ -436,7 +449,11 @@ export default function AddTransaction() {
         }
       }
 
-      navigate(`/project/${projectId}?tab=transactions`)
+      if (projectId) {
+        navigate(projectTransactions(projectId))
+      } else {
+        navigate('/projects')
+      }
     } catch (error) {
       console.error('Error creating transaction:', error)
       setErrors({ general: error instanceof Error ? error.message : 'Failed to create transaction. Please try again.' })
@@ -506,7 +523,7 @@ export default function AddTransaction() {
         {/* Back button row */}
         <div className="flex items-center justify-between">
           <ContextBackLink
-            fallback={getBackDestination(`/project/${projectId}?tab=transactions`)}
+            fallback={getBackDestination(projectId ? projectTransactions(projectId) : '/projects')}
             className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
           >
             <ArrowLeft className="h-4 w-4 mr-1" />
@@ -933,15 +950,16 @@ export default function AddTransaction() {
             )}
           </div>
 
-          {/* Receipt Images */}
+          {/* Receipts */}
           <div>
             <h3 className="text-lg font-medium text-gray-900 mb-2">
-              Receipt Images
+              Receipts
             </h3>
             <ImageUpload
               onImagesChange={handleReceiptImagesChange}
               maxImages={5}
               maxFileSize={10}
+              acceptedTypes={['image/jpeg','image/jpg','image/png','image/gif','image/webp','image/heic','image/heif','application/pdf']}
               disabled={isSubmitting || isUploadingImages}
               className="mb-2"
             />
@@ -970,7 +988,7 @@ export default function AddTransaction() {
           {/* Form Actions */}
           <div className="flex justify-end space-x-3 pt-4">
           <ContextBackLink
-            fallback={getBackDestination(`/project/${projectId}?tab=transactions`)}
+            fallback={getBackDestination(projectId ? projectTransactions(projectId) : '/projects')}
             className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
           >
             <X className="h-4 w-4 mr-2" />
