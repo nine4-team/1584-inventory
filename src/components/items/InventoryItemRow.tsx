@@ -112,7 +112,7 @@ export default function InventoryItemRow({
   // Determine the edit link based on context
   const getEditLink = () => {
     if (context === 'project' && projectId) {
-      return `/project/${projectId}/item/${item.itemId}/edit`
+      return `/project/${projectId}/items/${item.itemId}/edit`
     } else if (context === 'businessInventory') {
       return `/business-inventory/${item.itemId}/edit`
     }

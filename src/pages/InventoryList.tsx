@@ -684,7 +684,10 @@ export default function InventoryList({ projectId, projectName, items: propItems
                       onSelect={handleSelectItem}
                       onBookmark={toggleBookmark}
                       onDuplicate={duplicateItem}
-                      onEdit={() => {}}
+                      onEdit={(href) => {
+                        // Optional: Add analytics or logging here
+                        console.log('Navigating to edit item:', href)
+                      }}
                       onDispositionUpdate={updateDisposition}
                       onAddImage={handleAddImage}
                       uploadingImages={uploadingImages}
@@ -826,7 +829,10 @@ export default function InventoryList({ projectId, projectName, items: propItems
                             onSelect={handleSelectItem}
                             onBookmark={toggleBookmark}
                             onDuplicate={duplicateItem}
-                            onEdit={() => {}}
+                            onEdit={(href) => {
+                              // Optional: Add analytics or logging here
+                              console.log('Navigating to edit item:', href)
+                            }}
                             onDispositionUpdate={updateDisposition}
                             onAddImage={handleAddImage}
                             uploadingImages={uploadingImages}
