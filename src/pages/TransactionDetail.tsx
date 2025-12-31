@@ -6,7 +6,7 @@ import { useParams } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
 import ContextLink from '@/components/ContextLink'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
-import { Transaction, Project, Item, TransactionItemFormData, TaxPreset, BudgetCategory } from '@/types'
+import { Transaction, Project, Item, TransactionItemFormData, BudgetCategory } from '@/types'
 import { transactionService, projectService, unifiedItemsService } from '@/services/inventoryService'
 import { budgetCategoriesService } from '@/services/budgetCategoriesService'
 import { lineageService } from '@/services/lineageService'
@@ -16,7 +16,6 @@ import { useToast } from '@/components/ui/ToastContext'
 import TransactionItemForm from '@/components/TransactionItemForm'
 import TransactionItemsList from '@/components/TransactionItemsList'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
-import { getTaxPresets } from '@/services/taxPresetsService'
 import { useAccount } from '@/contexts/AccountContext'
 import type { ItemLineageEdge } from '@/types'
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
@@ -78,21 +77,6 @@ export default function TransactionDetail() {
   const { currentAccountId } = useAccount()
   const [transaction, setTransaction] = useState<Transaction | null>(null)
   const [project, setProject] = useState<Project | null>(null)
-  const [taxPresets, setTaxPresets] = useState<TaxPreset[]>([])
-
-  // Load tax presets on mount
-  useEffect(() => {
-    const loadPresets = async () => {
-      if (!currentAccountId) return
-      try {
-        const presets = await getTaxPresets(currentAccountId)
-        setTaxPresets(presets)
-      } catch (error) {
-        console.error('Error loading tax presets:', error)
-      }
-    }
-    loadPresets()
-  }, [currentAccountId])
 
   useEffect(() => {
     const loadBudgetCategories = async () => {
@@ -949,8 +933,22 @@ export default function TransactionDetail() {
           </h3>
           <dl className="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2">
             <div>
-              <dt className="text-sm font-medium text-gray-500">Source</dt>
-              <dd className="mt-1 text-sm text-gray-900">{transaction.source}</dd>
+              <dt className="text-sm font-medium text-gray-500">Transaction Type</dt>
+              <dd className="mt-1">
+                <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium no-icon ${
+                  transaction.transactionType === 'Purchase'
+                    ? 'bg-green-100 text-green-800'
+                    : transaction.transactionType === 'Sale'
+                    ? 'bg-blue-100 text-blue-800'
+                    : transaction.transactionType === 'Return'
+                    ? 'bg-red-100 text-red-800'
+                    : transaction.transactionType === 'To Inventory'
+                    ? 'bg-primary-100 text-primary-800'
+                    : 'bg-gray-100 text-gray-800'
+                }`}>
+                  {transaction.transactionType}
+                </span>
+              </dd>
             </div>
 
             <div>
@@ -984,22 +982,8 @@ export default function TransactionDetail() {
             </div>
 
             <div>
-              <dt className="text-sm font-medium text-gray-500">Transaction Type</dt>
-              <dd className="mt-1">
-                <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium no-icon ${
-                  transaction.transactionType === 'Purchase'
-                    ? 'bg-green-100 text-green-800'
-                    : transaction.transactionType === 'Sale'
-                    ? 'bg-blue-100 text-blue-800'
-                    : transaction.transactionType === 'Return'
-                    ? 'bg-red-100 text-red-800'
-                    : transaction.transactionType === 'To Inventory'
-                    ? 'bg-primary-100 text-primary-800'
-                    : 'bg-gray-100 text-gray-800'
-                }`}>
-                  {transaction.transactionType}
-                </span>
-              </dd>
+              <dt className="text-sm font-medium text-gray-500">Source</dt>
+              <dd className="mt-1 text-sm text-gray-900">{transaction.source}</dd>
             </div>
 
             <div>
@@ -1007,20 +991,6 @@ export default function TransactionDetail() {
               <dd className="mt-1 text-sm text-gray-900">{formatCurrency(transaction.amount)}</dd>
             </div>
 
-            {transaction.taxRatePreset && (
-              <div>
-                <dt className="text-sm font-medium text-gray-500">Tax Rate Preset</dt>
-                <dd className="mt-1 text-sm text-gray-900">
-                  {transaction.taxRatePreset === 'Other' 
-                    ? 'Custom'
-                    : (() => {
-                        const preset = taxPresets.find(p => p.id === transaction.taxRatePreset)
-                        return preset ? `${preset.name} (${preset.rate.toFixed(2)}%)` : transaction.taxRatePreset
-                      })()
-                  }
-                </dd>
-              </div>
-            )}
 
             {transaction.subtotal && (
               <div>
@@ -1032,7 +1002,7 @@ export default function TransactionDetail() {
             {transaction.taxRatePct !== undefined && (
               <div>
                 <dt className="text-sm font-medium text-gray-500">Tax Rate</dt>
-                <dd className="mt-1 text-sm text-gray-900">{Number(transaction.taxRatePct).toFixed(2)}%</dd>
+                <dd className="mt-1 text-sm text-gray-900">{transaction.taxRatePct}%</dd>
               </div>
             )}
 

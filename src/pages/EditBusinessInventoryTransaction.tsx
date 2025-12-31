@@ -555,7 +555,7 @@ export default function EditBusinessInventoryTransaction() {
                     className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
                   />
                   <label htmlFor={`tax_preset_${preset.id}`} className="ml-2 block text-sm text-gray-900">
-                    {preset.name} ({preset.rate.toFixed(2)}%)
+                    {preset.name} ({preset.rate}%)
                   </label>
                 </div>
               ))}
@@ -578,7 +578,7 @@ export default function EditBusinessInventoryTransaction() {
             {taxRatePreset && taxRatePreset !== 'Other' && selectedPresetRate !== undefined && (
               <div className="mt-3 p-3 bg-gray-50 rounded-md">
                 <p className="text-sm text-gray-700">
-                  <span className="font-medium">Tax Rate:</span> {selectedPresetRate.toFixed(2)}%
+                  <span className="font-medium">Tax Rate:</span> {selectedPresetRate}%
                 </p>
               </div>
             )}

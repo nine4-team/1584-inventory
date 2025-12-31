@@ -692,7 +692,7 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
             <button
               type="button"
               onClick={() => setIsAddingItem(true)}
-              className="inline-flex items-center gap-1 px-3 py-2 rounded-md border border-gray-300 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 flex-shrink-0"
+              className="inline-flex items-center gap-1 px-3 py-2 rounded-md border border-transparent text-sm font-medium text-white bg-primary-600 hover:bg-primary-900 flex-shrink-0"
             >
               <Plus className="h-4 w-4" />
               Add

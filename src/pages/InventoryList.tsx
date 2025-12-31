@@ -611,7 +611,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
           {/* Add Button */}
           <ContextLink
             to={buildContextUrl(projectItemNew(projectId), { project: projectId })}
-            className="inline-flex items-center justify-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 transition-colors duration-200 flex-shrink-0"
+            className="inline-flex items-center justify-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-900 transition-colors duration-200 flex-shrink-0"
           >
             <Plus className="h-4 w-4 mr-2" />
             Add

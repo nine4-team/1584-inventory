@@ -762,41 +762,6 @@ export default function AddTransaction() {
             )}
           </div>
 
-          {/* Receipt Email Copy */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              Receipt Email Copy
-            </label>
-            <div className="flex items-center space-x-6">
-              <div className="flex items-center">
-                <input
-                  type="radio"
-                  id="receipt_yes"
-                  name="receiptEmailed"
-                  checked={formData.receiptEmailed === true}
-                  onChange={() => handleInputChange('receiptEmailed', true)}
-                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
-                />
-                <label htmlFor="receipt_yes" className="ml-2 block text-sm text-gray-900">
-                  Yes
-                </label>
-              </div>
-              <div className="flex items-center">
-                <input
-                  type="radio"
-                  id="receipt_no"
-                  name="receiptEmailed"
-                  checked={formData.receiptEmailed === false}
-                  onChange={() => handleInputChange('receiptEmailed', false)}
-                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
-                />
-                <label htmlFor="receipt_no" className="ml-2 block text-sm text-gray-900">
-                  No
-                </label>
-              </div>
-            </div>
-          </div>
-
           {/* Amount */}
           <div>
             <label htmlFor="amount" className="block text-sm font-medium text-gray-700">
@@ -838,7 +803,7 @@ export default function AddTransaction() {
                     className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
                   />
                   <label htmlFor={`tax_preset_${preset.id}`} className="ml-2 block text-sm text-gray-900">
-                    {preset.name} ({preset.rate.toFixed(2)}%)
+                    {preset.name} ({preset.rate}%)
                   </label>
                 </div>
               ))}
@@ -861,7 +826,7 @@ export default function AddTransaction() {
             {taxRatePreset && taxRatePreset !== 'Other' && selectedPresetRate !== undefined && (
               <div className="mt-3 p-3 bg-gray-50 rounded-md">
                 <p className="text-sm text-gray-700">
-                  <span className="font-medium">Tax Rate:</span> {selectedPresetRate.toFixed(2)}%
+                  <span className="font-medium">Tax Rate:</span> {selectedPresetRate}%
                 </p>
               </div>
             )}
@@ -966,6 +931,41 @@ export default function AddTransaction() {
             {errors.receiptImages && (
               <p className="mt-1 text-sm text-red-600">{errors.receiptImages}</p>
             )}
+          </div>
+
+          {/* Receipt Email Copy */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-3">
+              Receipt Email Copy
+            </label>
+            <div className="flex items-center space-x-6">
+              <div className="flex items-center">
+                <input
+                  type="radio"
+                  id="receipt_yes"
+                  name="receiptEmailed"
+                  checked={formData.receiptEmailed === true}
+                  onChange={() => handleInputChange('receiptEmailed', true)}
+                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
+                />
+                <label htmlFor="receipt_yes" className="ml-2 block text-sm text-gray-900">
+                  Yes
+                </label>
+              </div>
+              <div className="flex items-center">
+                <input
+                  type="radio"
+                  id="receipt_no"
+                  name="receiptEmailed"
+                  checked={formData.receiptEmailed === false}
+                  onChange={() => handleInputChange('receiptEmailed', false)}
+                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
+                />
+                <label htmlFor="receipt_no" className="ml-2 block text-sm text-gray-900">
+                  No
+                </label>
+              </div>
+            </div>
           </div>
 
           {/* Other Images */}
