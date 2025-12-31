@@ -1,6 +1,6 @@
 import { Plus, Search, Package, Receipt, Filter, QrCode, Trash2, Camera, DollarSign, ArrowUpDown } from 'lucide-react'
 import { useMemo } from 'react'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import { Item, Transaction, ItemImage, Project, ItemDisposition } from '@/types'
@@ -20,6 +20,7 @@ import { getInventoryListGroupKey } from '@/utils/itemGrouping'
 import CollapsedDuplicateGroup from '@/components/ui/CollapsedDuplicateGroup'
 import InventoryItemRow from '@/components/items/InventoryItemRow'
 import { getTransactionDisplayInfo, getTransactionRoute } from '@/utils/transactionDisplayUtils'
+import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 
 interface FilterOptions {
   status?: string
@@ -30,6 +31,7 @@ export default function BusinessInventory() {
   const { currentAccountId, loading: accountLoading } = useAccount()
   const ENABLE_QR = import.meta.env.VITE_ENABLE_QR === 'true'
   const { buildContextUrl } = useNavigationContext()
+  const stackedNavigate = useStackedNavigate()
   const [activeTab, setActiveTab] = useState<'inventory' | 'transactions'>('inventory')
   const [items, setItems] = useState<Item[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
@@ -38,6 +40,14 @@ export default function BusinessInventory() {
     status: '',
     searchQuery: ''
   })
+  const handleNavigateToEdit = useCallback(
+    (href: string) => {
+      if (!href || href === '#') return
+      stackedNavigate(buildContextUrl(href))
+    },
+    [buildContextUrl, stackedNavigate]
+  )
+
   const [inventorySearchQuery, setInventorySearchQuery] = useState<string>('')
   const [transactionSearchQuery, setTransactionSearchQuery] = useState<string>('')
 
@@ -913,7 +923,7 @@ export default function BusinessInventory() {
                             onSelect={handleSelectItem}
                             onBookmark={toggleBookmark}
                             onDuplicate={duplicateItem}
-                            onEdit={() => {}}
+                            onEdit={handleNavigateToEdit}
                             onDispositionUpdate={updateDisposition}
                             onAddImage={handleAddImage}
                             uploadingImages={uploadingImages}
@@ -1052,7 +1062,7 @@ export default function BusinessInventory() {
                                   onSelect={handleSelectItem}
                                   onBookmark={toggleBookmark}
                                   onDuplicate={duplicateItem}
-                                  onEdit={() => {}}
+                                  onEdit={handleNavigateToEdit}
                                   onDispositionUpdate={updateDisposition}
                                   onAddImage={handleAddImage}
                                   uploadingImages={uploadingImages}

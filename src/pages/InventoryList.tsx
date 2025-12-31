@@ -20,6 +20,7 @@ import InventoryItemRow from '@/components/items/InventoryItemRow'
 import BulkItemControls from '@/components/ui/BulkItemControls'
 import { useTransactionDisplayInfo } from '@/hooks/useTransactionDisplayInfo'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
+import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 
 interface InventoryListProps {
   projectId: string
@@ -232,6 +233,20 @@ export default function InventoryList({ projectId, projectName, items: propItems
 
   // Use navigation context for proper back navigation
   const { buildContextUrl } = useNavigationContext()
+  const stackedNavigate = useStackedNavigate()
+
+  const handleNavigateToEdit = useCallback(
+    (href: string) => {
+      if (!href || href === '#') return
+
+      const targetUrl = buildContextUrl(
+        href,
+        projectId ? { project: projectId } : undefined
+      )
+      stackedNavigate(targetUrl)
+    },
+    [buildContextUrl, projectId, stackedNavigate]
+  )
 
   const updateDisposition = async (itemId: string, newDisposition: ItemDisposition) => {
     console.log('🎯 InventoryList updateDisposition called:', itemId, newDisposition)
@@ -826,10 +841,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
                       onSelect={handleSelectItem}
                       onBookmark={toggleBookmark}
                       onDuplicate={duplicateItem}
-                      onEdit={(href) => {
-                        // Optional: Add analytics or logging here
-                        console.log('Navigating to edit item:', href)
-                      }}
+                      onEdit={handleNavigateToEdit}
                       onDispositionUpdate={updateDisposition}
                       onAddImage={handleAddImage}
                       uploadingImages={uploadingImages}
@@ -964,10 +976,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
                             onSelect={handleSelectItem}
                             onBookmark={toggleBookmark}
                             onDuplicate={duplicateItem}
-                            onEdit={(href) => {
-                              // Optional: Add analytics or logging here
-                              console.log('Navigating to edit item:', href)
-                            }}
+                            onEdit={handleNavigateToEdit}
                             onDispositionUpdate={updateDisposition}
                             onAddImage={handleAddImage}
                             uploadingImages={uploadingImages}
