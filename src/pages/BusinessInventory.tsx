@@ -19,6 +19,7 @@ import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { getInventoryListGroupKey } from '@/utils/itemGrouping'
 import CollapsedDuplicateGroup from '@/components/ui/CollapsedDuplicateGroup'
 import InventoryItemRow from '@/components/items/InventoryItemRow'
+import { getTransactionDisplayInfo, getTransactionRoute } from '@/utils/transactionDisplayUtils'
 
 interface FilterOptions {
   status?: string
@@ -922,6 +923,93 @@ export default function BusinessInventory() {
                       // Multiple items - render as collapsed group
                       const firstItem = groupItems[0]
                       const groupSelectionState = getGroupSelectionState(groupItems)
+                      const hasAnyPrice = firstItem.projectPrice || firstItem.purchasePrice
+                      const totalPrice = groupItems.reduce((sum, item) => {
+                        const price = parseFloat(item.projectPrice || item.purchasePrice || '0') || 0
+                        return sum + price
+                      }, 0)
+                      const firstItemPrice = parseFloat(firstItem.projectPrice || firstItem.purchasePrice || '0') || 0
+
+                      // Component to handle transaction display info for grouped items
+                      const GroupedItemSummary = () => {
+                        const { buildContextUrl } = useNavigationContext()
+                        const [transactionDisplayInfo, setTransactionDisplayInfo] = useState<{title: string, amount: string} | null>(null)
+                        const [transactionRoute, setTransactionRoute] = useState<{path: string, projectId: string | null} | null>(null)
+
+                        useEffect(() => {
+                          const fetchTransactionData = async () => {
+                            if (firstItem.transactionId && currentAccountId) {
+                              const [displayInfo, route] = await Promise.all([
+                                getTransactionDisplayInfo(currentAccountId, firstItem.transactionId, 20),
+                                getTransactionRoute(firstItem.transactionId, currentAccountId, null)
+                              ])
+                              setTransactionDisplayInfo(displayInfo)
+                              setTransactionRoute(route)
+                            } else {
+                              setTransactionDisplayInfo(null)
+                              setTransactionRoute(null)
+                            }
+                          }
+
+                          fetchTransactionData()
+                        }, [firstItem.transactionId, currentAccountId])
+
+                        return (
+                          <>
+                            {/* Left column: Image */}
+                            <div className="flex-shrink-0">
+                              {firstItem.images && firstItem.images.length > 0 ? (
+                                <img
+                                  src={firstItem.images.find(img => img.isPrimary)?.url || firstItem.images[0].url}
+                                  alt={firstItem.images[0].alt || firstItem.images[0].fileName}
+                                  className="h-12 w-12 rounded-md object-cover border border-gray-200"
+                                />
+                              ) : (
+                                <div className="w-12 h-12 rounded-md border border-dashed border-gray-300 flex items-center justify-center text-gray-400">
+                                  <Camera className="h-5 w-5" />
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Right column: Text content */}
+                            <ContextLink to={`/business-inventory/${firstItem.itemId}`} className="flex-1 min-w-0">
+                              <div>
+                                <h4 className="text-sm font-medium text-gray-900 mb-1">
+                                  {firstItem.description || 'No description'}
+                                </h4>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
+                                  {/* SKU and conditional transaction/source display */}
+                                  <div>
+                                    {firstItem.sku && <span className="font-medium">SKU: {firstItem.sku}</span>}
+                                    {(firstItem.sku || transactionDisplayInfo || firstItem.source) && <span className="mx-2 text-gray-400">•</span>}
+                                    {transactionDisplayInfo ? (
+                                      <span className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors">
+                                        <Receipt className="h-3 w-3 mr-1" />
+                                        <ContextLink
+                                          to={transactionRoute ? buildContextUrl(transactionRoute.path, transactionRoute.projectId ? { project: transactionRoute.projectId } : undefined) : ''}
+                                          className="hover:underline font-medium"
+                                          title={`View transaction: ${transactionDisplayInfo.title}`}
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          {transactionDisplayInfo.title} {transactionDisplayInfo.amount}
+                                        </ContextLink>
+                                      </span>
+                                    ) : (
+                                      firstItem.source && <span className="text-xs font-medium text-gray-600">{firstItem.source}</span>
+                                    )}
+                                  </div>
+                                  {firstItem.marketValue && (
+                                    <div>
+                                      <span className="font-medium">Market Value:</span> {formatCurrency(parseFloat(firstItem.marketValue.toString()))}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </ContextLink>
+                          </>
+                        )
+                      }
 
                       return (
                         <li key={groupKey} className="relative">
@@ -930,55 +1018,19 @@ export default function BusinessInventory() {
                             count={groupItems.length}
                             selectionState={groupSelectionState}
                             onToggleSelection={(checked) => handleSelectGroup(groupItems, checked)}
-                            summary={
-                              <div className="flex items-center gap-3 py-3">
-                                <div className="flex-shrink-0">
-                                  {firstItem.images && firstItem.images.length > 0 ? (
-                                    (() => {
-                                      const primaryImage = firstItem.images.find(img => img.isPrimary) || firstItem.images[0]
-                                      return (
-                                        <div className="w-16 h-16 rounded-lg overflow-hidden border-2 border-gray-200">
-                                          <img
-                                            src={primaryImage.url}
-                                            alt={primaryImage.alt || 'Item image'}
-                                            className="w-full h-full object-cover"
-                                          />
-                                        </div>
-                                      )
-                                    })()
-                                  ) : (
-                                    <div className="w-16 h-16 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400">
-                                      <Camera className="h-6 w-6" />
-                                    </div>
+                            topRowContent={
+                              hasAnyPrice && (
+                                <span className="text-sm text-gray-500">
+                                  {formatCurrency(totalPrice)}
+                                  {groupItems.length > 1 && totalPrice !== firstItemPrice && (
+                                    <span className="text-xs text-gray-400">
+                                      {' ('}{formatCurrency(totalPrice / groupItems.length)} each)
+                                    </span>
                                   )}
-                                </div>
-
-                                <div className="flex-1 min-w-0">
-                                  <h3 className="text-base font-medium text-gray-900 line-clamp-2 break-words">
-                                    {firstItem.description}
-                                  </h3>
-                                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-500 mt-1">
-                                    {(firstItem.projectPrice || firstItem.purchasePrice) && (
-                                      <span className="font-medium text-gray-700">
-                                        ${firstItem.projectPrice || firstItem.purchasePrice}
-                                      </span>
-                                    )}
-                                    {firstItem.source && (
-                                      <>
-                                        {(firstItem.projectPrice || firstItem.purchasePrice) && <span className="hidden sm:inline">•</span>}
-                                        <span className="font-medium text-gray-700">{firstItem.source}</span>
-                                      </>
-                                    )}
-                                    {firstItem.sku && (
-                                      <>
-                                        {(firstItem.projectPrice || firstItem.purchasePrice || firstItem.source) && <span className="hidden sm:inline">•</span>}
-                                        <span className="font-medium text-gray-700">{firstItem.sku}</span>
-                                      </>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
+                                </span>
+                              )
                             }
+                            summary={<GroupedItemSummary />}
                           >
                             {/* Render individual items in the expanded group */}
                             <ul className="divide-y divide-gray-200 rounded-lg overflow-hidden list-none p-0 m-0">

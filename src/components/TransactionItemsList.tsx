@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Edit, X, Plus, GitMerge, ChevronDown, Receipt } from 'lucide-react'
+import { Edit, X, Plus, GitMerge, ChevronDown, Receipt, Camera } from 'lucide-react'
 import { TransactionItemFormData } from '@/types'
 import TransactionItemForm from './TransactionItemForm'
 import { normalizeMoneyToTwoDecimalString } from '@/utils/money'
@@ -614,6 +614,10 @@ export default function TransactionItemsList({ items, onItemsChange, projectId, 
           const hasAnyTaxPurchase = groupItems.some(item => hasNonEmptyMoneyString(item.taxAmountPurchasePrice))
           const hasAnyTaxProject = groupItems.some(item => hasNonEmptyMoneyString(item.taxAmountProjectPrice))
 
+          // Get transaction display info for first item if it has a transactionId
+          const firstItemTransactionInfo = firstItem.transactionId ? transactionDisplayInfos.get(firstItem.id) : null
+          const firstItemTransactionRoute = firstItem.transactionId ? transactionRoutes.get(firstItem.id) : null
+
           return (
             <CollapsedDuplicateGroup
               key={groupKey}
@@ -621,42 +625,60 @@ export default function TransactionItemsList({ items, onItemsChange, projectId, 
               count={groupItems.length}
               selectionState={showSelectionControls ? groupSelectionState : undefined}
               onToggleSelection={showSelectionControls ? (checked) => handleSelectGroup(groupItems, checked) : undefined}
+              topRowContent={
+                <span className="text-sm text-gray-500">
+                  {formatCurrency(totalProjectPrice.toString())}
+                  {totalProjectPrice !== parseFloat(firstItem.projectPrice || firstItem.purchasePrice || '0') && (
+                    <span className="text-xs text-gray-400">
+                      {' ('}{formatCurrency((totalProjectPrice / groupItems.length).toString())}{' each)'}
+                    </span>
+                  )}
+                </span>
+              }
               summary={
-                <div className="flex items-start gap-4">
-                  {firstItem.images && firstItem.images.length > 0 && (
-                    <div className="flex-shrink-0">
+                <div className="flex gap-4">
+                  {/* Left column: Image */}
+                  <div className="flex-shrink-0">
+                    {firstItem.images && firstItem.images.length > 0 ? (
                       <img
                         src={firstItem.images.find(img => img.isPrimary)?.url || firstItem.images[0].url}
                         alt={firstItem.images[0].alt || firstItem.images[0].fileName}
                         className="h-12 w-12 rounded-md object-cover border border-gray-200"
                       />
-                    </div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center space-x-4 mb-2">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
-                        Item {groupIndex + 1} ×{groupItems.length}
-                      </span>
-                      <span className="text-sm text-gray-500">
-                        {formatCurrency(totalProjectPrice.toString())}
-                        {totalProjectPrice !== parseFloat(firstItem.projectPrice || firstItem.purchasePrice || '0') && (
-                          <span className="text-xs text-gray-400">
-                            {' ('}{formatCurrency((totalProjectPrice / groupItems.length).toString())}{' each)'}
-                          </span>
-                        )}
-                      </span>
-                    </div>
+                    ) : (
+                      <div className="w-12 h-12 rounded-md border border-dashed border-gray-300 flex items-center justify-center text-gray-400">
+                        <Camera className="h-5 w-5" />
+                      </div>
+                    )}
+                  </div>
 
+                  {/* Right column: Text content */}
+                  <div className="flex-1 min-w-0">
                     <h4 className="text-sm font-medium text-gray-900 mb-1">
                       {firstItem.description || 'No description'}
                     </h4>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
-                      {firstItem.sku && (
-                        <div>
-                          <span className="font-medium">SKU:</span> {firstItem.sku}
-                        </div>
-                      )}
+                      {/* SKU and conditional transaction/source display */}
+                      <div>
+                        {firstItem.sku && <span className="font-medium">SKU: {firstItem.sku}</span>}
+                        {(firstItem.sku || firstItemTransactionInfo || firstItem.source) && <span className="mx-2 text-gray-400">•</span>}
+                        {firstItemTransactionInfo && firstItemTransactionRoute ? (
+                          <span className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors">
+                            <Receipt className="h-3 w-3 mr-1" />
+                            <ContextLink
+                              to={buildContextUrl(firstItemTransactionRoute.path, firstItemTransactionRoute.projectId ? { project: firstItemTransactionRoute.projectId } : undefined)}
+                              className="hover:underline font-medium"
+                              title={`View transaction: ${firstItemTransactionInfo.title}`}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {firstItemTransactionInfo.title} {firstItemTransactionInfo.amount}
+                            </ContextLink>
+                          </span>
+                        ) : (
+                          firstItem.source && <span className="text-xs font-medium text-gray-600">{firstItem.source}</span>
+                        )}
+                      </div>
                       {firstItem.marketValue && (
                         <div>
                           <span className="font-medium">Market Value:</span> ${firstItem.marketValue}

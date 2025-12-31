@@ -99,14 +99,14 @@ export default function InventoryItemRow({
   }
 
   const getDispositionBadgeClasses = (disposition?: string | null) => {
-    const baseClasses = 'inline-flex items-center px-3 py-1 rounded-full text-sm font-medium cursor-pointer transition-colors hover:opacity-80'
+    const baseClasses = 'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium cursor-pointer transition-colors hover:opacity-80'
     const d = normalizeDisposition(disposition)
 
     switch (d) {
       case 'to purchase':
         return `${baseClasses} bg-amber-100 text-amber-800`
       case 'purchased':
-        return `${baseClasses} bg-green-100 text-green-800`
+        return `${baseClasses} bg-primary-100 text-primary-600`
       case 'to return':
         return `${baseClasses} bg-red-100 text-red-700`
       case 'returned':
@@ -156,107 +156,31 @@ export default function InventoryItemRow({
   return (
     <li className="relative bg-white">
       <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-        <div className="flex items-start gap-4">
-          {/* Checkbox on the left */}
-          <div className="pt-1">
-            <input
-              type="checkbox"
-              aria-label={`Select ${item.description || `item ${itemNumber}`}`}
-              className="h-4 w-4 text-primary-600 border-gray-300 rounded"
-              checked={isSelected}
-              onChange={(e) => onSelect(item.itemId, e.target.checked)}
-            />
-          </div>
+        {/* Top row: checkbox, item count, price, controls */}
+        <div className="flex items-center gap-4 mb-3">
+          {/* Checkbox */}
+          <input
+            type="checkbox"
+            aria-label={`Select ${item.description || `item ${itemNumber}`}`}
+            className="h-4 w-4 text-primary-600 border-gray-300 rounded"
+            checked={isSelected}
+            onChange={(e) => onSelect(item.itemId, e.target.checked)}
+          />
 
-          {/* Image */}
-          {item.images && item.images.length > 0 ? (
-            <div className="mr-4">
-              <img
-                src={item.images.find(img => img.isPrimary)?.url || item.images[0].url}
-                alt={item.images[0].alt || item.images[0].fileName}
-                className="h-12 w-12 rounded-md object-cover border border-gray-200"
-              />
-            </div>
-          ) : (
-            <div className="mr-4">
-              <button
-                onClick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  onAddImage(item.itemId)
-                }}
-                disabled={uploadingImages.has(item.itemId)}
-                className="w-12 h-12 rounded-md border border-dashed border-gray-300 flex items-center justify-center text-gray-400 hover:text-gray-600 hover:border-gray-400 transition-colors disabled:opacity-50"
-                title="Add image (camera or gallery)"
-              >
-                <Camera className="h-5 w-5" />
-              </button>
-            </div>
+          {/* Duplicate count for individual items in groups */}
+          {duplicateCount && duplicateCount > 1 && duplicateIndex && (
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
+              ×{duplicateIndex}/{duplicateCount}
+            </span>
           )}
 
-          {/* Content - wrapped in Link for navigation */}
-          <ContextLink to={getItemLink()} className="flex-1">
-            <div>
-              <div className="flex items-center space-x-4 mb-2">
-                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
-                  Item {itemNumber}
-                  {duplicateCount && duplicateCount > 1 && duplicateIndex && (
-                    <span className="ml-1 text-primary-600">×{duplicateIndex}/{duplicateCount}</span>
-                  )}
-                </span>
-                {priceLabel && (
-                  <span className="text-sm text-gray-500">
-                    {priceLabel}
-                  </span>
-                )}
-                {transactionDisplayInfo && (
-                  <span className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors ml-2">
-                    <Receipt className="h-3 w-3 mr-1" />
-                    <ContextLink
-                      to={transactionRoute ? buildContextUrl(transactionRoute.path, transactionRoute.projectId ? { project: transactionRoute.projectId } : undefined) : ''}
-                      className="hover:underline font-medium"
-                      title={`View transaction: ${transactionDisplayInfo.title}`}
-                    >
-                      {transactionDisplayInfo.title} {transactionDisplayInfo.amount}
-                    </ContextLink>
-                  </span>
-                )}
-                {!priceLabel && !transactionDisplayInfo && item.source && (
-                  <span className="text-sm text-gray-500">{item.source}</span>
-                )}
-              </div>
+          {/* Price */}
+          {priceLabel && (
+            <span className="text-sm text-gray-500">
+              {priceLabel}
+            </span>
+          )}
 
-              <h4 className="text-sm font-medium text-gray-900 mb-1">
-                {item.description || 'No description'}
-              </h4>
-
-              {locationValue && (
-                <div className="text-sm text-gray-500 mb-2">
-                  <span className="font-medium">Location:</span> {locationValue}
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
-                {item.sku && (
-                  <div>
-                    <span className="font-medium">SKU:</span> {item.sku}
-                  </div>
-                )}
-                {item.marketValue && (
-                  <div>
-                    <span className="font-medium">Market Value:</span> {formatCurrency(item.marketValue)}
-                  </div>
-                )}
-              </div>
-
-              {item.notes && (
-                <div className="mt-2 text-sm text-gray-600">
-                  <span className="font-medium">Notes:</span> {item.notes}
-                </div>
-              )}
-
-            </div>
-          </ContextLink>
 
           {/* Action buttons on the right */}
           <div className="flex items-center space-x-2 ml-auto">
@@ -266,11 +190,11 @@ export default function InventoryItemRow({
                 e.stopPropagation()
                 onBookmark(item.itemId)
               }}
-              className={`inline-flex items-center justify-center p-2 border text-sm font-medium rounded-md transition-colors ${
+              className={`inline-flex items-center justify-center p-1 text-sm font-medium transition-colors ${
                 item.bookmark
-                  ? 'border-red-300 text-red-700 bg-red-50 hover:bg-red-100'
-                  : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
-              } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500`}
+                  ? 'text-red-700 bg-transparent'
+                  : 'text-primary-600 bg-transparent'
+              } focus:outline-none`}
               title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
             >
               <Bookmark className="h-4 w-4" fill={item.bookmark ? 'currentColor' : 'none'} />
@@ -281,7 +205,7 @@ export default function InventoryItemRow({
                 e.stopPropagation()
                 onEdit(getEditLink())
               }}
-              className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors"
+              className="inline-flex items-center justify-center p-1 text-sm font-medium text-primary-600 bg-transparent focus:outline-none transition-colors"
               title="Edit item"
             >
               <Edit className="h-4 w-4" />
@@ -292,7 +216,7 @@ export default function InventoryItemRow({
                 e.stopPropagation()
                 onDuplicate(item.itemId)
               }}
-              className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors"
+              className="inline-flex items-center justify-center p-1 text-sm font-medium text-primary-600 bg-transparent focus:outline-none transition-colors"
               title="Duplicate item"
             >
               <Copy className="h-4 w-4" />
@@ -335,6 +259,75 @@ export default function InventoryItemRow({
               )}
             </div>
           </div>
+        </div>
+
+        {/* Bottom row: image and text content in two columns */}
+        <div className="flex gap-4">
+          {/* Left column: Image */}
+          <div className="flex-shrink-0">
+            {item.images && item.images.length > 0 ? (
+              <img
+                src={item.images.find(img => img.isPrimary)?.url || item.images[0].url}
+                alt={item.images[0].alt || item.images[0].fileName}
+                className="h-12 w-12 rounded-md object-cover border border-gray-200"
+              />
+            ) : (
+              <button
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onAddImage(item.itemId)
+                }}
+                disabled={uploadingImages.has(item.itemId)}
+                className="w-12 h-12 rounded-md border border-dashed border-gray-300 flex items-center justify-center text-gray-400 hover:text-gray-600 hover:border-gray-400 transition-colors disabled:opacity-50"
+                title="Add image (camera or gallery)"
+              >
+                <Camera className="h-5 w-5" />
+              </button>
+            )}
+          </div>
+
+          {/* Right column: All text content wrapped in link */}
+          <ContextLink to={getItemLink()} className="flex-1 min-w-0">
+            <div>
+              <h4 className="text-sm font-medium text-gray-900 mb-1">
+                {item.description || 'No description'}
+              </h4>
+
+              {locationValue && (
+                <div className="text-sm text-gray-500 mb-2">
+                  <span className="font-medium">Location:</span> {locationValue}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
+                {/* SKU and conditional transaction/source display */}
+                <div>
+                  {item.sku && <span className="font-medium">SKU: {item.sku}</span>}
+                  {(item.sku || transactionDisplayInfo || item.source) && <span className="mx-2 text-gray-400">•</span>}
+                  {transactionDisplayInfo ? (
+                    <span className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors">
+                      <Receipt className="h-3 w-3 mr-1" />
+                      <ContextLink
+                        to={transactionRoute ? buildContextUrl(transactionRoute.path, transactionRoute.projectId ? { project: transactionRoute.projectId } : undefined) : ''}
+                        className="hover:underline font-medium"
+                        title={`View transaction: ${transactionDisplayInfo.title}`}
+                      >
+                        {transactionDisplayInfo.title} {transactionDisplayInfo.amount}
+                      </ContextLink>
+                    </span>
+                  ) : (
+                    item.source && <span className="text-xs font-medium text-gray-600">{item.source}</span>
+                  )}
+                </div>
+                {item.marketValue && (
+                  <div>
+                    <span className="font-medium">Market Value:</span> {formatCurrency(item.marketValue)}
+                  </div>
+                )}
+              </div>
+            </div>
+          </ContextLink>
         </div>
       </div>
     </li>

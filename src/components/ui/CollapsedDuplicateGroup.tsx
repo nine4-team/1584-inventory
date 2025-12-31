@@ -6,7 +6,7 @@ interface CollapsedDuplicateGroupProps {
   groupId: string
   /** Number of items in this group */
   count: number
-  /** The summary content to show when collapsed */
+  /** The summary content to show when collapsed (bottom row: image and text content) */
   summary: ReactNode
   /** The expanded content (individual items) */
   children: ReactNode
@@ -20,6 +20,8 @@ interface CollapsedDuplicateGroupProps {
   selectionState?: 'checked' | 'unchecked' | 'indeterminate'
   /** Handler when the checkbox toggles selection */
   onToggleSelection?: (checked: boolean) => void
+  /** Top row content (e.g., price) to display between checkbox and view all control */
+  topRowContent?: ReactNode
 }
 
 export default function CollapsedDuplicateGroup({
@@ -28,10 +30,11 @@ export default function CollapsedDuplicateGroup({
   summary,
   children,
   defaultExpanded = false,
-  microcopy = "Expand to view all items",
+  microcopy = "View All",
   className = "",
   selectionState = 'unchecked',
-  onToggleSelection
+  onToggleSelection,
+  topRowContent
 }: CollapsedDuplicateGroupProps) {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded)
   const checkboxRef = useRef<HTMLInputElement>(null)
@@ -63,47 +66,56 @@ export default function CollapsedDuplicateGroup({
           }
         }}
       >
-        <div className="flex items-start justify-between p-4">
-          <div className="flex items-start gap-4 flex-1 min-w-0">
+        <div className="p-4">
+          {/* Top row: checkbox, price, controls (view all) */}
+          <div className="flex items-center gap-4 mb-3">
             {onToggleSelection && (
-              <div className="pt-1">
-                <input
-                  ref={checkboxRef}
-                  type="checkbox"
-                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-600 h-4 w-4 flex-shrink-0"
-                  checked={selectionState === 'checked'}
-                  onChange={(e) => {
-                    e.stopPropagation()
-                    onToggleSelection(e.target.checked)
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  aria-label={`Select group of ${count} items`}
-                />
+              <input
+                ref={checkboxRef}
+                type="checkbox"
+                className="rounded border-gray-300 text-primary-600 focus:ring-primary-600 h-4 w-4 flex-shrink-0"
+                checked={selectionState === 'checked'}
+                onChange={(e) => {
+                  e.stopPropagation()
+                  onToggleSelection(e.target.checked)
+                }}
+                onClick={(e) => e.stopPropagation()}
+                aria-label={`Select group of ${count} items`}
+              />
+            )}
+
+            {/* Price and other top-row content */}
+            {topRowContent && (
+              <div className="flex items-center gap-3 flex-1 min-w-0">
+                {topRowContent}
               </div>
             )}
 
-            <div className="flex items-start gap-3 flex-1 min-w-0">
-              {/* Summary Content */}
-              <div className="flex-1 min-w-0">
-                {summary}
+            {/* View all control - treated like control section in ungrouped cards */}
+            <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
+              {count > 1 && !isExpanded && (
+                <>
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
+                    ×{count}
+                  </span>
+                  <span className="text-xs text-gray-500 italic">
+                    {microcopy}
+                  </span>
+                </>
+              )}
+              <div className="text-gray-400">
+                {isExpanded ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronRight className="h-4 w-4" />
+                )}
               </div>
             </div>
           </div>
 
-          {/* Chevron and Microcopy */}
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {count > 1 && !isExpanded && (
-              <span className="text-xs text-gray-500 italic">
-                {microcopy}
-              </span>
-            )}
-            <div className="text-gray-400">
-              {isExpanded ? (
-                <ChevronDown className="h-4 w-4" />
-              ) : (
-                <ChevronRight className="h-4 w-4" />
-              )}
-            </div>
+          {/* Bottom row: Summary Content (image and text) */}
+          <div className="flex gap-4">
+            {summary}
           </div>
         </div>
       </button>

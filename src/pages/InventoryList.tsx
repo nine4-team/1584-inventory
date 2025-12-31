@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Plus, Search, RotateCcw, Camera, Trash2, QrCode, Filter, ArrowUpDown } from 'lucide-react'
+import { Plus, Search, RotateCcw, Camera, Trash2, QrCode, Filter, ArrowUpDown, Receipt } from 'lucide-react'
 import ContextLink from '@/components/ContextLink'
 import { unifiedItemsService, integrationService } from '@/services/inventoryService'
 import { lineageService } from '@/services/lineageService'
@@ -16,6 +16,7 @@ import { projectItemNew } from '@/utils/routes'
 import { getInventoryListGroupKey } from '@/utils/itemGrouping'
 import CollapsedDuplicateGroup from '@/components/ui/CollapsedDuplicateGroup'
 import InventoryItemRow from '@/components/items/InventoryItemRow'
+import { getTransactionDisplayInfo, getTransactionRoute } from '@/utils/transactionDisplayUtils'
 
 interface InventoryListProps {
   projectId: string
@@ -708,6 +709,93 @@ export default function InventoryList({ projectId, projectName, items: propItems
                 const totalPrice = groupItems.reduce((sum, item) => sum + parseMoney(getPrimaryPrice(item)), 0)
                 const firstItemPrice = parseMoney(getPrimaryPrice(firstItem))
 
+                // Component to handle transaction display info for grouped items
+                const GroupedItemSummary = () => {
+                  const { buildContextUrl } = useNavigationContext()
+                  const [transactionDisplayInfo, setTransactionDisplayInfo] = useState<{title: string, amount: string} | null>(null)
+                  const [transactionRoute, setTransactionRoute] = useState<{path: string, projectId: string | null} | null>(null)
+
+                  useEffect(() => {
+                    const fetchTransactionData = async () => {
+                      if (firstItem.transactionId && currentAccountId) {
+                        const [displayInfo, route] = await Promise.all([
+                          getTransactionDisplayInfo(currentAccountId, firstItem.transactionId, 20),
+                          getTransactionRoute(firstItem.transactionId, currentAccountId, projectId)
+                        ])
+                        setTransactionDisplayInfo(displayInfo)
+                        setTransactionRoute(route)
+                      } else {
+                        setTransactionDisplayInfo(null)
+                        setTransactionRoute(null)
+                      }
+                    }
+
+                    fetchTransactionData()
+                  }, [firstItem.transactionId, currentAccountId, projectId])
+
+                  return (
+                    <>
+                      {/* Left column: Image */}
+                      <div className="flex-shrink-0">
+                        {firstItem.images && firstItem.images.length > 0 ? (
+                          <img
+                            src={firstItem.images.find(img => img.isPrimary)?.url || firstItem.images[0].url}
+                            alt={firstItem.images[0].alt || firstItem.images[0].fileName}
+                            className="h-12 w-12 rounded-md object-cover border border-gray-200"
+                          />
+                        ) : (
+                          <div className="w-12 h-12 rounded-md border border-dashed border-gray-300 flex items-center justify-center text-gray-400">
+                            <Camera className="h-5 w-5" />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Right column: Text content */}
+                      <ContextLink to={projectId ? `/item/${firstItem.itemId}?project=${projectId}` : `/item/${firstItem.itemId}`} className="flex-1 min-w-0">
+                        <div>
+                          <h4 className="text-sm font-medium text-gray-900 mb-1">
+                            {firstItem.description || 'No description'}
+                          </h4>
+
+                          {locationValue && (
+                            <div className="text-sm text-gray-500 mb-2">
+                              <span className="font-medium">Location:</span> {locationValue}
+                            </div>
+                          )}
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
+                            {/* SKU and conditional transaction/source display */}
+                            <div>
+                              {firstItem.sku && <span className="font-medium">SKU: {firstItem.sku}</span>}
+                              {(firstItem.sku || transactionDisplayInfo || firstItem.source) && <span className="mx-2 text-gray-400">•</span>}
+                              {transactionDisplayInfo ? (
+                                <span className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors">
+                                  <Receipt className="h-3 w-3 mr-1" />
+                                  <ContextLink
+                                    to={transactionRoute ? buildContextUrl(transactionRoute.path, transactionRoute.projectId ? { project: transactionRoute.projectId } : undefined) : ''}
+                                    className="hover:underline font-medium"
+                                    title={`View transaction: ${transactionDisplayInfo.title}`}
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    {transactionDisplayInfo.title} {transactionDisplayInfo.amount}
+                                  </ContextLink>
+                                </span>
+                              ) : (
+                                firstItem.source && <span className="text-xs font-medium text-gray-600">{firstItem.source}</span>
+                              )}
+                            </div>
+                            {firstItem.marketValue && (
+                              <div>
+                                <span className="font-medium">Market Value:</span> {formatCurrency(firstItem.marketValue)}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </ContextLink>
+                    </>
+                  )
+                }
+
                 return (
                   <li key={groupKey} className="relative">
                     <CollapsedDuplicateGroup
@@ -715,77 +803,19 @@ export default function InventoryList({ projectId, projectName, items: propItems
                       count={groupItems.length}
                       selectionState={groupSelectionState}
                       onToggleSelection={(checked) => handleSelectGroup(groupItems, checked)}
-                      summary={
-                        <div className="flex items-start gap-4 py-3">
-                          <div className="flex-shrink-0">
-                            {firstItem.images && firstItem.images.length > 0 ? (
-                              (() => {
-                                const primaryImage = firstItem.images.find(img => img.isPrimary) || firstItem.images[0]
-                                return (
-                                  <div className="w-12 h-12 rounded-md overflow-hidden border border-gray-200">
-                                    <img
-                                      src={primaryImage.url}
-                                      alt={primaryImage.alt || 'Item image'}
-                                      className="w-full h-full object-cover"
-                                    />
-                                  </div>
-                                )
-                              })()
-                            ) : (
-                              <div className="w-12 h-12 rounded-md border border-dashed border-gray-300 flex items-center justify-center text-gray-400">
-                                <Camera className="h-5 w-5" />
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="flex-1 min-w-0 space-y-3">
-                            <div className="flex flex-wrap items-center gap-3">
-                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
-                                Item {groupIndex + 1} ×{groupItems.length}
+                      topRowContent={
+                        hasAnyPrice && (
+                          <span className="text-sm text-gray-500">
+                            {formatCurrency(totalPrice)}
+                            {groupItems.length > 1 && totalPrice !== firstItemPrice && (
+                              <span className="text-xs text-gray-400">
+                                {' ('}{formatCurrency(totalPrice / groupItems.length)} each)
                               </span>
-                              {hasAnyPrice && (
-                                <span className="text-sm text-gray-500">
-                                  {formatCurrency(totalPrice)}
-                                  {groupItems.length > 1 && totalPrice !== firstItemPrice && (
-                                    <span className="text-xs text-gray-400">
-                                      {' ('}{formatCurrency(totalPrice / groupItems.length)} each)
-                                    </span>
-                                  )}
-                                </span>
-                              )}
-                            </div>
-
-                            <h4 className="text-sm font-medium text-gray-900">
-                              {firstItem.description || 'No description'}
-                            </h4>
-
-                            {locationValue && (
-                              <div className="text-sm text-gray-500">
-                                <span className="font-medium">Location:</span> {locationValue}
-                              </div>
                             )}
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
-                              {firstItem.sku && (
-                                <div>
-                                  <span className="font-medium">SKU:</span> {firstItem.sku}
-                                </div>
-                              )}
-                              {firstItem.marketValue && (
-                                <div>
-                                  <span className="font-medium">Market Value:</span> {formatCurrency(firstItem.marketValue)}
-                                </div>
-                              )}
-                            </div>
-
-                            {firstItem.notes && (
-                              <div className="text-sm text-gray-600 whitespace-pre-wrap">
-                                <span className="font-medium">Notes:</span> {firstItem.notes}
-                              </div>
-                            )}
-                          </div>
-                        </div>
+                          </span>
+                        )
                       }
+                      summary={<GroupedItemSummary />}
                     >
                       {/* Render individual items in the expanded group */}
                       <ul className="divide-y divide-gray-200 rounded-lg overflow-hidden list-none p-0 m-0">
