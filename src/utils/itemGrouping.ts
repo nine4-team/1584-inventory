@@ -40,17 +40,11 @@ export function getInventoryListGroupKey(item: Item, context: 'project' | 'busin
   const normalizedPrice = normalizePrice(getEffectivePrice(item))
   const normalizedDisposition = normalizeDisposition(item.disposition)
 
-  // Location field depends on context
-  const locationField = context === 'project'
-    ? normalizeString(item.space)
-    : normalizeString(item.businessInventoryLocation)
-
-  // Create a stable grouping key: SKU first, then other visual fields
+  // Create a stable grouping key: SKU first, then other visual fields (excluding location)
   return [
     normalizedSku, // Primary grouping key
     normalizedSource,
     normalizedPrice,
-    locationField,
     normalizedDisposition,
     item.bookmark.toString() // Include bookmark state in grouping
   ].join('|')

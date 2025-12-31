@@ -279,12 +279,6 @@ export default function InventoryItemRow({
                 {item.description || 'No description'}
               </h4>
 
-              {locationValue && (
-                <div className="text-sm text-gray-500 mb-2">
-                  <span className="font-medium">Location:</span> {locationValue}
-                </div>
-              )}
-
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
                 {/* SKU and conditional transaction/source display */}
                 <div>
@@ -328,6 +322,12 @@ export default function InventoryItemRow({
                   </div>
                 )}
               </div>
+
+              {locationValue && (
+                <div className="text-sm text-gray-500 mt-2">
+                  <span className="font-medium">Location:</span> {locationValue}
+                </div>
+              )}
             </div>
           </ContextLink>
         </div>
