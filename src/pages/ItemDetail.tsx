@@ -3,10 +3,10 @@ import { ArrowLeft, Bookmark, QrCode, Trash2, Edit, FileText, ImagePlus, Chevron
 import { useParams, useSearchParams } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import ContextBackLink from '@/components/ContextBackLink'
-import { Item, ItemImage, ItemDisposition } from '@/types'
+import { Item, ItemImage, ItemDisposition, Transaction } from '@/types'
 import { normalizeDisposition, dispositionsEqual, displayDispositionLabel, DISPOSITION_OPTIONS } from '@/utils/dispositionUtils'
 import { formatDate, formatCurrency } from '@/utils/dateUtils'
-import { unifiedItemsService, projectService, integrationService } from '@/services/inventoryService'
+import { unifiedItemsService, projectService, integrationService, transactionService } from '@/services/inventoryService'
 import { ImageUploadService } from '@/services/imageService'
 import ImagePreview from '@/components/ui/ImagePreview'
 import ItemLineageBreadcrumb from '@/components/ui/ItemLineageBreadcrumb'
@@ -18,6 +18,8 @@ import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { projectItemEdit, projectItems, projectTransactionDetail } from '@/utils/routes'
+import { Combobox } from '@/components/ui/Combobox'
+import { supabase } from '@/services/supabase'
 
 export default function ItemDetail({ itemId: propItemId, projectId: propProjectId, onClose }: { itemId?: string; projectId?: string; onClose?: () => void } = {}) {
   const { id, projectId: routeProjectId, itemId } = useParams<{ id?: string; projectId?: string; itemId?: string }>()
@@ -31,7 +33,12 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
   const [uploadProgress, setUploadProgress] = useState<number>(0)
   const [openDispositionMenu, setOpenDispositionMenu] = useState(false)
   const [isSticky, setIsSticky] = useState(false)
-  const { showError } = useToast()
+  const [showTransactionDialog, setShowTransactionDialog] = useState(false)
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [loadingTransactions, setLoadingTransactions] = useState(false)
+  const [selectedTransactionId, setSelectedTransactionId] = useState('')
+  const [isUpdatingTransaction, setIsUpdatingTransaction] = useState(false)
+  const { showError, showSuccess } = useToast()
   const { buildContextUrl, getBackDestination } = useNavigationContext()
   const stickyRef = useRef<HTMLDivElement>(null)
 
@@ -211,6 +218,131 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
     }
   }, [])
 
+  // Load transactions when dialog opens
+  useEffect(() => {
+    if (showTransactionDialog && currentAccountId && (projectId || item?.projectId)) {
+      loadTransactions()
+    }
+  }, [showTransactionDialog, currentAccountId, projectId, item?.projectId])
+
+  const loadTransactions = async () => {
+    const effectiveProjectId = projectId || item?.projectId
+    if (!currentAccountId || !effectiveProjectId) return
+    setLoadingTransactions(true)
+    try {
+      const txs = await transactionService.getTransactions(currentAccountId, effectiveProjectId)
+      setTransactions(txs)
+    } catch (error) {
+      console.error('Failed to load transactions:', error)
+      showError('Failed to load transactions. Please try again.')
+    } finally {
+      setLoadingTransactions(false)
+    }
+  }
+
+  const getCanonicalTransactionTitle = (transaction: Transaction): string => {
+    if (transaction.transactionId?.startsWith('INV_SALE_')) {
+      return 'Company Inventory Sale'
+    }
+    if (transaction.transactionId?.startsWith('INV_PURCHASE_')) {
+      return 'Company Inventory Purchase'
+    }
+    return transaction.source
+  }
+
+  const handleChangeTransaction = async () => {
+    if (!item || !currentAccountId || !selectedTransactionId) return
+
+    setIsUpdatingTransaction(true)
+    const previousTransactionId = item.transactionId
+    const effectiveProjectId = projectId || item.projectId
+
+    try {
+      // Update the item's transactionId
+      await unifiedItemsService.updateItem(currentAccountId, item.itemId, {
+        transactionId: selectedTransactionId
+      })
+
+      // Update lineage pointers
+      try {
+        await lineageService.updateItemLineagePointers(currentAccountId, item.itemId, selectedTransactionId)
+      } catch (lineageError) {
+        console.warn('Failed to update lineage pointers for item:', item.itemId, lineageError)
+      }
+
+      // Remove item from old transaction's item_ids array
+      if (previousTransactionId) {
+        try {
+          const { data: oldTxData, error: fetchOldError } = await supabase
+            .from('transactions')
+            .select('item_ids')
+            .eq('account_id', currentAccountId)
+            .eq('transaction_id', previousTransactionId)
+            .single()
+
+          if (!fetchOldError && oldTxData) {
+            const currentItemIds: string[] = Array.isArray(oldTxData.item_ids) ? oldTxData.item_ids : []
+            const updatedItemIds = currentItemIds.filter(id => id !== item.itemId)
+
+            await supabase
+              .from('transactions')
+              .update({
+                item_ids: updatedItemIds,
+                updated_at: new Date().toISOString()
+              })
+              .eq('account_id', currentAccountId)
+              .eq('transaction_id', previousTransactionId)
+          }
+        } catch (oldTxError) {
+          console.warn('Failed to update old transaction item_ids:', oldTxError)
+        }
+      }
+
+      // Add item to new transaction's item_ids array
+      try {
+        const { data: newTxData, error: fetchNewError } = await supabase
+          .from('transactions')
+          .select('item_ids')
+          .eq('account_id', currentAccountId)
+          .eq('transaction_id', selectedTransactionId)
+          .single()
+
+        if (!fetchNewError && newTxData) {
+          const currentItemIds: string[] = Array.isArray(newTxData.item_ids) ? newTxData.item_ids : []
+          if (!currentItemIds.includes(item.itemId)) {
+            const updatedItemIds = [...currentItemIds, item.itemId]
+
+            await supabase
+              .from('transactions')
+              .update({
+                item_ids: updatedItemIds,
+                updated_at: new Date().toISOString()
+              })
+              .eq('account_id', currentAccountId)
+              .eq('transaction_id', selectedTransactionId)
+          }
+        }
+      } catch (newTxError) {
+        console.warn('Failed to update new transaction item_ids:', newTxError)
+      }
+
+      // Refresh the item data
+      const updatedItem = await unifiedItemsService.getItemById(currentAccountId, item.itemId)
+      if (updatedItem) {
+        setItem(updatedItem)
+      }
+
+      setShowTransactionDialog(false)
+      setSelectedTransactionId('')
+      showSuccess('Transaction updated successfully')
+    } catch (error) {
+      console.error('Failed to update transaction:', error)
+      showError('Failed to update transaction. Please try again.')
+    } finally {
+      setIsUpdatingTransaction(false)
+    }
+  }
+
   const toggleBookmark = async () => {
     if (!item || !currentAccountId) return
 
@@ -290,7 +422,8 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
       case 'to purchase':
         return `${baseClasses} bg-amber-100 text-amber-800`
       case 'purchased':
-        return `${baseClasses} bg-green-100 text-green-800`
+        // Use the primary (brown) palette to match item preview cards
+        return `${baseClasses} bg-primary-100 text-primary-600`
       case 'to return':
         return `${baseClasses} bg-red-100 text-red-700`
       case 'returned':
@@ -651,24 +784,51 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
               </div>
               <div>
                 <dt className="text-xs font-medium text-gray-500 uppercase tracking-wide">Transaction</dt>
-                <dd className="mt-1 text-sm text-gray-900">
-                  <ContextLink
-                    to={isBusinessInventoryItem
-                      ? buildContextUrl(`/business-inventory/transaction/${item.transactionId}`)
-                      : projectId
-                        ? buildContextUrl(projectTransactionDetail(projectId, item.transactionId))
-                        : item.projectId
-                          ? buildContextUrl(projectTransactionDetail(item.projectId, item.transactionId))
-                          : buildContextUrl('/projects')
-                    }
-                    className="text-primary-600 hover:text-primary-800 underline"
-                  >
-                    {item.transactionId
-                      ? item.transactionId.startsWith('INV_PURCHASE')
-                        ? 'INV_PURCHASE...'
-                        : (item.transactionId.length > 12 ? `${item.transactionId.slice(0, 12)}...` : item.transactionId)
-                      : ''}
-                  </ContextLink>
+                <dd className="mt-1 text-sm text-gray-900 flex items-center gap-2">
+                  {item.transactionId ? (
+                    <>
+                      <ContextLink
+                        to={isBusinessInventoryItem
+                          ? buildContextUrl(`/business-inventory/transaction/${item.transactionId}`)
+                          : projectId
+                            ? buildContextUrl(projectTransactionDetail(projectId, item.transactionId))
+                            : item.projectId
+                              ? buildContextUrl(projectTransactionDetail(item.projectId, item.transactionId))
+                              : buildContextUrl('/projects')
+                        }
+                        className="text-primary-600 hover:text-primary-800 underline"
+                      >
+                        {item.transactionId.startsWith('INV_PURCHASE')
+                          ? 'INV_PURCHASE...'
+                          : (item.transactionId.length > 12 ? `${item.transactionId.slice(0, 12)}...` : item.transactionId)}
+                      </ContextLink>
+                      {(projectId || item.projectId) && !isBusinessInventoryItem && (
+                        <button
+                          onClick={() => {
+                            setSelectedTransactionId(item.transactionId || '')
+                            setShowTransactionDialog(true)
+                          }}
+                          className="text-xs px-2 py-1 text-primary-600 hover:text-primary-800 hover:bg-primary-50 rounded border border-primary-300 hover:border-primary-400 transition-colors"
+                          title="Change transaction"
+                        >
+                          Change
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    (projectId || item.projectId) && !isBusinessInventoryItem && (
+                      <button
+                        onClick={() => {
+                          setSelectedTransactionId('')
+                          setShowTransactionDialog(true)
+                        }}
+                        className="text-xs px-2 py-1 text-primary-600 hover:text-primary-800 hover:bg-primary-50 rounded border border-primary-300 hover:border-primary-400 transition-colors"
+                        title="Assign to transaction"
+                      >
+                        Assign
+                      </button>
+                    )
+                  )}
                 </dd>
               </div>
             {/* Lineage breadcrumb (compact) */}
@@ -692,6 +852,57 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
           </div>
         </div>
       </div>
+
+      {/* Transaction Change Dialog */}
+      {showTransactionDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-medium text-gray-900">
+                Change Transaction
+              </h3>
+            </div>
+            <div className="px-6 py-4">
+              <Combobox
+                label="Select Transaction"
+                value={selectedTransactionId}
+                onChange={setSelectedTransactionId}
+                disabled={loadingTransactions || isUpdatingTransaction}
+                loading={loadingTransactions}
+                placeholder={loadingTransactions ? "Loading transactions..." : "Select a transaction"}
+                options={
+                  loadingTransactions ? [] : [
+                    { id: '', label: 'Select a transaction' },
+                    ...transactions.map((transaction) => ({
+                      id: transaction.transactionId,
+                      label: `${new Date(transaction.transactionDate).toLocaleDateString()} - ${getCanonicalTransactionTitle(transaction)} - $${transaction.amount}`
+                    }))
+                  ]
+                }
+              />
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowTransactionDialog(false)
+                  setSelectedTransactionId('')
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                disabled={isUpdatingTransaction}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleChangeTransaction}
+                disabled={!selectedTransactionId || isUpdatingTransaction}
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isUpdatingTransaction ? 'Updating...' : 'Update'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 

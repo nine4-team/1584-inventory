@@ -103,8 +103,11 @@ export default function ImageUpload({
       }
     })
 
-    if (validFiles.length + images.length > maxImages) {
-      const allowedCount = maxImages - images.length
+    const existingValidFiles = images.filter(img => !img.error).map(img => img.file)
+    const existingValidCount = existingValidFiles.length
+
+    if (validFiles.length + existingValidCount > maxImages) {
+      const allowedCount = maxImages - existingValidCount
       if (allowedCount > 0) {
         validFiles.splice(allowedCount)
         newPreviewImages.splice(allowedCount)
@@ -121,8 +124,11 @@ export default function ImageUpload({
     }
 
     setImages(prev => [...prev, ...newPreviewImages])
-    onImagesChange(validFiles)
-  }, [images.length, maxImages, validateFile, onImagesChange])
+
+    const combinedFiles = [...existingValidFiles, ...validFiles]
+    const limitedFiles = combinedFiles.slice(0, maxImages)
+    onImagesChange(limitedFiles)
+  }, [images, maxImages, validateFile, onImagesChange])
 
   const removeImage = useCallback((index: number) => {
     const imageToRemove = images[index]
