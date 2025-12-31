@@ -770,14 +770,6 @@ export default function InventoryList({ projectId, projectName, items: propItems
                 </button>
               )}
 
-              <button
-                onClick={handleBulkDelete}
-                className="inline-flex items-center justify-center px-3 py-2 border border-red-300 text-sm font-medium rounded-md text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors duration-200"
-                disabled={selectedItems.size === 0}
-                title="Delete All"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
             </div>
           </div>
         </div>
