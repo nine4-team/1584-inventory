@@ -9,7 +9,7 @@ import { ImageUploadService } from '@/services/imageService'
 import { TransactionSource } from '@/constants/transactionSources'
 import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import { Transaction, ItemImage, ItemDisposition } from '@/types'
-import { Select } from '@/components/ui/Select'
+import { Combobox } from '@/components/ui/Combobox'
 import ImagePreview from '@/components/ui/ImagePreview'
 import { useAuth } from '../contexts/AuthContext'
 import { useAccount } from '../contexts/AccountContext'
@@ -459,25 +459,24 @@ export default function AddItem() {
           </div>
 
           {/* Transaction Selection */}
-          <Select
+          <Combobox
             label="Associate with Transaction"
-            id="selectedTransactionId"
             value={formData.selectedTransactionId}
-            onChange={(e) => handleTransactionChange(e.target.value)}
+            onChange={handleTransactionChange}
             error={errors.selectedTransactionId}
             disabled={loadingTransactions}
-          >
-            <option value="">Select a transaction</option>
-            {loadingTransactions ? (
-              <option disabled>Loading transactions...</option>
-            ) : (
-              transactions.map((transaction) => (
-                <option key={transaction.transactionId} value={transaction.transactionId}>
-                  {new Date(transaction.transactionDate).toLocaleDateString()} - {getCanonicalTransactionTitle(transaction)} - ${transaction.amount}
-                </option>
-              ))
-            )}
-          </Select>
+            loading={loadingTransactions}
+            placeholder={loadingTransactions ? "Loading transactions..." : "Select a transaction"}
+            options={
+              loadingTransactions ? [] : [
+                { id: '', label: 'Select a transaction' },
+                ...transactions.map((transaction) => ({
+                  id: transaction.transactionId,
+                  label: `${new Date(transaction.transactionDate).toLocaleDateString()} - ${getCanonicalTransactionTitle(transaction)} - $${transaction.amount}`
+                }))
+              ]
+            }
+          />
           {!loadingTransactions && transactions.length === 0 && (
             <p className="mt-1 text-sm text-gray-500">No transactions available for this project</p>
           )}
@@ -691,18 +690,15 @@ export default function AddItem() {
             </label>
             <p className="text-xs text-gray-500 mt-1 mb-2">What happens to this item after the project</p>
             <div className="mt-1">
-              <select
-                id="disposition"
+              <Combobox
                 value={formData.disposition}
-                onChange={(e) => handleInputChange('disposition', e.target.value as ItemDisposition)}
-                className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-              >
-                {DISPOSITION_OPTIONS.map(option => (
-                  <option key={option} value={option}>
-                    {displayDispositionLabel(option)}
-                  </option>
-                ))}
-              </select>
+                onChange={(value) => handleInputChange('disposition', value as ItemDisposition)}
+                placeholder="Select a disposition"
+                options={DISPOSITION_OPTIONS.map(option => ({
+                  id: option,
+                  label: displayDispositionLabel(option)
+                }))}
+              />
             </div>
           </div>
 

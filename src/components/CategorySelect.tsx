@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { budgetCategoriesService } from '@/services/budgetCategoriesService'
 import { BudgetCategory } from '@/types'
 import { useAccount } from '@/contexts/AccountContext'
+import { Combobox } from '@/components/ui/Combobox'
 
 interface CategorySelectProps {
   value?: string
@@ -113,20 +114,19 @@ export default function CategorySelect({
         ) : (
           <>
             {asDropdown ? (
-              <div>
-                <select
-                  id={id}
-                  value={value || ''}
-                  onChange={handleSelectChange}
-                  disabled={disabled}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm"
-                >
-                  {!required && <option value="">None</option>}
-                  {categories.map(cat => (
-                    <option key={cat.id} value={cat.id}>{cat.name}</option>
-                  ))}
-                </select>
-              </div>
+              <Combobox
+                value={value || ''}
+                onChange={onChange || (() => {})}
+                disabled={disabled}
+                placeholder="Select a category"
+                options={[
+                  ...(!required ? [{ id: '', label: 'None' }] : []),
+                  ...categories.map(cat => ({
+                    id: cat.id,
+                    label: cat.name
+                  }))
+                ]}
+              />
             ) : (
               <fieldset id={id}>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">

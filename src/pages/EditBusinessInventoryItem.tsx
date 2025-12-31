@@ -6,6 +6,7 @@ import { ArrowLeft, Save, X } from 'lucide-react'
 import { Item } from '@/types'
 import { unifiedItemsService } from '@/services/inventoryService'
 import { useAccount } from '@/contexts/AccountContext'
+import { Combobox } from '@/components/ui/Combobox'
 
 export default function EditBusinessInventoryItem() {
   const { id } = useParams<{ id: string }>()
@@ -355,18 +356,18 @@ export default function EditBusinessInventoryItem() {
               </label>
               <p className="text-xs text-gray-500 mt-1 mb-2">What should happen to this item in business inventory</p>
               <div className="mt-1">
-                <select
-                  id="disposition"
+                <Combobox
                   value={formData.disposition}
-                  onChange={(e) => handleInputChange('disposition', e.target.value)}
-                  className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                >
-                  <option value="to purchase">To Purchase</option>
-                  <option value="purchased">Purchased</option>
-                  <option value="to return">To Return</option>
-                  <option value="returned">Returned</option>
-                  <option value="inventory">Inventory</option>
-                </select>
+                  onChange={(value) => handleInputChange('disposition', value)}
+                  placeholder="Select a disposition"
+                  options={[
+                    { id: 'to purchase', label: 'To Purchase' },
+                    { id: 'purchased', label: 'Purchased' },
+                    { id: 'to return', label: 'To Return' },
+                    { id: 'returned', label: 'Returned' },
+                    { id: 'inventory', label: 'Inventory' }
+                  ]}
+                />
               </div>
             </div>
 
@@ -390,16 +391,16 @@ export default function EditBusinessInventoryItem() {
               <label htmlFor="inventoryStatus" className="block text-sm font-medium text-gray-700">
                 Inventory Status
               </label>
-            <select
-                id="inventoryStatus"
+              <Combobox
                 value={formData.inventoryStatus}
-                onChange={(e) => handleInputChange('inventoryStatus', e.target.value)}
-                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-              >
-                <option value="available">Available</option>
-                <option value="allocated">Allocated</option>
-                <option value="sold">Sold</option>
-              </select>
+                onChange={(value) => handleInputChange('inventoryStatus', value)}
+                placeholder="Select inventory status"
+                options={[
+                  { id: 'available', label: 'Available' },
+                  { id: 'allocated', label: 'Allocated' },
+                  { id: 'sold', label: 'Sold' }
+                ]}
+              />
               {item.projectId && (
                 <div className="mt-4 p-4 bg-yellow-50 rounded-md">
                   <p className="text-sm text-yellow-800">

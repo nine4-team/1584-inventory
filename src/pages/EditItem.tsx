@@ -6,7 +6,7 @@ import { useState, FormEvent, useEffect, useRef } from 'react'
 import { transactionService, unifiedItemsService } from '@/services/inventoryService'
 import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import { Transaction } from '@/types'
-import { Select } from '@/components/ui/Select'
+import { Combobox } from '@/components/ui/Combobox'
 import { useAuth } from '../contexts/AuthContext'
 import { useAccount } from '../contexts/AccountContext'
 import { UserRole } from '../types'
@@ -377,25 +377,24 @@ export default function EditItem() {
               </div>
 
               {/* Transaction Selection */}
-              <Select
+              <Combobox
                 label="Associate with Transaction (Optional)"
-                id="selectedTransactionId"
                 value={formData.selectedTransactionId}
-                onChange={(e) => handleTransactionChange(e.target.value)}
+                onChange={handleTransactionChange}
                 error={errors.selectedTransactionId}
                 disabled={loadingTransactions}
-              >
-                <option value="">Select a transaction</option>
-                {loadingTransactions ? (
-                  <option disabled>Loading transactions...</option>
-                ) : (
-                  transactions.map((transaction) => (
-                    <option key={transaction.transactionId} value={transaction.transactionId}>
-                      {new Date(transaction.transactionDate).toLocaleDateString()} - {getCanonicalTransactionTitle(transaction)} - ${transaction.amount}
-                    </option>
-                  ))
-                )}
-              </Select>
+                loading={loadingTransactions}
+                placeholder={loadingTransactions ? "Loading transactions..." : "Select a transaction"}
+                options={
+                  loadingTransactions ? [] : [
+                    { id: '', label: 'Select a transaction' },
+                    ...transactions.map((transaction) => ({
+                      id: transaction.transactionId,
+                      label: `${new Date(transaction.transactionDate).toLocaleDateString()} - ${getCanonicalTransactionTitle(transaction)} - $${transaction.amount}`
+                    }))
+                  ]
+                }
+              />
               {!loadingTransactions && transactions.length === 0 && (
                 <p className="mt-1 text-sm text-gray-500">No transactions available for this project</p>
               )}
