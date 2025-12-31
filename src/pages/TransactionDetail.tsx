@@ -1212,17 +1212,6 @@ export default function TransactionDetail() {
               <Package className="h-5 w-5 mr-2" />
               Transaction Items
             </h3>
-            {/* Add Item Button - Only show when items exist */}
-            {(!isLoadingItems && !isAddingItem && items.length > 0) && (
-              <button
-                onClick={() => setIsAddingItem(true)}
-                className="inline-flex items-center px-2 py-1 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                title="Add new item"
-              >
-                <Package className="h-3 w-3 mr-1" />
-                Add Item
-              </button>
-            )}
           </div>
 
           {isLoadingItems ? (

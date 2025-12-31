@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Edit, X, Plus, GitMerge, ChevronDown, Receipt, Camera } from 'lucide-react'
+import { Edit, X, Plus, ChevronDown, Receipt, Camera, Search } from 'lucide-react'
 import { TransactionItemFormData } from '@/types'
 import TransactionItemForm from './TransactionItemForm'
 import ItemDetail from '@/pages/ItemDetail'
@@ -41,8 +41,50 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
   const [bookmarkedItemIds, setBookmarkedItemIds] = useState<Set<string>>(new Set())
   const [transactionDisplayInfos, setTransactionDisplayInfos] = useState<Map<string, {title: string, amount: string} | null>>(new Map())
   const [transactionRoutes, setTransactionRoutes] = useState<Map<string, {path: string, projectId: string | null}>>(new Map())
+  const [searchQuery, setSearchQuery] = useState('')
   const { currentAccountId } = useAccount()
   const { buildContextUrl } = useNavigationContext()
+
+  // Initialize bookmarked items from database
+  useEffect(() => {
+    const loadBookmarkStates = async () => {
+      if (!currentAccountId) return
+
+      const persistedItemIds = items
+        .filter(item => item.id && !item.id.toString().startsWith('item-'))
+        .map(item => item.id)
+
+      if (persistedItemIds.length === 0) return
+
+      try {
+        const bookmarkStates = new Set<string>()
+        // Fetch bookmark states for all persisted items
+        const bookmarkPromises = persistedItemIds.map(async (itemId) => {
+          try {
+            const item = await unifiedItemsService.getItemById(currentAccountId, itemId)
+            if (item?.bookmark) {
+              return itemId
+            }
+            return null
+          } catch (error) {
+            console.error(`Failed to fetch bookmark state for item ${itemId}:`, error)
+            return null
+          }
+        })
+
+        const results = await Promise.all(bookmarkPromises)
+        results.forEach(itemId => {
+          if (itemId) bookmarkStates.add(itemId)
+        })
+
+        setBookmarkedItemIds(bookmarkStates)
+      } catch (error) {
+        console.error('Failed to load bookmark states:', error)
+      }
+    }
+
+    loadBookmarkStates()
+  }, [items, currentAccountId])
 
   useEffect(() => {
     setSelectedItemIds(prev => {
@@ -115,11 +157,26 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
     [items, selectedItemIds]
   )
 
+  // Filter items based on search query
+  const filteredItems = useMemo(() => {
+    if (!searchQuery.trim()) return items
+    
+    const query = searchQuery.toLowerCase()
+    return items.filter(item => {
+      return (
+        item.description?.toLowerCase().includes(query) ||
+        item.sku?.toLowerCase().includes(query) ||
+        item.space?.toLowerCase().includes(query) ||
+        item.notes?.toLowerCase().includes(query)
+      )
+    })
+  }, [items, searchQuery])
+
   // Group items by their grouping key for collapsed duplicate display
   const groupedItems = useMemo(() => {
     const groups = new Map<string, TransactionItemFormData[]>()
 
-    items.forEach(item => {
+    filteredItems.forEach(item => {
       const groupKey = getTransactionFormGroupKey(item)
       if (!groups.has(groupKey)) {
         groups.set(groupKey, [])
@@ -131,11 +188,11 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
     return Array.from(groups.entries())
       .map(([groupKey, items]) => ({ groupKey, items }))
       .sort((a, b) => {
-        const aIndex = items.indexOf(a.items[0])
-        const bIndex = items.indexOf(b.items[0])
+        const aIndex = filteredItems.indexOf(a.items[0])
+        const bIndex = filteredItems.indexOf(b.items[0])
         return aIndex - bIndex
       })
-  }, [items])
+  }, [filteredItems])
 
   const handleSaveItem = async (item: TransactionItemFormData) => {
     const isEditing = !!editingItemId
@@ -257,16 +314,59 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
     onItemsChange(newItems)
   }
 
-  const handleBookmarkItem = (itemId: string) => {
+  const handleBookmarkItem = async (itemId: string) => {
+    if (!currentAccountId) {
+      console.error('Cannot bookmark item: no account ID')
+      return
+    }
+
+    // Only persist bookmarks for persisted items (not temporary form items)
+    const isPersisted = itemId && !itemId.toString().startsWith('item-')
+    if (!isPersisted) {
+      // For temporary items, just update local state
+      setBookmarkedItemIds(prev => {
+        const next = new Set(prev)
+        if (next.has(itemId)) {
+          next.delete(itemId)
+        } else {
+          next.add(itemId)
+        }
+        return next
+      })
+      return
+    }
+
+    // Get current bookmark state
+    const currentBookmarkState = bookmarkedItemIds.has(itemId)
+    const newBookmarkState = !currentBookmarkState
+
+    // Optimistically update UI
     setBookmarkedItemIds(prev => {
       const next = new Set(prev)
-      if (next.has(itemId)) {
-        next.delete(itemId)
-      } else {
+      if (newBookmarkState) {
         next.add(itemId)
+      } else {
+        next.delete(itemId)
       }
       return next
     })
+
+    try {
+      // Persist to database
+      await unifiedItemsService.updateItem(currentAccountId, itemId, { bookmark: newBookmarkState })
+    } catch (error) {
+      console.error('Failed to update bookmark:', error)
+      // Revert optimistic update on error
+      setBookmarkedItemIds(prev => {
+        const next = new Set(prev)
+        if (currentBookmarkState) {
+          next.add(itemId)
+        } else {
+          next.delete(itemId)
+        }
+        return next
+      })
+    }
   }
 
   const getItemToEdit = () => {
@@ -364,11 +464,11 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
   }
 
   const toggleSelectAll = () => {
-    if (selectedItemIds.size === items.length) {
+    if (selectedItemIds.size === filteredItems.length && filteredItems.length > 0) {
       setSelectedItemIds(new Set())
       return
     }
-    setSelectedItemIds(new Set(items.map(item => item.id)))
+    setSelectedItemIds(new Set(filteredItems.map(item => item.id)))
   }
 
   const getGroupSelectionState = (groupItems: TransactionItemFormData[]) => {
@@ -543,26 +643,41 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
   return (
     <div className="space-y-4">
       {items.length > 0 && showSelectionControls && (
-        <div className="sticky top-0 z-10 bg-white py-3 border-b border-gray-200 mb-4">
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            {selectedItemIds.size > 0 && (
-              <span className="text-gray-600">{selectedItemIds.size} selected</span>
-            )}
+        <div className="sticky top-0 z-10 bg-white border-b border-gray-200 py-3 mb-4">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Select All Checkbox */}
+            <label className="flex items-center cursor-pointer flex-shrink-0">
+              <input
+                type="checkbox"
+                className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 h-4 w-4"
+                onChange={(e) => toggleSelectAll()}
+                checked={selectedItemIds.size === filteredItems.length && filteredItems.length > 0}
+              />
+              <span className="ml-2 text-sm font-medium text-gray-700">Select all</span>
+            </label>
+
+            {/* Search Bar - can wrap on mobile */}
+            <div className="relative flex-1 min-w-[200px]">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Search className="h-5 w-5 text-gray-400" />
+              </div>
+              <input
+                type="text"
+                className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
+                placeholder="Search items..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+
+            {/* Add Item Button */}
             <button
               type="button"
-              onClick={toggleSelectAll}
-              className="px-3 py-1 rounded-md border border-gray-300 text-gray-700 bg-white hover:bg-gray-50"
+              onClick={() => setIsAddingItem(true)}
+              className="inline-flex items-center gap-1 px-3 py-2 rounded-md border border-transparent text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 flex-shrink-0"
             >
-              {selectedItemIds.size === items.length ? 'Clear selection' : 'Select all'}
-            </button>
-            <button
-              type="button"
-              onClick={openMergeDialog}
-              disabled={selectedItemIds.size < 2}
-              className="inline-flex items-center gap-1 px-3 py-1 rounded-md border border-transparent text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <GitMerge className="h-4 w-4" />
-              Merge Selected
+              <Plus className="h-4 w-4" />
+              Add Item
             </button>
           </div>
         </div>
@@ -677,79 +792,17 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
         {items.length > 0 && (
           <div className="flex justify-between items-center pt-4 border-t border-gray-200">
             <div className="text-sm text-gray-600">
-              Total Items: {items.length}
+              Total Items: {filteredItems.length}{filteredItems.length !== items.length ? ` of ${items.length}` : ''}
             </div>
             <div className="text-lg font-semibold text-gray-900">
               Subtotal: {formatCurrency(
-                totalAmount || items.reduce((sum, item) => sum + (parseFloat(item.projectPrice || item.purchasePrice || '0') || 0), 0).toString()
+                totalAmount || filteredItems.reduce((sum, item) => sum + (parseFloat(item.projectPrice || item.purchasePrice || '0') || 0), 0).toString()
               )}
             </div>
           </div>
         )}
       </div>
 
-      {isMergeDialogOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6 space-y-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <h4 className="text-lg font-semibold text-gray-900">Merge Items</h4>
-                <p className="text-sm text-gray-600 mt-1">
-                  Select which item should remain. The others will be absorbed into it. Purchase price and tax amounts will be summed and the absorbed item names/SKUs will be appended to the notes.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={closeMergeDialog}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="space-y-3 max-h-72 overflow-auto pr-1">
-              {selectedItems.map(item => (
-                <label
-                  key={item.id}
-                  className="flex items-start gap-3 rounded-md border border-gray-200 p-3 hover:bg-gray-50 cursor-pointer"
-                >
-                  <input
-                    type="radio"
-                    name="merge-master"
-                    checked={mergeMasterId === item.id}
-                    onChange={() => setMergeMasterId(item.id)}
-                    className="mt-1 h-4 w-4 text-primary-600 border-gray-300"
-                  />
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">{item.description || 'Untitled item'}</p>
-                    <p className="text-xs text-gray-600">
-                      SKU: {item.sku?.trim() || '—'} • Purchase price: {formatCurrency(item.purchasePrice || item.projectPrice || '0')}
-                    </p>
-                  </div>
-                </label>
-              ))}
-            </div>
-
-            <div className="flex justify-end gap-3 pt-2">
-              <button
-                type="button"
-                onClick={closeMergeDialog}
-                className="px-4 py-2 rounded-md border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={!mergeMasterId}
-                onClick={handleConfirmMerge}
-                className="px-4 py-2 rounded-md border border-transparent bg-primary-600 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Merge Items
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

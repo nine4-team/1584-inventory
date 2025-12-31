@@ -3,7 +3,7 @@ import { ArrowLeft, Bookmark, QrCode, Trash2, Edit, FileText, ImagePlus, Chevron
 import { useParams, useSearchParams } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import ContextBackLink from '@/components/ContextBackLink'
-import { Item, ItemImage } from '@/types'
+import { Item, ItemImage, ItemDisposition } from '@/types'
 import { normalizeDisposition, dispositionsEqual, displayDispositionLabel, DISPOSITION_OPTIONS } from '@/utils/dispositionUtils'
 import { formatDate, formatCurrency } from '@/utils/dateUtils'
 import { unifiedItemsService, projectService, integrationService } from '@/services/inventoryService'
@@ -701,17 +701,91 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
         <div className="bg-white border border-gray-200 rounded-lg p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-medium text-gray-900">Item</h3>
-            <button
-              onClick={(e) => {
-                e.preventDefault()
-                onClose()
-              }}
-              className="text-gray-400 hover:text-gray-600"
-              type="button"
-              aria-label="Close item view"
-            >
-              <X className="h-5 w-5" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleBookmark}
+                className={`inline-flex items-center justify-center p-2 border text-sm font-medium rounded-md ${
+                  item.bookmark
+                    ? 'border-red-300 text-red-700 bg-red-50 hover:bg-red-100'
+                    : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
+                } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500`}
+                title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
+              >
+                <Bookmark className="h-4 w-4" fill={item.bookmark ? 'currentColor' : 'none'} />
+              </button>
+
+              <ContextLink
+                to={isBusinessInventoryItem
+                  ? buildContextUrl(`/business-inventory/${item.itemId}/edit`)
+                : projectId
+                  ? buildContextUrl(projectItemEdit(projectId, item.itemId), { project: projectId })
+                  : buildContextUrl(`/business-inventory/${item.itemId}/edit`)
+                }
+                className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                title="Edit Item"
+              >
+                <Edit className="h-4 w-4" />
+              </ContextLink>
+
+              <button
+                onClick={() => duplicateItem(item.itemId)}
+                className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                title="Duplicate Item"
+              >
+                <Copy className="h-4 w-4" />
+              </button>
+
+              {ENABLE_QR && (
+                <button
+                  className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                  onClick={() => window.open(`/qr-image/${item.qrKey}`, '_blank')}
+                  title="View QR Code"
+                >
+                  <QrCode className="h-4 w-4" />
+                </button>
+              )}
+
+              <div className="relative">
+                <span
+                  onClick={toggleDispositionMenu}
+                  className={`disposition-badge ${getDispositionBadgeClasses(item.disposition)}`}
+                >
+                  {displayDispositionLabel(item.disposition)}
+                  <ChevronDown className="h-3 w-3 ml-1" />
+                </span>
+
+                {/* Dropdown menu */}
+                {openDispositionMenu && (
+                  <div className="disposition-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-20">
+                    <div className="py-2">
+                      {DISPOSITION_OPTIONS.map((disposition) => (
+                        <button
+                          key={disposition}
+                          onClick={() => updateDisposition(disposition)}
+                          className={`block w-full text-left px-4 py-3 text-sm hover:bg-gray-50 ${
+                            dispositionsEqual(item.disposition, disposition) ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
+                          }`}
+                        >
+                          {displayDispositionLabel(disposition)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <button
+                onClick={(e) => {
+                  e.preventDefault()
+                  onClose()
+                }}
+                className="text-gray-400 hover:text-gray-600"
+                type="button"
+                aria-label="Close item view"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
           </div>
           {content}
         </div>
