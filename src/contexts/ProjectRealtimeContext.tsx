@@ -311,6 +311,7 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
         ...entry,
         items: itemsData,
       }))
+      unifiedItemsService.syncProjectItemsRealtimeCache(currentAccountId, projectId, itemsData)
       const now = Date.now()
       applyTelemetryPatch(projectId, {
         lastItemsRefreshAt: now,

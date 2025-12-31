@@ -214,6 +214,11 @@ export interface ApiError {
 }
 
 export interface Transaction {
+  /**
+   * Primary key of the row in the transactions table.
+   * Used to reconcile realtime DELETE payloads that omit transaction_id.
+   */
+  rowId?: string;
   transactionId: string;
   projectId?: string | null;
   projectName?: string | null;

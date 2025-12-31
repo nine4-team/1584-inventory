@@ -34,10 +34,14 @@
 ## Remediation — December 31, 2025
 1. **Resolved — Transaction delete ghosts on detail views.** After deleting a transaction, `TransactionDetail` now awaits `refreshRealtimeAfterWrite(true)` before navigation so the provider snapshot (and every routed consumer) drops the row immediately, even if realtime payloads lag.  
    ```558:567:src/pages/TransactionDetail.tsx```
-2. **Outstanding — Item detail deletes bypass the provider.** The standalone `ItemDetail` screen deletes and navigates away without calling `refreshCollections`, so the originating project list still shows the removed item until Supabase emits the DELETE event.  
-   ```443:458:src/pages/ItemDetail.tsx```
-3. **Outstanding — Project inventory bulk deletes rely on eventual realtime.** `InventoryList` optimistically filters the deleted ids and assumes realtime convergence; other subscribers continue to see “ghost” rows until the DELETE payload arrives.  
-   ```489:516:src/pages/InventoryList.tsx```
+2. **Resolved — Item detail deletes trigger provider refresh.** `ItemDetail` derives the active project id, calls `useProjectRealtime(projectId)`, and awaits `refreshRealtimeAfterWrite()` before navigating away so every consumer loses the row even if realtime payloads trail.  
+   ```450:477:src/pages/ItemDetail.tsx```
+3. **Resolved — Project inventory bulk deletes force provider refresh.** `InventoryList` now waits for `refreshRealtimeAfterWrite()` before mutating local state, guaranteeing upstream lists drop the deleted ids immediately instead of hoping for realtime DELETE payloads.  
+   ```49:517:src/pages/InventoryList.tsx```
+4. **Resolved — Transaction delete ghosts triggered 406 fetches.** `transactionService.deleteTransaction` clears `transaction_id/latest_transaction_id` on every linked item before issuing the DELETE so no component keeps querying the removed row, `transactionService.subscribeToTransactions` removes rows by `transaction_id` or the surrogate `rowId`, and the new migrations `20251231_enable_transactions_replica_identity_full.sql` + `20251231_clear_orphaned_item_transactions.sql` ensure DELETE payloads stay rich while existing orphaned items are backfilled.  
+   ```1248:1367:src/services/inventoryService.ts```  
+   ```1:2:supabase/migrations/20251231_enable_transactions_replica_identity_full.sql```  
+   ```1:11:supabase/migrations/20251231_clear_orphaned_item_transactions.sql```
 
 ## Findings (Latest)
 | # | Area | Status | Notes |
@@ -47,14 +51,15 @@
 | 3 | Duplicate handler assumed realtime | ✅ Resolved | `TransactionItemsList` now forces provider refreshes after duplicate/merge flows. |
 | 4 | `useRealtimeSubscription` unused | ✅ Resolved | Hook re-exports `useProjectRealtime`; the provider centralizes channel management. |
 | 5 | Background sync placeholder | ✅ Resolved | Service worker now asks the foreground queue to process pending operations and reports completion back. |
-| 6 | Lineage per-item realtime channels exceed limits | ❌ Open | Inventory + detail views spawn a Supabase channel per item, quickly tripping `ChannelRateLimitReached` / `ClientJoinRateLimitReached` errors so lineage updates never arrive. |
-| 7 | Item/inventory deletes skip provider refresh | ❌ Open | Item detail + `InventoryList` deletes navigate/optimistically filter without calling `refreshCollections`, so “ghost” rows persist until realtime catches up. |
+| 6 | Lineage per-item realtime channels exceed limits | ✅ Resolved | `lineageService` multiplexes all `item_lineage_edges` INSERTs through `accountChannelRegistry`, so inventories register listeners per item while sharing a single Supabase channel per account. |
+| 7 | Item/inventory deletes skip provider refresh | ✅ Resolved | `ItemDetail` and `InventoryList` await `refreshRealtimeAfterWrite()` before mutating UI state, ensuring provider snapshots drop the deleted rows immediately. |
+| 8 | Transaction delete ghosts trigger 406 fetches | ✅ Resolved | Transaction deletes now detach every linked item (clearing `transaction_id/latest_transaction_id`), `subscribeToTransactions` removes rows via `transaction_id` or fallback `rowId`, `REPLICA IDENTITY FULL` keeps realtime payloads rich, and `20251231_clear_orphaned_item_transactions.sql` backfills existing data. |
+| 9 | Project items realtime cache ignored manual refreshes | ✅ Resolved | Manual refreshes updated provider snapshots but left `projectItemsRealtimeEntries` stale, so the next Supabase payload rehydrated already-deleted rows. `unifiedItemsService.syncProjectItemsRealtimeCache(...)` now injects fetched snapshots back into the shared cache (invoked from `fetchAndStoreItems`), so realtime INSERT/UPDATE/DELETE diffs always start from server-truth. |
 
-## Regression: Lineage subscriptions overwhelm Supabase limits
-- **Impact:** Inventory, business inventory, and detail screens loop over visible items and call `lineageService.subscribeToItemLineageForItem` for each row. Every call spins up a brand-new Supabase channel and immediately subscribes, so opening a list of 40–60 items attempts 40–60 concurrent joins. Supabase enforces ~200 channels per socket and ~10 joins/sec, triggering `ChannelRateLimitReached` and `ClientJoinRateLimitReached` errors. Once the limit is hit, no lineage callbacks fire and UI state lags indefinitely.
-- **Root cause:** `subscribeToItemLineageForItem` bypasses the shared `getOrCreateAccountChannel` registry and does not multiplex listeners. Each component re-creates the channel burst whenever the list changes, compounding joins during scrolling or filter changes.
-- **Recommended fix:** Reuse one channel per account (or per account + project) that listens to all `item_lineage_edges` inserts filtered by `account_id` and dispatches events to in-memory listeners keyed by `itemId`. Expose registration/unregistration helpers so views add/remove callbacks without ever touching Supabase directly. Optionally support batched `item_id=in.(...)` filters if per-account fan-out proves too chatty, but keep the number of channels bounded and throttle resubscription when item sets churn.
-- **Interim mitigation:** Until the refactor lands, avoid mounting large inventories with realtime enabled in multiple tabs to keep under the rate limit; lineage changes will otherwise require manual refreshes.
+## Regression: Lineage subscriptions overwhelm Supabase limits (Resolved)
+- **Impact (historical):** Inventory, business inventory, and detail screens previously opened a Supabase channel per visible item, quickly tripping `ChannelRateLimitReached` and `ClientJoinRateLimitReached` errors that stalled lineage updates.
+- **Resolution:** `lineageService` now routes every `item_lineage_edges` insert through a single per-account channel created by `getOrCreateAccountChannel`, while dispatching callbacks via lightweight listener maps so components can subscribe per item without spawning extra channels.
+- **Follow-up:** Continue load-testing large inventories to ensure listener fan-out stays inexpensive and surface warnings in `SyncStatus` if channel errors appear again.
 
 ## Root Cause
 The original realtime design assumed `ProjectLayout` would stay mounted for all project-specific routes. When detail screens moved outside of that component, the realtime owner began unmounting exactly when a user drilled into a transaction. Because the replacement screen never restored its own `transactions`/`items` channels (and even disabled the dedicated transaction subscription for debugging), all live updates stopped propagating, leaving the UI static until a hard reload.
@@ -66,14 +71,18 @@ The original realtime design assumed `ProjectLayout` would stay mounted for all 
 4. **Channel health surfacing:** Extend `useRealtimeConnectionStatus` to capture Supabase channel error events and display a per-project warning when a channel disconnects without recovering.
 5. **Shared lineage bus:** Replace per-item Supabase subscriptions with an account-scoped channel that multiplexes lineage events to registered listeners, preventing rate-limit errors and simplifying teardown.
 
+- **Resolution — Shared realtime cache now mirrors manual refreshes.**  
+  - **Root cause:** `ProjectRealtimeProvider.refreshCollections()` fetched fresh items but only patched context state; `projectItemsRealtimeEntries` (the shared realtime cache) kept its pre-refresh array, so the next INSERT/UPDATE event merged against stale data and reintroduced deleted rows.  
+  - **Fix:** Added `unifiedItemsService.syncProjectItemsRealtimeCache(accountId, projectId, items)` and call it from `fetchAndStoreItems` so every forced refresh overwrites the shared cache before later realtime diffs run.  
+  - **Verification:** Bulk delete three duplicates, run duplicate again; item count stays stable (2 → delete → 1 → duplicate → 2) with no phantom entries. Logged payloads now merge against the refreshed cache instead of resurrecting deleted rows.
+
 ## Next Steps
-- Hook item-detail and project-inventory delete handlers into the provider refresh helpers so deletes converge instantly like the transaction flows.
 - Persist per-project telemetry (channel counts, last refresh timestamps, last disconnect reason) on the provider snapshots and surface them inside `SyncStatus` / `NetworkStatus`.
 - Refactor invoice/client-summary/property-management views to consume provider snapshots instead of making redundant Supabase fetches.
 - Add Vitest coverage for multi-project reference counting and teardown (simulate two tabs registering/releasing the same project).
 - Extend `useRealtimeConnectionStatus` to capture Supabase channel error events and display a per-channel warning when disconnects persist for >10 s.
 - Monitor background-sync initiated queue flushes in production; add retries/backoff if no controlled clients respond to `PROCESS_OPERATION_QUEUE` within 5 s.
-- Implement the shared lineage channel registry + listener API, migrate Inventory/BusinessInventory/ItemDetail/Breadcrumb consumers to it, and add load-tests that confirm channel count stays constant while scrolling large inventories.
+- Load-test the shared lineage channel registry to confirm channel counts stay constant while scrolling large inventories, and alert if listener fan-out begins to degrade performance.
 
 ## Verification
 ### Automated

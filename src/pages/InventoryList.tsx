@@ -503,10 +503,6 @@ export default function InventoryList({ projectId, projectName, items: propItems
 
     const idsToDelete = Array.from(selectedItems)
 
-    // Optimistically remove items so the UI reflects the deletion immediately
-    setItems(prev => prev.filter(item => !idsToDelete.includes(item.itemId)))
-    setSelectedItems(new Set())
-
     try {
       const deletePromises = idsToDelete.map(itemId =>
         unifiedItemsService.deleteItem(currentAccountId, itemId)
@@ -514,6 +510,9 @@ export default function InventoryList({ projectId, projectName, items: propItems
 
       await Promise.all(deletePromises)
       await refreshRealtimeAfterWrite()
+
+      setItems(prev => prev.filter(item => !idsToDelete.includes(item.itemId)))
+      setSelectedItems(new Set())
       setError(null)
       showSuccess(`Deleted ${idsToDelete.length} item${idsToDelete.length !== 1 ? 's' : ''}`)
     } catch (error) {

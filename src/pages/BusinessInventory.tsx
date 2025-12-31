@@ -490,33 +490,38 @@ export default function BusinessInventory() {
     }
 
     const itemIds = Array.from(selectedItems)
-    
-    // Optimistically update UI immediately by removing deleted items from state
-    setItems(prevItems => prevItems.filter(item => !itemIds.includes(item.itemId)))
-    
-    // Clear selections immediately
-    setSelectedItems(new Set())
 
     try {
       let successCount = 0
       let errorCount = 0
+      const successfullyDeletedIds: string[] = []
 
       // Delete items one by one
       for (const itemId of itemIds) {
         try {
           await unifiedItemsService.deleteItem(currentAccountId, itemId)
           successCount++
+          successfullyDeletedIds.push(itemId)
         } catch (error) {
           console.error(`Error deleting item ${itemId}:`, error)
           errorCount++
         }
       }
 
+      if (successfullyDeletedIds.length > 0) {
+        setItems(prevItems => prevItems.filter(item => !successfullyDeletedIds.includes(item.itemId)))
+        setSelectedItems(prevSelected => {
+          const updatedSelection = new Set(prevSelected)
+          successfullyDeletedIds.forEach(id => updatedSelection.delete(id))
+          return updatedSelection
+        })
+      }
+
       // Show result message
       if (errorCount === 0) {
         alert(`Successfully deleted ${successCount} item${successCount !== 1 ? 's' : ''}.`)
       } else {
-        // If there were errors, reload the items to restore the failed deletions
+        // If there were errors, reload the items to make sure state reflects the server
         await loadBusinessInventory()
         alert(`Deleted ${successCount} item${successCount !== 1 ? 's' : ''}, but ${errorCount} item${errorCount !== 1 ? 's' : ''} failed to delete.`)
       }

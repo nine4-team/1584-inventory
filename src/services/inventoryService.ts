@@ -18,6 +18,42 @@ let transactionChannelCounter = 0
 const projectItemsRealtimeEntries = new Map<string, SharedRealtimeEntry<Item>>()
 let projectItemsChannelCounter = 0
 
+function syncProjectItemsRealtimeSnapshot(accountId: string, projectId: string, nextItems: Item[]) {
+  const key = `${accountId}:${projectId}`
+  const entry = projectItemsRealtimeEntries.get(key)
+  if (!entry) return
+  // Keep realtime cache aligned with server-truth so future events diff correctly.
+  entry.data = [...nextItems]
+}
+
+async function detachItemsFromTransaction(accountId: string, transactionId: string): Promise<string[]> {
+  await ensureAuthenticatedForDatabase()
+  const nowIso = new Date().toISOString()
+
+  const { data, error } = await supabase
+    .from('items')
+    .update({
+      transaction_id: null,
+      latest_transaction_id: null,
+      previous_project_transaction_id: transactionId,
+      last_updated: nowIso,
+    })
+    .eq('account_id', accountId)
+    .eq('transaction_id', transactionId)
+    .select('item_id')
+
+  if (error) {
+    console.error('detachItemsFromTransaction - failed to clear transaction references', {
+      accountId,
+      transactionId,
+      error,
+    })
+    throw error
+  }
+
+  return (data ?? []).map(row => row.item_id as string)
+}
+
 type ChannelSubscriptionOptions = {
   onStatusChange?: (status: string, error?: unknown) => void
 }
@@ -337,6 +373,7 @@ export const projectService = {
 function _convertTransactionFromDb(dbTransaction: any): Transaction {
   const converted = convertTimestamps(dbTransaction)
   return {
+    rowId: converted.id,
     transactionId: converted.transaction_id,
     projectId: converted.project_id || undefined,
     projectName: converted.project_name || undefined, // May be populated by enrichment function
@@ -1248,6 +1285,13 @@ export const transactionService = {
   async deleteTransaction(accountId: string, _projectId: string, transactionId: string): Promise<void> {
     await ensureAuthenticatedForDatabase()
 
+    try {
+      await detachItemsFromTransaction(accountId, transactionId)
+    } catch (error) {
+      console.warn('deleteTransaction - failed to detach items before delete', error)
+      // Continue with delete so the transaction does not linger, but surface the warning.
+    }
+
     const { error } = await supabase
       .from('transactions')
       .delete()
@@ -1316,8 +1360,17 @@ export const transactionService = {
               }
             } else if (eventType === 'DELETE') {
               if (matchesProject(oldProjectId)) {
-                const oldId = oldRecord.transaction_id
-                nextTransactions = nextTransactions.filter(t => t.transactionId !== oldId)
+                const oldTransactionId: string | null = oldRecord?.transaction_id ?? null
+                const oldRowId: string | null = oldRecord?.id ?? null
+                nextTransactions = nextTransactions.filter(t => {
+                  if (oldTransactionId && t.transactionId === oldTransactionId) {
+                    return false
+                  }
+                  if (!oldTransactionId && oldRowId && t.rowId === oldRowId) {
+                    return false
+                  }
+                  return true
+                })
               }
             }
 
@@ -1880,6 +1933,10 @@ export const unifiedItemsService = {
         projectItemsRealtimeEntries.delete(key)
       }
     }
+  },
+
+  syncProjectItemsRealtimeCache(accountId: string, projectId: string, items: Item[]) {
+    syncProjectItemsRealtimeSnapshot(accountId, projectId, items)
   },
 
 
