@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Edit, X, Plus, ChevronDown, Receipt, Camera, Search } from 'lucide-react'
+import { Edit, X, Plus, ChevronDown, Receipt, Camera, Search, Filter, ArrowUpDown } from 'lucide-react'
 import { TransactionItemFormData } from '@/types'
 import TransactionItemForm from './TransactionItemForm'
 import ItemDetail from '@/pages/ItemDetail'
@@ -42,6 +42,10 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
   const [transactionDisplayInfos, setTransactionDisplayInfos] = useState<Map<string, {title: string, amount: string} | null>>(new Map())
   const [transactionRoutes, setTransactionRoutes] = useState<Map<string, {path: string, projectId: string | null}>>(new Map())
   const [searchQuery, setSearchQuery] = useState('')
+  const [filterMode, setFilterMode] = useState<'all' | 'bookmarked'>('all')
+  const [showFilterMenu, setShowFilterMenu] = useState(false)
+  const [sortMode, setSortMode] = useState<'alphabetical' | 'price'>('alphabetical')
+  const [showSortMenu, setShowSortMenu] = useState(false)
   const { currentAccountId } = useAccount()
   const { buildContextUrl } = useNavigationContext()
 
@@ -96,12 +100,16 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
     })
   }, [items])
 
-  // Close disposition menu when clicking outside
+  // Close menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Element
       if (!target.closest('.disposition-menu') && !target.closest('.disposition-badge')) {
         setOpenDispositionMenu(null)
+      }
+      if ((showFilterMenu || showSortMenu) && !target.closest('.filter-menu') && !target.closest('.filter-button') && !target.closest('.sort-menu') && !target.closest('.sort-button')) {
+        setShowFilterMenu(false)
+        setShowSortMenu(false)
       }
     }
 
@@ -109,7 +117,7 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [])
+  }, [showFilterMenu, showSortMenu])
 
   // Fetch transaction display texts and links for all items
   useEffect(() => {
@@ -157,20 +165,44 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
     [items, selectedItemIds]
   )
 
-  // Filter items based on search query
+  // Filter and sort items
   const filteredItems = useMemo(() => {
-    if (!searchQuery.trim()) return items
-    
-    const query = searchQuery.toLowerCase()
-    return items.filter(item => {
-      return (
-        item.description?.toLowerCase().includes(query) ||
-        item.sku?.toLowerCase().includes(query) ||
-        item.space?.toLowerCase().includes(query) ||
-        item.notes?.toLowerCase().includes(query)
-      )
+    let result = items
+
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase()
+      result = result.filter(item => {
+        return (
+          item.description?.toLowerCase().includes(query) ||
+          item.sku?.toLowerCase().includes(query) ||
+          item.space?.toLowerCase().includes(query) ||
+          item.notes?.toLowerCase().includes(query)
+        )
+      })
+    }
+
+    // Apply filter based on filterMode
+    if (filterMode === 'bookmarked') {
+      result = result.filter(item => bookmarkedItemIds.has(item.id))
+    }
+
+    // Apply sorting
+    result = [...result].sort((a, b) => {
+      if (sortMode === 'alphabetical') {
+        const aDesc = a.description || ''
+        const bDesc = b.description || ''
+        return aDesc.localeCompare(bDesc)
+      } else if (sortMode === 'price') {
+        const aPrice = parseFloat(a.projectPrice || a.purchasePrice || '0') || 0
+        const bPrice = parseFloat(b.projectPrice || b.purchasePrice || '0') || 0
+        return bPrice - aPrice // Highest price first
+      }
+      return 0
     })
-  }, [items, searchQuery])
+
+    return result
+  }, [items, searchQuery, filterMode, sortMode, bookmarkedItemIds])
 
   // Group items by their grouping key for collapsed duplicate display
   const groupedItems = useMemo(() => {
@@ -656,8 +688,110 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
               <span className="ml-2 text-sm font-medium text-gray-700">Select all</span>
             </label>
 
-            {/* Search Bar - can wrap on mobile */}
-            <div className="relative flex-1 min-w-[200px]">
+            {/* Add Button */}
+            <button
+              type="button"
+              onClick={() => setIsAddingItem(true)}
+              className="inline-flex items-center gap-1 px-3 py-2 rounded-md border border-gray-300 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 flex-shrink-0"
+            >
+              <Plus className="h-4 w-4" />
+              Add
+            </button>
+
+            {/* Sort Button */}
+            <div className="relative flex-shrink-0">
+              <button
+                onClick={() => setShowSortMenu(!showSortMenu)}
+                className={`sort-button inline-flex items-center justify-center px-3 py-2 border text-sm font-medium rounded-md transition-colors duration-200 ${
+                  sortMode === 'alphabetical'
+                    ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
+                    : 'border-primary-500 text-primary-600 bg-primary-50 hover:bg-primary-100'
+                }`}
+                title="Sort items"
+              >
+                <ArrowUpDown className="h-4 w-4 mr-2" />
+                Sort
+              </button>
+
+              {/* Sort Dropdown Menu */}
+              {showSortMenu && (
+                <div className="sort-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                  <div className="py-1">
+                    <button
+                      onClick={() => {
+                        setSortMode('alphabetical')
+                        setShowSortMenu(false)
+                      }}
+                      className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                        sortMode === 'alphabetical' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      Alphabetical
+                    </button>
+                    <button
+                      onClick={() => {
+                        setSortMode('price')
+                        setShowSortMenu(false)
+                      }}
+                      className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                        sortMode === 'price' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      Price
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Filter Button */}
+            <div className="relative flex-shrink-0">
+              <button
+                onClick={() => setShowFilterMenu(!showFilterMenu)}
+                className={`filter-button inline-flex items-center justify-center px-3 py-2 border text-sm font-medium rounded-md transition-colors duration-200 ${
+                  filterMode === 'all'
+                    ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
+                    : 'border-primary-500 text-primary-600 bg-primary-50 hover:bg-primary-100'
+                }`}
+                title="Filter items"
+              >
+                <Filter className="h-4 w-4 mr-2" />
+                Filter
+              </button>
+
+              {/* Filter Dropdown Menu */}
+              {showFilterMenu && (
+                <div className="filter-menu absolute top-full right-0 mt-1 w-48 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                  <div className="py-1">
+                    <button
+                      onClick={() => {
+                        setFilterMode('all')
+                        setShowFilterMenu(false)
+                      }}
+                      className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                        filterMode === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      All Items
+                    </button>
+                    <button
+                      onClick={() => {
+                        setFilterMode('bookmarked')
+                        setShowFilterMenu(false)
+                      }}
+                      className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                        filterMode === 'bookmarked' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      Bookmarked
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Search Bar - wraps onto its own line on mobile */}
+            <div className="relative flex-1 min-w-[200px] w-full sm:w-auto">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <Search className="h-5 w-5 text-gray-400" />
               </div>
@@ -669,16 +803,6 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
-
-            {/* Add Item Button */}
-            <button
-              type="button"
-              onClick={() => setIsAddingItem(true)}
-              className="inline-flex items-center gap-1 px-3 py-2 rounded-md border border-transparent text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 flex-shrink-0"
-            >
-              <Plus className="h-4 w-4" />
-              Add Item
-            </button>
           </div>
         </div>
       )}

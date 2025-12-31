@@ -594,186 +594,175 @@ export default function InventoryList({ projectId, projectName, items: propItems
 
   return (
     <div className="space-y-4">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-2">
-          <ContextLink
-            to={buildContextUrl(projectItemNew(projectId), { project: projectId })}
-          className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 transition-colors duration-200 w-full sm:w-auto"
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Add Item
-        </ContextLink>
-      </div>
-
-      {/* Search and Controls - Sticky Container */}
-      <div className="sticky top-0 z-10 bg-white border-b border-gray-200 pb-0 mb-2">
-        <div className="space-y-0">
-          {/* Search Bar */}
-          <div className="relative pt-2">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Search className="h-5 w-5 text-gray-400" />
-            </div>
-            <input
-              type="text"
-              className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-base"
-              placeholder="Search items..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
-
-          {/* Select All and Bulk Actions */}
-          <div className="flex items-center justify-between gap-4 p-3 rounded-lg">
-          {/* Select All */}
-          <label className="flex items-center cursor-pointer">
+      {/* Controls - Sticky Container */}
+      <div className="sticky top-0 z-10 bg-white border-b border-gray-200 py-3 mb-2">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Select All Checkbox */}
+          <label className="flex items-center cursor-pointer flex-shrink-0">
             <input
               type="checkbox"
               className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 h-4 w-4"
               onChange={(e) => handleSelectAll(e.target.checked)}
               checked={selectedItems.size === filteredItems.length && filteredItems.length > 0}
             />
-            <span className="ml-3 text-sm font-medium text-gray-700">Select all</span>
+            <span className="ml-2 text-sm font-medium text-gray-700">Select all</span>
           </label>
 
-          {/* Right section - counter and buttons */}
-          <div className="flex items-center gap-3">
-            {/* Counter (when visible) */}
-            {selectedItems.size > 0 && (
-              <span className="text-sm text-gray-500">
-                {selectedItems.size} of {filteredItems.length} selected
-              </span>
+          {/* Add Button */}
+          <ContextLink
+            to={buildContextUrl(projectItemNew(projectId), { project: projectId })}
+            className="inline-flex items-center justify-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 transition-colors duration-200 flex-shrink-0"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Add
+          </ContextLink>
+
+          {/* Counter (when visible) */}
+          {selectedItems.size > 0 && (
+            <span className="text-sm text-gray-500 flex-shrink-0">
+              {selectedItems.size} of {filteredItems.length} selected
+            </span>
+          )}
+
+          {/* Sort Button */}
+          <div className="relative flex-shrink-0">
+            <button
+              onClick={() => setShowSortMenu(!showSortMenu)}
+              className={`sort-button inline-flex items-center justify-center px-3 py-2 border text-sm font-medium rounded-md transition-colors duration-200 ${
+                sortMode === 'alphabetical'
+                  ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
+                  : 'border-primary-500 text-primary-600 bg-primary-50 hover:bg-primary-100'
+              }`}
+              title="Sort items"
+            >
+              <ArrowUpDown className="h-4 w-4 mr-2" />
+              Sort
+            </button>
+
+            {/* Sort Dropdown Menu */}
+            {showSortMenu && (
+              <div className="sort-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                <div className="py-1">
+                  <button
+                    onClick={() => {
+                      setSortMode('alphabetical')
+                      setShowSortMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      sortMode === 'alphabetical' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    Alphabetical
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSortMode('creationDate')
+                      setShowSortMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      sortMode === 'creationDate' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    Creation Date
+                  </button>
+                </div>
+              </div>
             )}
+          </div>
 
-            {/* Bulk action buttons */}
-            <div className="flex items-center space-x-2">
-              {/* Sort Button */}
-              <div className="relative">
-                <button
-                  onClick={() => setShowSortMenu(!showSortMenu)}
-                  className={`sort-button inline-flex items-center justify-center px-3 py-2 border text-sm font-medium rounded-md transition-colors duration-200 ${
-                    sortMode === 'alphabetical'
-                      ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
-                      : 'border-primary-500 text-primary-600 bg-primary-50 hover:bg-primary-100'
-                  }`}
-                  title="Sort items"
-                >
-                  <ArrowUpDown className="h-4 w-4 mr-2" />
-                  Sort
-                </button>
+          {/* Filter Button */}
+          <div className="relative flex-shrink-0">
+            <button
+              onClick={() => setShowFilterMenu(!showFilterMenu)}
+              className={`filter-button inline-flex items-center justify-center px-3 py-2 border text-sm font-medium rounded-md transition-colors duration-200 ${
+                filterMode === 'all'
+                  ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
+                  : 'border-primary-500 text-primary-600 bg-primary-50 hover:bg-primary-100'
+              }`}
+              title="Filter items"
+            >
+              <Filter className="h-4 w-4 mr-2" />
+              Filter
+            </button>
 
-                {/* Sort Dropdown Menu */}
-                {showSortMenu && (
-                  <div className="sort-menu absolute top-full left-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-10">
-                    <div className="py-1">
-                      <button
-                        onClick={() => {
-                          setSortMode('alphabetical')
-                          setShowSortMenu(false)
-                        }}
-                        className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                          sortMode === 'alphabetical' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                        }`}
-                      >
-                        Alphabetical
-                      </button>
-                      <button
-                        onClick={() => {
-                          setSortMode('creationDate')
-                          setShowSortMenu(false)
-                        }}
-                        className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                          sortMode === 'creationDate' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                        }`}
-                      >
-                        Creation Date
-                      </button>
-                    </div>
-                  </div>
-                )}
+            {/* Filter Dropdown Menu */}
+            {showFilterMenu && (
+              <div className="filter-menu absolute top-full right-0 mt-1 w-48 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                <div className="py-1">
+                  <button
+                    onClick={() => {
+                      setFilterMode('all')
+                      setShowFilterMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      filterMode === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    All Items
+                  </button>
+                  <button
+                    onClick={() => {
+                      setFilterMode('bookmarked')
+                      setShowFilterMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      filterMode === 'bookmarked' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    Bookmarked
+                  </button>
+                  <button
+                    onClick={() => {
+                      setFilterMode('to-inventory')
+                      setShowFilterMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      filterMode === 'to-inventory' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    To Inventory
+                  </button>
+                  <button
+                    onClick={() => {
+                      setFilterMode('from-inventory')
+                      setShowFilterMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      filterMode === 'from-inventory' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    From Inventory
+                  </button>
+                </div>
               </div>
+            )}
+          </div>
 
-              {/* Filter Button */}
-              <div className="relative">
-                <button
-                  onClick={() => setShowFilterMenu(!showFilterMenu)}
-                  className={`filter-button inline-flex items-center justify-center px-3 py-2 border text-sm font-medium rounded-md transition-colors duration-200 ${
-                    filterMode === 'all'
-                      ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
-                      : 'border-primary-500 text-primary-600 bg-primary-50 hover:bg-primary-100'
-                  }`}
-                  title="Filter items"
-                >
-                  <Filter className="h-4 w-4 mr-2" />
-                  Filter
-                </button>
+          {/* QR Code Button */}
+          {ENABLE_QR && (
+            <button
+              className="inline-flex items-center justify-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 transition-colors duration-200 flex-shrink-0"
+              disabled={selectedItems.size === 0}
+              title="Generate QR Codes"
+            >
+              <QrCode className="h-4 w-4" />
+            </button>
+          )}
 
-                {/* Filter Dropdown Menu */}
-                {showFilterMenu && (
-                  <div className="filter-menu absolute top-full left-0 mt-1 w-48 bg-white border border-gray-200 rounded-md shadow-lg z-10">
-                    <div className="py-1">
-                      <button
-                        onClick={() => {
-                          setFilterMode('all')
-                          setShowFilterMenu(false)
-                        }}
-                        className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                          filterMode === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                        }`}
-                      >
-                        All Items
-                      </button>
-                      <button
-                        onClick={() => {
-                          setFilterMode('bookmarked')
-                          setShowFilterMenu(false)
-                        }}
-                        className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                          filterMode === 'bookmarked' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                        }`}
-                      >
-                        Bookmarked
-                      </button>
-                      <button
-                        onClick={() => {
-                          setFilterMode('to-inventory')
-                          setShowFilterMenu(false)
-                        }}
-                        className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                          filterMode === 'to-inventory' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                        }`}
-                      >
-                        To Inventory
-                      </button>
-                      <button
-                        onClick={() => {
-                          setFilterMode('from-inventory')
-                          setShowFilterMenu(false)
-                        }}
-                        className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                          filterMode === 'from-inventory' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                        }`}
-                      >
-                        From Inventory
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {ENABLE_QR && (
-                <button
-                  className="inline-flex items-center justify-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 transition-colors duration-200"
-                  disabled={selectedItems.size === 0}
-                  title="Generate QR Codes"
-                >
-                  <QrCode className="h-4 w-4" />
-                </button>
-              )}
-
+          {/* Search Bar - wraps onto its own line on mobile */}
+          <div className="relative flex-1 min-w-[200px] w-full sm:w-auto">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <Search className="h-5 w-5 text-gray-400" />
             </div>
+            <input
+              type="text"
+              className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
+              placeholder="Search items..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
           </div>
         </div>
-      </div>
       </div>
 
       {/* Loading State */}
