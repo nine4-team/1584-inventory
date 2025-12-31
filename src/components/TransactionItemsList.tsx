@@ -27,9 +27,22 @@ interface TransactionItemsListProps {
   totalAmount?: string // Optional total amount to display instead of calculating from items
   showSelectionControls?: boolean // Whether to show select/merge buttons and checkboxes
   onDeleteItem?: (itemId: string, item: TransactionItemFormData) => Promise<boolean | void> | boolean | void
+  enablePersistedItemFeatures?: boolean // Whether to enable bookmark/disposition features that require persisted items
 }
 
-export default function TransactionItemsList({ items, onItemsChange, onAddItem, onUpdateItem, projectId, projectName, onImageFilesChange, totalAmount, showSelectionControls = true, onDeleteItem }: TransactionItemsListProps) {
+export default function TransactionItemsList({
+  items,
+  onItemsChange,
+  onAddItem,
+  onUpdateItem,
+  projectId,
+  projectName,
+  onImageFilesChange,
+  totalAmount,
+  showSelectionControls = true,
+  onDeleteItem,
+  enablePersistedItemFeatures = true
+}: TransactionItemsListProps) {
   const [isAddingItem, setIsAddingItem] = useState(false)
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
   const [viewingItemId, setViewingItemId] = useState<string | null>(null)
@@ -51,6 +64,8 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
 
   // Initialize bookmarked items from database
   useEffect(() => {
+    if (!enablePersistedItemFeatures) return
+
     const loadBookmarkStates = async () => {
       if (!currentAccountId) return
 
@@ -87,8 +102,8 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
       }
     }
 
-    loadBookmarkStates()
-  }, [items, currentAccountId])
+    void loadBookmarkStates()
+  }, [items, currentAccountId, enablePersistedItemFeatures])
 
   useEffect(() => {
     setSelectedItemIds(prev => {
@@ -347,15 +362,18 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
   }
 
   const handleBookmarkItem = async (itemId: string) => {
+    if (!enablePersistedItemFeatures) {
+      return
+    }
+
     if (!currentAccountId) {
       console.error('Cannot bookmark item: no account ID')
       return
     }
 
-    // Only persist bookmarks for persisted items (not temporary form items)
     const isPersisted = itemId && !itemId.toString().startsWith('item-')
     if (!isPersisted) {
-      // For temporary items, just update local state
+      // For draft/temporary items, just update local state (but don't persist)
       setBookmarkedItemIds(prev => {
         const next = new Set(prev)
         if (next.has(itemId)) {
@@ -444,12 +462,28 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
   }
 
   const updateDisposition = async (itemId: string, newDisposition: ItemDisposition) => {
+    if (!enablePersistedItemFeatures) {
+      return
+    }
+
     if (!currentAccountId) return
 
     try {
       const item = items.find(item => item.id === itemId)
       if (!item) {
         console.error('Item not found for disposition update:', itemId)
+        return
+      }
+
+      const isPersisted = !itemId.toString().startsWith('item-')
+
+      if (!isPersisted) {
+        // Update the local state (draft items only exist locally)
+        const updatedItems = items.map(item =>
+          item.id === itemId ? { ...item, disposition: newDisposition } : item
+        )
+        onItemsChange(updatedItems)
+        setOpenDispositionMenu(null)
         return
       }
 
@@ -474,7 +508,7 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
         }
       }
 
-      // Update the local state
+      // Update the local state (for both persisted and draft items)
       const updatedItems = items.map(item =>
         item.id === itemId ? { ...item, disposition: newDisposition } : item
       )
@@ -541,6 +575,7 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
 
     // Determine if item is persisted (has a real UUID, not a temp ID starting with 'item-')
     const isPersisted = item.id && !item.id.toString().startsWith('item-')
+    const enablePersistedControls = enablePersistedItemFeatures && !!isPersisted
 
     return (
       <ItemPreviewCard
@@ -549,11 +584,11 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
         isSelected={selectedItemIds.has(item.id)}
         onSelect={toggleItemSelection}
         showCheckbox={showSelectionControls}
-        onBookmark={handleBookmarkItem}
+        onBookmark={enablePersistedControls ? handleBookmarkItem : undefined}
         onDuplicate={handleDuplicateItem}
         onEdit={(href) => handleEditItem(item.id)}
         onClick={isPersisted ? () => setViewingItemId(item.id) : undefined}
-        onDispositionUpdate={updateDisposition}
+        onDispositionUpdate={enablePersistedControls ? updateDisposition : undefined}
         uploadingImages={new Set()}
         openDispositionMenu={openDispositionMenu}
         setOpenDispositionMenu={setOpenDispositionMenu}

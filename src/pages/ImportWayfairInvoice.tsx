@@ -1330,6 +1330,7 @@ export default function ImportWayfairInvoice() {
                   projectName={projectName}
                   onImageFilesChange={handleImageFilesChange}
                   totalAmount={amount}
+                  enablePersistedItemFeatures={false}
                 />
 
                 <div className="flex justify-end">
