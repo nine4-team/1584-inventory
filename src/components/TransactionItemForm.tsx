@@ -22,20 +22,20 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
     [item?.id]
   )
 
-  const [formData, setFormData] = useState<TransactionItemFormData>(
-    item || {
-      id: stableTempId,
-      description: '',
-      sku: '',
-      purchasePrice: '',
-      projectPrice: '',
-      marketValue: '',
-      space: '',
-      notes: '',
-      taxAmountPurchasePrice: '',
-      taxAmountProjectPrice: ''
-    }
-  )
+  const buildFormData = (source?: TransactionItemFormData): TransactionItemFormData => ({
+    id: source?.id || stableTempId,
+    description: source?.description ?? '',
+    sku: source?.sku ?? '',
+    purchasePrice: source?.purchasePrice ?? '',
+    projectPrice: source?.projectPrice ?? '',
+    marketValue: source?.marketValue ?? '',
+    space: source?.space ?? '',
+    notes: source?.notes ?? '',
+    taxAmountPurchasePrice: source?.taxAmountPurchasePrice ?? '',
+    taxAmountProjectPrice: source?.taxAmountProjectPrice ?? ''
+  })
+
+  const [formData, setFormData] = useState<TransactionItemFormData>(() => buildFormData(item))
 
   const [itemImages, setItemImages] = useState<ItemImage[]>(item?.images || [])
   const [imageFiles, setImageFiles] = useState<File[]>(item?.imageFiles || [])
@@ -50,18 +50,7 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
       console.log('TransactionItemForm: Editing item with images:', item.images?.length || 0, 'imageFiles:', item.imageFiles?.length || 0)
       setItemImages(item.images || [])
       setImageFiles(item.imageFiles || [])
-      setFormData({
-        id: item.id,
-        description: item.description,
-        sku: item.sku || '',
-        purchasePrice: item.purchasePrice || '',
-        projectPrice: item.projectPrice || '',
-        marketValue: item.marketValue || '',
-        space: item.space || '',
-        notes: item.notes || '',
-        taxAmountPurchasePrice: item.taxAmountPurchasePrice || '',
-        taxAmountProjectPrice: item.taxAmountProjectPrice || ''
-      })
+      setFormData(buildFormData(item))
     }
   }, [item])
 
