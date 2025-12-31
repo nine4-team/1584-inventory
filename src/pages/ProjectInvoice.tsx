@@ -1,12 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { Button } from '@/components/ui/Button'
-import type { Item, Project, Transaction } from '@/types'
+import type { Item, Transaction } from '@/types'
 import { formatDate } from '@/utils/dateUtils'
-import { projectService, transactionService, unifiedItemsService } from '@/services/inventoryService'
-import { useAccount } from '@/contexts/AccountContext'
+import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import { useBusinessProfile } from '@/contexts/BusinessProfileContext'
 import {
   COMPANY_INVENTORY_SALE,
@@ -50,89 +49,56 @@ export default function ProjectInvoice() {
   const { id, projectId } = useParams<{ id?: string; projectId?: string }>()
   const resolvedProjectId = projectId || id
   const stackedNavigate = useStackedNavigate()
-  const { currentAccountId } = useAccount()
   const { businessName, businessLogoUrl } = useBusinessProfile()
   const { getBackDestination } = useNavigationContext()
-
-  const [project, setProject] = useState<Project | null>(null)
-  const [clientOwesLines, setClientOwesLines] = useState<InvoiceTransactionLine[]>([])
-  const [creditLines, setCreditLines] = useState<InvoiceTransactionLine[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { project, transactions, items, isLoading, error } = useProjectRealtime(resolvedProjectId)
 
   const today = useMemo(() => new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }), [])
 
   useEffect(() => {
-    const load = async () => {
-      if (!resolvedProjectId || !currentAccountId) {
-        if (!currentAccountId) return // Wait for account to load
-        stackedNavigate(projectsRoot())
-        return
-      }
-
-      setIsLoading(true)
-      setError(null)
-      try {
-        const [proj, txs] = await Promise.all([
-          projectService.getProject(currentAccountId, resolvedProjectId),
-          transactionService.getTransactions(currentAccountId, resolvedProjectId)
-        ])
-
-        if (!proj) {
-          stackedNavigate(projectsRoot())
-          return
-        }
-
-        setProject(proj)
-
-        const invoiceable = txs
-          .filter(t => t.status !== 'canceled')
-          .filter(t => (t.reimbursementType === CLIENT_OWES_COMPANY || t.reimbursementType === COMPANY_OWES_CLIENT))
-
-        // Sort by transaction_date ascending within each group later
-        // Fetch items for each transaction in parallel
-        const lines = await Promise.all(invoiceable.map(async (tx): Promise<InvoiceTransactionLine> => {
-          const items: Item[] = await unifiedItemsService.getItemsForTransaction(
-            currentAccountId,
-            resolvedProjectId,
-            tx.transactionId
-          )
-
-          const itemLines: InvoiceItemLine[] = items.map((it) => {
-            const projectPriceValue = it.projectPrice
-            const hasPrice = !!projectPriceValue && String(projectPriceValue).trim() !== ''
-            const amt = hasPrice ? toNumber(projectPriceValue || '0') : 0
-            return { item: it, amount: amt, missingPrice: !hasPrice }
-          })
-
-          const hasItems = itemLines.length > 0
-          const lineTotal = hasItems
-            ? itemLines.reduce((sum, l) => sum + l.amount, 0)
-            : toNumber(tx.amount)
-
-          return { transaction: tx, items: itemLines, hasItems, lineTotal }
-        }))
-
-        const clientOwes = lines
-          .filter(l => l.transaction.reimbursementType === CLIENT_OWES_COMPANY)
-          .sort((a, b) => (a.transaction.transactionDate || '').localeCompare(b.transaction.transactionDate || ''))
-
-        const credits = lines
-          .filter(l => l.transaction.reimbursementType === COMPANY_OWES_CLIENT)
-          .sort((a, b) => (a.transaction.transactionDate || '').localeCompare(b.transaction.transactionDate || ''))
-
-        setClientOwesLines(clientOwes)
-        setCreditLines(credits)
-      } catch (e: any) {
-        console.error('Failed to load invoice data:', e)
-        setError('Failed to load invoice data. Please try again.')
-      } finally {
-        setIsLoading(false)
-      }
+    if (!resolvedProjectId) {
+      stackedNavigate(projectsRoot())
     }
+  }, [resolvedProjectId, stackedNavigate])
 
-    load()
-  }, [resolvedProjectId, currentAccountId, stackedNavigate])
+  const invoiceableTransactions = useMemo(() => {
+    return transactions
+      .filter(t => t.status !== 'canceled')
+      .filter(t => t.reimbursementType === CLIENT_OWES_COMPANY || t.reimbursementType === COMPANY_OWES_CLIENT)
+  }, [transactions])
+
+  const invoiceLines = useMemo<InvoiceTransactionLine[]>(() => {
+    if (!resolvedProjectId) return []
+    return invoiceableTransactions.map(tx => {
+      const txItems: Item[] = items.filter(item => item.transactionId === tx.transactionId)
+      const itemLines: InvoiceItemLine[] = txItems.map(it => {
+        const projectPriceValue = it.projectPrice
+        const hasPrice = !!projectPriceValue && String(projectPriceValue).trim() !== ''
+        const amount = hasPrice ? toNumber(projectPriceValue || '0') : 0
+        return { item: it, amount, missingPrice: !hasPrice }
+      })
+
+      const hasItems = itemLines.length > 0
+      const lineTotal = hasItems ? itemLines.reduce((sum, l) => sum + l.amount, 0) : toNumber(tx.amount)
+      return { transaction: tx, items: itemLines, hasItems, lineTotal }
+    })
+  }, [invoiceableTransactions, items, resolvedProjectId])
+
+  const clientOwesLines = useMemo(
+    () =>
+      invoiceLines
+        .filter(line => line.transaction.reimbursementType === CLIENT_OWES_COMPANY)
+        .sort((a, b) => (a.transaction.transactionDate || '').localeCompare(b.transaction.transactionDate || '')),
+    [invoiceLines]
+  )
+
+  const creditLines = useMemo(
+    () =>
+      invoiceLines
+        .filter(line => line.transaction.reimbursementType === COMPANY_OWES_CLIENT)
+        .sort((a, b) => (a.transaction.transactionDate || '').localeCompare(b.transaction.transactionDate || '')),
+    [invoiceLines]
+  )
 
   const clientOwesSubtotal = useMemo(() => clientOwesLines.reduce((sum, l) => sum + l.lineTotal, 0), [clientOwesLines])
   const creditsSubtotal = useMemo(() => creditLines.reduce((sum, l) => sum + l.lineTotal, 0), [creditLines])
@@ -142,6 +108,10 @@ export default function ProjectInvoice() {
   const defaultBackTarget = resolvedProjectId ? projectTransactions(resolvedProjectId) : projectsRoot()
   const handleBack = () => {
     stackedNavigate(getBackDestination(defaultBackTarget))
+  }
+
+  if (!resolvedProjectId) {
+    return null
   }
 
   if (isLoading) {

@@ -22,6 +22,11 @@ workbox.routing.registerRoute(
   })
 )
 
+const MAX_CLIENT_RETRIES = 3
+const RETRY_BASE_DELAY_MS = 2000
+
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
+
 // Background Sync for offline operations
 self.addEventListener('sync', event => {
   console.log('Background sync triggered:', event.tag)
@@ -31,24 +36,70 @@ self.addEventListener('sync', event => {
   }
 })
 
-// Function to process the operation queue
-async function processOperationQueue() {
-  console.log('Processing operation queue in background sync')
+// Function to process the operation queue by delegating to foreground clients
+async function processOperationQueue(attempt = 0) {
+  console.log('Processing operation queue in background sync', { attempt })
 
   try {
-    // Import the operation queue functionality
-    // Note: This is a simplified version. In a real implementation,
-    // you'd need to ensure all dependencies are available in the service worker context
+    const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
 
-    // For now, just log that background sync was triggered
-    console.log('Background sync completed (placeholder implementation)')
+    if (clients.length === 0) {
+      console.log('No active clients found to process the operation queue')
+      return
+    }
 
-    // In the full implementation, this would:
-    // 1. Open IndexedDB connection
-    // 2. Get pending operations
-    // 3. Process each operation
-    // 4. Update sync status
+    const results = await Promise.all(
+      clients.map(client => {
+        return new Promise(resolve => {
+          const messageChannel = new MessageChannel()
+          let resolved = false
 
+          messageChannel.port1.onmessage = event => {
+            if (event.data?.type === 'PROCESS_OPERATION_QUEUE_RESULT') {
+              resolved = true
+              resolve(event.data.success)
+            }
+          }
+
+          client.postMessage(
+            {
+              type: 'PROCESS_OPERATION_QUEUE'
+            },
+            [messageChannel.port2]
+          )
+
+          // Fallback in case the client doesn't respond
+          setTimeout(() => {
+            if (!resolved) {
+              resolved = true
+              resolve(false)
+            }
+          }, 5000)
+        })
+      })
+    )
+
+    const anyClientProcessed = results.some(Boolean)
+
+    if (!anyClientProcessed) {
+      console.warn('No clients responded to PROCESS_OPERATION_QUEUE', { attempt })
+      if (attempt < MAX_CLIENT_RETRIES) {
+        const backoff = Math.min(15000, RETRY_BASE_DELAY_MS * Math.pow(2, attempt))
+        console.log(`Retrying operation queue in ${backoff}ms`)
+        await delay(backoff)
+        return processOperationQueue(attempt + 1)
+      }
+
+      // Final fallback: try to re-register sync for another attempt later
+      try {
+        await self.registration.sync.register('sync-operations')
+        console.log('Scheduled another background sync attempt because no clients responded')
+      } catch (err) {
+        console.warn('Failed to re-register background sync after missing clients', err)
+      }
+    } else {
+      console.log('Background sync request dispatched to clients')
+    }
   } catch (error) {
     console.error('Background sync failed:', error)
     throw error // Re-throw to mark sync as failed
@@ -59,6 +110,10 @@ async function processOperationQueue() {
 self.addEventListener('message', event => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting()
+  }
+
+  if (event.data && event.data.type === 'TRIGGER_SYNC') {
+    event.waitUntil(processOperationQueue())
   }
 
   if (event.data && event.data.type === 'SYNC_COMPLETE') {

@@ -1,11 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { Button } from '@/components/ui/Button'
-import type { Item, Project } from '@/types'
-import { projectService, unifiedItemsService } from '@/services/inventoryService'
-import { useAccount } from '@/contexts/AccountContext'
+import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import { useBusinessProfile } from '@/contexts/BusinessProfileContext'
 import { projectItems, projectsRoot } from '@/utils/routes'
 
@@ -25,49 +23,16 @@ export default function PropertyManagementSummary() {
   const resolvedProjectId = projectId || id
   const stackedNavigate = useStackedNavigate()
   const { getBackDestination } = useNavigationContext()
-  const { currentAccountId } = useAccount()
   const { businessName, businessLogoUrl } = useBusinessProfile()
-
-  const [project, setProject] = useState<Project | null>(null)
-  const [items, setItems] = useState<Item[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { project, items, isLoading, error } = useProjectRealtime(resolvedProjectId)
 
   const today = useMemo(() => new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }), [])
 
   useEffect(() => {
-    const load = async () => {
-      if (!resolvedProjectId || !currentAccountId) {
-        if (!currentAccountId) return // Wait for account to load
-        stackedNavigate(projectsRoot())
-        return
-      }
-
-      setIsLoading(true)
-      setError(null)
-      try {
-        const [proj, projectItemsData] = await Promise.all([
-          projectService.getProject(currentAccountId, resolvedProjectId),
-          unifiedItemsService.getItemsByProject(currentAccountId, resolvedProjectId)
-        ])
-
-        if (!proj) {
-          stackedNavigate(projectsRoot())
-          return
-        }
-
-        setProject(proj)
-        setItems(projectItemsData)
-      } catch (e: any) {
-        console.error('Failed to load property management summary:', e)
-        setError('Failed to load property management summary. Please try again.')
-      } finally {
-        setIsLoading(false)
-      }
+    if (!resolvedProjectId) {
+      stackedNavigate(projectsRoot())
     }
-
-    load()
-  }, [resolvedProjectId, currentAccountId, stackedNavigate])
+  }, [resolvedProjectId, stackedNavigate])
 
   const totalMarketValue = useMemo(() => {
     return items.reduce((sum, item) => {
@@ -80,6 +45,10 @@ export default function PropertyManagementSummary() {
   const handleBack = () => {
     const fallback = resolvedProjectId ? projectItems(resolvedProjectId) : projectsRoot()
     stackedNavigate(getBackDestination(fallback))
+  }
+
+  if (!resolvedProjectId) {
+    return null
   }
 
   if (isLoading) {

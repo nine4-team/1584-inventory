@@ -5,6 +5,7 @@ import LoadingSpinner from './components/ui/LoadingSpinner'
 import { ToastProvider } from './components/ui/ToastContext'
 import { AccountProvider } from './contexts/AccountContext'
 import { BusinessProfileProvider } from './contexts/BusinessProfileContext'
+import { ProjectRealtimeProvider } from './contexts/ProjectRealtimeContext'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import { NetworkStatus } from './components/NetworkStatus'
 import { SyncStatus } from './components/SyncStatus'
@@ -36,10 +37,11 @@ function App() {
   return (
     <AccountProvider>
       <BusinessProfileProvider>
-        <ToastProvider>
-          <NetworkStatus />
-          <SyncStatus />
-          <Routes>
+        <ProjectRealtimeProvider>
+          <ToastProvider>
+            <NetworkStatus />
+            <SyncStatus />
+            <Routes>
             <Route path="/auth/callback" element={withRouteSuspense(<AuthCallback />)} />
             <Route path="/invite/:token" element={withRouteSuspense(<InviteAccept />)} />
 
@@ -168,7 +170,8 @@ function App() {
               }
             />
           </Routes>
-        </ToastProvider>
+          </ToastProvider>
+        </ProjectRealtimeProvider>
       </BusinessProfileProvider>
     </AccountProvider>
   )

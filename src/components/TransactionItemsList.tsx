@@ -12,6 +12,7 @@ import { getTransactionDisplayInfo, getTransactionRoute } from '@/utils/transact
 import { projectItemDetail } from '@/utils/routes'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
+import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import ContextLink from './ContextLink'
 import type { ItemDisposition } from '@/types'
 import ItemPreviewCard, { type ItemPreviewData } from './items/ItemPreviewCard'
@@ -64,6 +65,7 @@ export default function TransactionItemsList({
   const [shouldStick, setShouldStick] = useState(true)
   const { currentAccountId } = useAccount()
   const { buildContextUrl } = useNavigationContext()
+  const { refreshCollections: refreshProjectCollections } = useProjectRealtime(projectId)
 
   // Initialize bookmarked items from database
   useEffect(() => {
@@ -423,6 +425,11 @@ export default function TransactionItemsList({
     const newItems = [...items]
     newItems.splice(originalIndex + 1, 0, duplicatedItem)
     onItemsChange(newItems)
+    if (projectId) {
+      refreshProjectCollections().catch(err =>
+        console.debug('TransactionItemsList: failed to refresh after duplicate', err)
+      )
+    }
   }
 
   const handleBookmarkItem = async (itemId: string) => {
@@ -742,6 +749,11 @@ export default function TransactionItemsList({
       .map(item => (item.id === mergeMasterId ? updatedMaster : item))
 
     onItemsChange(updatedItems)
+    if (projectId) {
+      refreshProjectCollections().catch(err =>
+        console.debug('TransactionItemsList: failed to refresh after merge', err)
+      )
+    }
     setSelectedItemIds(new Set([mergeMasterId]))
     closeMergeDialog()
   }

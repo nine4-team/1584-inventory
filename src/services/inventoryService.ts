@@ -18,6 +18,10 @@ let transactionChannelCounter = 0
 const projectItemsRealtimeEntries = new Map<string, SharedRealtimeEntry<Item>>()
 let projectItemsChannelCounter = 0
 
+type ChannelSubscriptionOptions = {
+  onStatusChange?: (status: string, error?: unknown) => void
+}
+
 // Audit Logging Service for allocation/de-allocation events
 export const auditService = {
   // Log allocation/de-allocation events
@@ -1258,7 +1262,8 @@ export const transactionService = {
     accountId: string,
     projectId: string,
     callback: (transactions: Transaction[]) => void,
-    initialTransactions?: Transaction[]
+    initialTransactions?: Transaction[],
+    options?: ChannelSubscriptionOptions
   ) {
     const key = `${accountId}:${projectId}`
     let entry = transactionRealtimeEntries.get(key)
@@ -1336,6 +1341,7 @@ export const transactionService = {
           if (err) {
             console.error('Error subscribing to transactions channel:', err)
           }
+          options?.onStatusChange?.(status, err ?? undefined)
         })
 
       entry.channel = channel
@@ -1766,7 +1772,8 @@ export const unifiedItemsService = {
     accountId: string,
     projectId: string,
     callback: (items: Item[]) => void,
-    initialItems?: Item[]
+    initialItems?: Item[],
+    options?: ChannelSubscriptionOptions
   ) {
     const key = `${accountId}:${projectId}`
     let entry = projectItemsRealtimeEntries.get(key)
@@ -1836,6 +1843,7 @@ export const unifiedItemsService = {
           if (err) {
             console.error('Error subscribing to project items channel:', err)
           }
+          options?.onStatusChange?.(status, err ?? undefined)
         })
 
       entry.channel = channel

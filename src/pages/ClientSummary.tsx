@@ -1,12 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import ContextLink from '@/components/ContextLink'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { Button } from '@/components/ui/Button'
-import type { Item, Project, Transaction } from '@/types'
-import { projectService, transactionService, unifiedItemsService } from '@/services/inventoryService'
-import { useAccount } from '@/contexts/AccountContext'
+import type { Item, Transaction } from '@/types'
+import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import { useBusinessProfile } from '@/contexts/BusinessProfileContext'
 import { CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { useCategories } from '@/components/CategorySelect'
@@ -27,54 +26,18 @@ export default function ClientSummary() {
   const { id, projectId } = useParams<{ id?: string; projectId?: string }>()
   const resolvedProjectId = projectId || id
   const stackedNavigate = useStackedNavigate()
-  const { currentAccountId } = useAccount()
   const { businessName, businessLogoUrl } = useBusinessProfile()
   const { categories: accountCategories } = useCategories(false)
   const { buildContextUrl, getBackDestination } = useNavigationContext()
-
-  const [project, setProject] = useState<Project | null>(null)
-  const [items, setItems] = useState<Item[]>([])
-  const [transactions, setTransactions] = useState<Transaction[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { project, items, transactions, isLoading, error } = useProjectRealtime(resolvedProjectId)
 
   const today = useMemo(() => new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }), [])
 
   useEffect(() => {
-    const load = async () => {
-      if (!resolvedProjectId || !currentAccountId) {
-        if (!currentAccountId) return // Wait for account to load
-        stackedNavigate(projectsRoot())
-        return
-      }
-
-      setIsLoading(true)
-      setError(null)
-      try {
-        const [proj, projectItemsData, projectTransactions] = await Promise.all([
-          projectService.getProject(currentAccountId, resolvedProjectId),
-          unifiedItemsService.getItemsByProject(currentAccountId, resolvedProjectId),
-          transactionService.getTransactions(currentAccountId, resolvedProjectId)
-        ])
-
-        if (!proj) {
-          stackedNavigate(projectsRoot())
-          return
-        }
-
-        setProject(proj)
-        setItems(projectItemsData)
-        setTransactions(projectTransactions)
-      } catch (e: any) {
-        console.error('Failed to load client summary:', e)
-        setError('Failed to load client summary. Please try again.')
-      } finally {
-        setIsLoading(false)
-      }
+    if (!resolvedProjectId) {
+      stackedNavigate(projectsRoot())
     }
-
-    load()
-  }, [resolvedProjectId, currentAccountId, stackedNavigate])
+  }, [resolvedProjectId, stackedNavigate])
 
   // Create a map of categoryId -> category name for quick lookup
   const categoryMap = useMemo(() => {
@@ -183,6 +146,10 @@ export default function ClientSummary() {
     }
 
     // No transactionId -> no receipt link (no fallback)
+    return null
+  }
+
+  if (!resolvedProjectId) {
     return null
   }
 

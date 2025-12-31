@@ -265,9 +265,10 @@ export default function ItemPreviewCard({
                 </button>
               )}
               {showEdit && onEdit && (
-                <ContextLink
-                  to={getEditLink()}
+                <button
+                  type="button"
                   onClick={(e) => {
+                    e.preventDefault()
                     e.stopPropagation()
                     onEdit(getEditLink())
                   }}
@@ -275,7 +276,7 @@ export default function ItemPreviewCard({
                   title="Edit item"
                 >
                   <Edit className="h-4 w-4" />
-                </ContextLink>
+                </button>
               )}
               {showDuplicate && onDuplicate && (
                 <button

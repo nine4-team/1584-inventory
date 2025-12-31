@@ -20,9 +20,9 @@ import {
 import ContextBackLink from '@/components/ContextBackLink'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { Project, Transaction, Item } from '@/types'
-import { projectService, transactionService, unifiedItemsService } from '@/services/inventoryService'
-import { lineageService } from '@/services/lineageService'
+import { projectService } from '@/services/inventoryService'
 import { useAccount } from '@/contexts/AccountContext'
+import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import ProjectForm from '@/components/ProjectForm'
 import BudgetProgress from '@/components/ui/BudgetProgress'
 import { useToast } from '@/components/ui/ToastContext'
@@ -84,11 +84,6 @@ export default function ProjectLayout() {
   const { currentAccountId } = useAccount()
   const [searchParams, setSearchParams] = useSearchParams()
   const budgetTabParam = searchParams.get('budgetTab')
-  const [project, setProject] = useState<Project | null>(null)
-  const [transactions, setTransactions] = useState<Transaction[]>([])
-  const [items, setItems] = useState<Item[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [isEditing, setIsEditing] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -98,11 +93,25 @@ export default function ProjectLayout() {
   const [activeBudgetTab, setActiveBudgetTab] = useState<string>(() =>
     budgetTabParam === 'accounting' ? 'accounting' : 'budget'
   )
-  const [reloadToken, setReloadToken] = useState(0)
+  const {
+    project,
+    transactions,
+    items,
+    isLoading,
+    error,
+    refreshProject: refreshProjectSnapshot,
+    refreshCollections,
+  } = useProjectRealtime(projectId)
 
   useEffect(() => {
     stackedNavigateRef.current = stackedNavigate
   }, [stackedNavigate])
+
+  useEffect(() => {
+    if (!projectId) {
+      stackedNavigateRef.current(projectsRoot())
+    }
+  }, [projectId])
 
   const sectionPaths = useMemo(() => {
     if (!projectId) return null
@@ -139,129 +148,11 @@ export default function ProjectLayout() {
     }
   }, [location.pathname, projectId])
 
-  useEffect(() => {
-    let transactionUnsubscribe: (() => void) | undefined
-    let itemsUnsubscribe: (() => void) | undefined
-
-    const setupTransactionSubscription = (initialTransactions: Transaction[]) => {
-      if (!projectId || !currentAccountId) return
-      transactionUnsubscribe = transactionService.subscribeToTransactions(
-        currentAccountId,
-        projectId,
-        updatedTransactions => {
-          setTransactions(updatedTransactions)
-        },
-        initialTransactions
-      )
-    }
-
-    const setupItemsSubscription = (initialItems: Item[]) => {
-      if (!projectId || !currentAccountId) return
-      itemsUnsubscribe = unifiedItemsService.subscribeToProjectItems(
-        currentAccountId,
-        projectId,
-        updatedItems => {
-          setItems(updatedItems)
-        },
-        initialItems
-      )
-    }
-
-    const loadData = async () => {
-      if (!projectId) {
-        stackedNavigateRef.current(projectsRoot())
-        return
-      }
-      if (!currentAccountId) {
-        return
-      }
-
-      setIsLoading(true)
-      try {
-        const projectData = await projectService.getProject(currentAccountId, projectId)
-        if (projectData) {
-          setProject(projectData)
-
-          const [transactionsData, itemsData] = await Promise.all([
-            transactionService.getTransactions(currentAccountId, projectId),
-            unifiedItemsService.getItemsByProject(currentAccountId, projectId),
-          ])
-
-          setTransactions(transactionsData)
-          setItems(itemsData)
-          setupTransactionSubscription(transactionsData)
-          setupItemsSubscription(itemsData)
-        } else {
-          stackedNavigateRef.current(projectsRoot())
-        }
-      } catch (loadError) {
-        console.error('Error loading project:', loadError)
-        setError('Failed to load project. Please try again.')
-      } finally {
-        setIsLoading(false)
-      }
-    }
-
-    loadData()
-
-    return () => {
-      if (transactionUnsubscribe) transactionUnsubscribe()
-      if (itemsUnsubscribe) itemsUnsubscribe()
-    }
-  }, [projectId, currentAccountId, reloadToken])
-
-  useEffect(() => {
-    if (!currentAccountId || !projectId || transactions.length === 0) return
-
-    const unsubs: Array<() => void> = []
-    try {
-      transactions.forEach(tx => {
-        if (!tx.transactionId) return
-        const unsub = lineageService.subscribeToEdgesFromTransaction(
-          currentAccountId,
-          tx.transactionId,
-          async () => {
-            try {
-              const updatedItems = await unifiedItemsService.getItemsByProject(
-                currentAccountId,
-                projectId
-              )
-              setItems(updatedItems)
-            } catch (err) {
-              console.debug('ProjectLayout - failed to refresh items on lineage event', err)
-            }
-
-            try {
-              const updatedTransactions = await transactionService.getTransactions(
-                currentAccountId,
-                projectId
-              )
-              setTransactions(updatedTransactions)
-            } catch (tErr) {
-              console.debug('ProjectLayout - failed to refresh transactions on lineage event', tErr)
-            }
-          }
-        )
-        unsubs.push(unsub)
-      })
-    } catch (err) {
-      console.debug('ProjectLayout - failed to subscribe to edges from transactions', err)
-    }
-
-    return () => {
-      unsubs.forEach(unsub => {
-        try {
-          unsub()
-        } catch {
-          // ignore
-        }
-      })
-    }
-  }, [transactions, currentAccountId, projectId])
-
   const retryLoadProject = () => {
-    setError(null)
-    setReloadToken(previous => previous + 1)
+    if (!projectId) return
+    refreshCollections({ includeProject: true }).catch(retryError => {
+      console.error('ProjectLayout: retry load failed', retryError)
+    })
   }
 
   const handleEditProject = async (projectData: any) => {
@@ -269,10 +160,7 @@ export default function ProjectLayout() {
 
     try {
       await projectService.updateProject(currentAccountId, projectId, projectData)
-      const updatedProject = await projectService.getProject(currentAccountId, projectId)
-      if (updatedProject) {
-        setProject(updatedProject)
-      }
+      await refreshProjectSnapshot()
       setIsEditing(false)
     } catch (updateError) {
       console.error('Error updating project:', updateError)

@@ -1,5 +1,5 @@
 import { ArrowLeft, Edit, Trash2, Image as ImageIcon, Package } from 'lucide-react'
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import ImageGallery from '@/components/ui/ImageGallery'
 import { TransactionImagePreview } from '@/components/ui/ImagePreview'
 import { useParams } from 'react-router-dom'
@@ -17,6 +17,7 @@ import TransactionItemForm from '@/components/TransactionItemForm'
 import TransactionItemsList from '@/components/TransactionItemsList'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
+import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import type { ItemLineageEdge } from '@/types'
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import TransactionAudit from '@/components/ui/TransactionAudit'
@@ -77,6 +78,18 @@ export default function TransactionDetail() {
   const { currentAccountId } = useAccount()
   const [transaction, setTransaction] = useState<Transaction | null>(null)
   const [project, setProject] = useState<Project | null>(null)
+  const transactionRef = useRef<Transaction | null>(null)
+  const derivedRealtimeProjectId = projectId || transaction?.projectId || null
+  const { refreshCollections: refreshRealtimeCollections } = useProjectRealtime(derivedRealtimeProjectId)
+  const refreshRealtimeAfterWrite = useCallback(
+    (includeProject = false) => {
+      if (!derivedRealtimeProjectId) return Promise.resolve()
+      return refreshRealtimeCollections(includeProject ? { includeProject: true } : undefined).catch(err => {
+        console.debug('TransactionDetail: realtime refresh failed', err)
+      })
+    },
+    [derivedRealtimeProjectId, refreshRealtimeCollections]
+  )
 
   useEffect(() => {
     const loadBudgetCategories = async () => {
@@ -94,6 +107,10 @@ export default function TransactionDetail() {
   // Transaction items state - using TransactionItemFormData like the edit screen
   const [items, setItems] = useState<TransactionItemFormData[]>([])
   const initialItemsRef = useRef<TransactionItemFormData[] | null>(null)
+
+  useEffect(() => {
+    transactionRef.current = transaction
+  }, [transaction])
 
   const snapshotInitialItems = (displayItems: TransactionItemFormData[]) => {
     try {
@@ -137,15 +154,16 @@ export default function TransactionDetail() {
   }, [getBackDestination, projectId])
 
   // Refresh transaction items
-  const refreshTransactionItems = async () => {
-    if (!currentAccountId || !transactionId || !transaction) return
+  const refreshTransactionItems = useCallback(async () => {
+    if (!currentAccountId || !transactionId) return
 
-    const actualProjectId = projectId || transaction?.projectId
-    if (!actualProjectId) return
+    const activeTransaction = transactionRef.current
+    const actualProjectId = projectId || activeTransaction?.projectId
+    if (!actualProjectId || !activeTransaction) return
 
     try {
       // Use transaction.itemIds to include moved items (same logic as main useEffect)
-      const itemIdsFromTransaction = Array.isArray(transaction?.itemIds) ? transaction.itemIds : []
+      const itemIdsFromTransaction = Array.isArray(activeTransaction.itemIds) ? activeTransaction.itemIds : []
       let itemIds: string[]
 
       if (itemIdsFromTransaction.length > 0) {
@@ -156,8 +174,8 @@ export default function TransactionDetail() {
         itemIds = transactionItems.map(item => item.itemId)
       }
       const itemsPromises = itemIds.map(id => unifiedItemsService.getItemById(currentAccountId, id))
-      const items = await Promise.all(itemsPromises)
-      let validItems = items.filter(item => item !== null) as Item[]
+      const fetchedItems = await Promise.all(itemsPromises)
+      let validItems = fetchedItems.filter(item => item !== null) as Item[]
 
       // Include items that were moved out of this transaction by consulting lineage edges.
       // The UI displays both "in transaction" and "moved out" items; we need to load moved items too.
@@ -184,7 +202,7 @@ export default function TransactionDetail() {
     } catch (error) {
       console.error('Error refreshing transaction items:', error)
     }
-  }
+  }, [currentAccountId, projectId, transactionId])
 
   const handleDeletePersistedItem = async (itemId: string) => {
     if (!currentAccountId) {
@@ -195,6 +213,7 @@ export default function TransactionDetail() {
     try {
       await unifiedItemsService.deleteItem(currentAccountId, itemId)
       await refreshTransactionItems()
+      await refreshRealtimeAfterWrite()
       showSuccess('Item deleted successfully')
       return true
     } catch (error) {
@@ -435,6 +454,50 @@ export default function TransactionDetail() {
     loadTransaction()
   }, [projectId, transactionId, currentAccountId])
 
+  useEffect(() => {
+    if (!currentAccountId || !transactionId) return
+    const resolvedProjectId = projectId || transaction?.projectId
+    if (!resolvedProjectId) return
+
+    const unsubscribe = transactionService.subscribeToTransaction(
+      currentAccountId,
+      resolvedProjectId,
+      updatedTransaction => {
+        setTransaction(updatedTransaction)
+      }
+    )
+
+    return () => {
+      try {
+        unsubscribe()
+      } catch (err) {
+        console.debug('TransactionDetail - failed to unsubscribe transaction realtime', err)
+      }
+    }
+  }, [currentAccountId, projectId, transaction?.projectId, transactionId])
+
+  useEffect(() => {
+    if (!currentAccountId || !transactionId) return
+    const resolvedProjectId = projectId || transaction?.projectId
+    if (!resolvedProjectId) return
+
+    const unsubscribe = unifiedItemsService.subscribeToProjectItems(
+      currentAccountId,
+      resolvedProjectId,
+      () => {
+        refreshTransactionItems()
+      }
+    )
+
+    return () => {
+      try {
+        unsubscribe()
+      } catch (err) {
+        console.debug('TransactionDetail - failed to unsubscribe items realtime', err)
+      }
+    }
+  }, [currentAccountId, projectId, transaction?.projectId, transactionId, refreshTransactionItems])
+
   // Set up real-time subscription for transaction updates
   useEffect(() => {
     if (!transactionId || !transaction) return
@@ -544,6 +607,7 @@ export default function TransactionDetail() {
       const refreshProjectId = transaction?.projectId || projectId
       const updatedTransaction = await transactionService.getTransaction(currentAccountId, refreshProjectId || '', transactionId)
       setTransaction(updatedTransaction)
+      await refreshRealtimeAfterWrite()
 
       showSuccess('Receipts uploaded successfully')
     } catch (error) {
@@ -584,6 +648,7 @@ export default function TransactionDetail() {
       const refreshProjectId = transaction?.projectId || projectId
       const updatedTransaction = await transactionService.getTransaction(currentAccountId, refreshProjectId || '', transactionId)
       setTransaction(updatedTransaction)
+      await refreshRealtimeAfterWrite()
 
       showSuccess('Other images uploaded successfully')
     } catch (error) {
@@ -612,6 +677,7 @@ export default function TransactionDetail() {
       const refreshProjectId = transaction?.projectId || projectId
       const updatedTransaction = await transactionService.getTransaction(currentAccountId, refreshProjectId || '', transactionId)
       setTransaction(updatedTransaction)
+      await refreshRealtimeAfterWrite()
 
       showSuccess('Receipt deleted successfully')
     } catch (error) {
@@ -638,6 +704,7 @@ export default function TransactionDetail() {
       const refreshProjectId = transaction?.projectId || projectId
       const updatedTransaction = await transactionService.getTransaction(currentAccountId, refreshProjectId || '', transactionId)
       setTransaction(updatedTransaction)
+      await refreshRealtimeAfterWrite()
 
       showSuccess('Other image deleted successfully')
     } catch (error) {
@@ -704,6 +771,7 @@ export default function TransactionDetail() {
 
       if (validImages.length > 0) {
         await unifiedItemsService.updateItem(currentAccountId, targetItemId, { images: validImages })
+        await refreshRealtimeAfterWrite()
       }
     } catch (error) {
       console.error('Error in image upload process:', error)
@@ -746,6 +814,7 @@ export default function TransactionDetail() {
       await uploadItemImages(itemId, item)
 
       await refreshTransactionItems()
+      await refreshRealtimeAfterWrite()
       setIsAddingItem(false)
       showSuccess('Item added successfully')
     } catch (error) {
@@ -774,6 +843,7 @@ export default function TransactionDetail() {
       await uploadItemImages(item.id, item)
 
       await refreshTransactionItems()
+      await refreshRealtimeAfterWrite()
       showSuccess('Item updated successfully')
     } catch (error) {
       console.error('Error updating item:', error)

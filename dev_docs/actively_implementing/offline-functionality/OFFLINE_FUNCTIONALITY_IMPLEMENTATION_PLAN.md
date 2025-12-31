@@ -39,6 +39,27 @@ Implement offline-first functionality so users can:
 └─────────────────┘    └──────────────────┘    └─────────────────┘
 ```
 
+### Realtime Subscription Topology (Dec 2025)
+
+1. **ProjectRealtimeProvider**
+   - Mounted under `App` (inside `AccountProvider` / `BusinessProfileProvider`) so Supabase channels survive all route transitions.
+   - Tracks reference counts per `projectId` and keeps a project's `projects`, `transactions`, `items`, and lineage subscriptions hot while at least one consumer calls `useProjectRealtime(projectId)`. A 15-second grace timer prevents needless teardown when navigating between layout and detail screens.
+   - Exposes bound refresh helpers (`refreshProject`, `refreshTransactions`, `refreshItems`, `refreshCollections`) that pages can invoke after heavy writes or reconnect events.
+
+2. **Route ownership**
+   - `ProjectLayout`, transaction detail, invoice, property-management, client-summary, and business-inventory routes all invoke `useProjectRealtime`. Layout no longer wires Supabase manually; it renders provider snapshots. Detail routes rely on the URL `projectId` (or the transaction's resolved `projectId`) so layout-level channels remain mounted even when the layout unmounts.
+
+3. **Write safety net**
+   - `TransactionItemsList` duplicate/merge helpers, manual uploads, and other write-heavy flows call `refreshCollections` immediately after Supabase writes succeed. This guarantees duplicates and merges appear even if realtime payloads lag or the socket reconnects.
+
+4. **Service worker bridge**
+   - `public/sw-custom.js` now relays Background Sync events to foreground tabs via `PROCESS_OPERATION_QUEUE` messages. Windows listen for that message, execute `operationQueue.processQueue()`, and reply with `PROCESS_OPERATION_QUEUE_RESULT`, allowing the service worker to await completion before resolving the sync event.
+
+5. **Regression coverage**
+   - `src/contexts/__tests__/ProjectRealtimeContext.test.tsx` mocks realtime payloads to ensure duplicate/merge visibility updates propagate through the provider, and verifies that `refreshCollections({ includeProject: true })` exercises the reconnect fallback path.
+
+This topology centralizes Supabase channel ownership, keeps UI routes lightweight, and gives the offline/queue layer deterministic hooks for manual refreshes and background sync.
+
 ### Key Components to Implement
 1. **Offline Store**: IndexedDB wrapper for local data persistence
 2. **Sync Manager**: Background sync service with conflict resolution

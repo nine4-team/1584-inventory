@@ -368,3 +368,27 @@ class OperationQueue {
 }
 
 export const operationQueue = new OperationQueue()
+
+if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', event => {
+    if (event.data?.type === 'PROCESS_OPERATION_QUEUE') {
+      const responsePort = event.ports && event.ports[0]
+      operationQueue
+        .processQueue()
+        .then(() => {
+          responsePort?.postMessage({
+            type: 'PROCESS_OPERATION_QUEUE_RESULT',
+            success: true
+          })
+        })
+        .catch(error => {
+          console.error('Failed to process operation queue from service worker request:', error)
+          responsePort?.postMessage({
+            type: 'PROCESS_OPERATION_QUEUE_RESULT',
+            success: false,
+            error: error?.message
+          })
+        })
+    }
+  })
+}

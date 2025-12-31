@@ -2,6 +2,112 @@ import { supabase, getCurrentUser } from './supabase'
 import { ensureAuthenticatedForDatabase } from './databaseService'
 import type { ItemLineageEdge } from '@/types'
 
+type LineageEdgeListener = (edge: ItemLineageEdge) => void
+const ALL_ITEMS_KEY = '__all__'
+
+type AccountChannelEntry = {
+  channel: ReturnType<typeof supabase.channel>
+  itemListeners: Map<string, Set<LineageEdgeListener>>
+  transactionListeners: Map<string, Set<LineageEdgeListener>>
+}
+
+const accountChannelRegistry = new Map<string, AccountChannelEntry>()
+
+const convertEdgeFromDb = (dbEdge: any): ItemLineageEdge => ({
+  id: dbEdge.id,
+  accountId: dbEdge.account_id,
+  itemId: dbEdge.item_id,
+  fromTransactionId: dbEdge.from_transaction_id ?? null,
+  toTransactionId: dbEdge.to_transaction_id ?? null,
+  createdAt: dbEdge.created_at,
+  createdBy: dbEdge.created_by ?? null,
+  note: dbEdge.note ?? null,
+})
+
+const getOrCreateAccountChannel = (accountId: string): AccountChannelEntry => {
+  let entry = accountChannelRegistry.get(accountId)
+  if (entry) {
+    return entry
+  }
+
+  const itemListeners = new Map<string, Set<LineageEdgeListener>>()
+  const transactionListeners = new Map<string, Set<LineageEdgeListener>>()
+
+  const dispatchItemListeners = (edge: ItemLineageEdge) => {
+    const invokeCallbacks = (callbacks?: Set<LineageEdgeListener>) => {
+      if (!callbacks || callbacks.size === 0) return
+      callbacks.forEach(callback => {
+        try {
+          callback(edge)
+        } catch (error) {
+          console.debug('lineageService: item listener callback failed', error)
+        }
+      })
+    }
+
+    invokeCallbacks(edge.itemId ? itemListeners.get(edge.itemId) : undefined)
+    invokeCallbacks(itemListeners.get(ALL_ITEMS_KEY))
+  }
+
+  const dispatchTransactionListeners = (edge: ItemLineageEdge) => {
+    if (!edge.fromTransactionId) return
+    const callbacks = transactionListeners.get(edge.fromTransactionId)
+    if (!callbacks) return
+    callbacks.forEach(callback => {
+      try {
+        callback(edge)
+      } catch (error) {
+        console.debug('lineageService: transaction listener callback failed', error)
+      }
+    })
+  }
+
+  const channel = supabase
+    .channel(`item_lineage:account:${accountId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'item_lineage_edges',
+        filter: `account_id=eq.${accountId}`,
+      },
+      payload => {
+        try {
+          const edge = convertEdgeFromDb(payload.new)
+          dispatchItemListeners(edge)
+          dispatchTransactionListeners(edge)
+        } catch (error) {
+          console.debug('lineageService: failed to dispatch lineage edge', error)
+        }
+      }
+    )
+    .subscribe((status, err) => {
+      if (err) {
+        console.error('Error subscribing to account lineage channel', err)
+      } else if (status === 'SUBSCRIBED') {
+        console.debug(`Subscribed to account lineage channel for ${accountId}`)
+      }
+    })
+
+  entry = { channel, itemListeners, transactionListeners }
+  accountChannelRegistry.set(accountId, entry)
+  return entry
+}
+
+const releaseAccountChannelIfUnused = (accountId: string) => {
+  const entry = accountChannelRegistry.get(accountId)
+  if (!entry) return
+  if (entry.itemListeners.size === 0 && entry.transactionListeners.size === 0) {
+    try {
+      entry.channel.unsubscribe()
+    } catch (error) {
+      console.debug('lineageService: failed to unsubscribe account channel', error)
+    }
+    accountChannelRegistry.delete(accountId)
+  }
+}
+
 /**
  * Centralized service for managing item lineage edges.
  * Provides idempotent edge creation and enforces single-path invariants.
@@ -112,7 +218,7 @@ export const lineageService = {
       edgeId: data.id
     })
 
-    return this._convertEdgeFromDb(data)
+    return convertEdgeFromDb(data)
   },
 
   /**
@@ -188,7 +294,7 @@ export const lineageService = {
       throw error
     }
 
-    return (data || []).map(edge => this._convertEdgeFromDb(edge))
+    return (data || []).map(edge => convertEdgeFromDb(edge))
   },
 
   /**
@@ -210,7 +316,7 @@ export const lineageService = {
       throw error
     }
 
-    return (data || []).map(edge => this._convertEdgeFromDb(edge))
+    return (data || []).map(edge => convertEdgeFromDb(edge))
   },
 
   /**
@@ -233,7 +339,7 @@ export const lineageService = {
       throw error
     }
 
-    return data ? this._convertEdgeFromDb(data) : null
+    return data ? convertEdgeFromDb(data) : null
   },
 
   /**
@@ -249,47 +355,21 @@ export const lineageService = {
     itemId: string | undefined,
     callback: (edge: ItemLineageEdge) => void
   ): () => void {
-    const filterParts = ['account_id=eq.' + accountId]
-    if (itemId) {
-      filterParts.push('item_id=eq.' + itemId)
-    }
-    const filter = filterParts.join(',')
-
-    const channelName = `item_lineage:${accountId}${itemId ? `:${itemId}` : ''}`
-    const channel = supabase
-      .channel(channelName)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'item_lineage_edges',
-          filter
-        },
-        (payload: any) => {
-          try {
-            const edge = this._convertEdgeFromDb(payload.new)
-            callback(edge)
-          } catch (err) {
-            console.debug('lineageService.subscribeToItemLineageForItem - callback error', err)
-          }
-        }
-      )
-      .subscribe((status, err) => {
-        if (status === 'SUBSCRIBED') {
-          // console.log('Subscribed to item_lineage_edges channel', channelName)
-        }
-        if (err) {
-          console.error('Error subscribing to item_lineage_edges channel', err)
-        }
-      })
+    const entry = getOrCreateAccountChannel(accountId)
+    const key = itemId ?? ALL_ITEMS_KEY
+    const listenersForItem = entry.itemListeners.get(key) ?? new Set<LineageEdgeListener>()
+    listenersForItem.add(callback)
+    entry.itemListeners.set(key, listenersForItem)
 
     return () => {
-      try {
-        channel.unsubscribe()
-      } catch (err) {
-        console.debug('Failed to unsubscribe from lineage channel', err)
+      const listeners = entry.itemListeners.get(key)
+      if (listeners) {
+        listeners.delete(callback)
+        if (listeners.size === 0) {
+          entry.itemListeners.delete(key)
+        }
       }
+      releaseAccountChannelIfUnused(accountId)
     }
   },
   /**
@@ -302,60 +382,22 @@ export const lineageService = {
     fromTransactionId: string,
     callback: (edge: ItemLineageEdge) => void
   ): () => void {
-    const filter = 'account_id=eq.' + accountId + ',from_transaction_id=eq.' + fromTransactionId
-
-    const channelName = `item_lineage:from_tx:${accountId}:${fromTransactionId}`
-    const channel = supabase
-      .channel(channelName)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'item_lineage_edges',
-          filter
-        },
-        (payload: any) => {
-          try {
-            const edge = this._convertEdgeFromDb(payload.new)
-            callback(edge)
-          } catch (err) {
-            console.debug('lineageService.subscribeToEdgesFromTransaction - callback error', err)
-          }
-        }
-      )
-      .subscribe((status, err) => {
-        if (status === 'SUBSCRIBED') {
-          // console.log('Subscribed to item_lineage_edges from_transaction channel', channelName)
-        }
-        if (err) {
-          console.error('Error subscribing to item_lineage_edges from_transaction channel', err)
-        }
-      })
+    const entry = getOrCreateAccountChannel(accountId)
+    const listenersForTransaction = entry.transactionListeners.get(fromTransactionId) ?? new Set<LineageEdgeListener>()
+    listenersForTransaction.add(callback)
+    entry.transactionListeners.set(fromTransactionId, listenersForTransaction)
 
     return () => {
-      try {
-        channel.unsubscribe()
-      } catch (err) {
-        console.debug('Failed to unsubscribe from lineage from_tx channel', err)
+      const listeners = entry.transactionListeners.get(fromTransactionId)
+      if (listeners) {
+        listeners.delete(callback)
+        if (listeners.size === 0) {
+          entry.transactionListeners.delete(fromTransactionId)
+        }
       }
+      releaseAccountChannelIfUnused(accountId)
     }
   },
 
-  /**
-   * Helper to convert database edge (snake_case) to app format (camelCase).
-   */
-  _convertEdgeFromDb(dbEdge: any): ItemLineageEdge {
-    return {
-      id: dbEdge.id,
-      accountId: dbEdge.account_id,
-      itemId: dbEdge.item_id,
-      fromTransactionId: dbEdge.from_transaction_id ?? null,
-      toTransactionId: dbEdge.to_transaction_id ?? null,
-      createdAt: dbEdge.created_at,
-      createdBy: dbEdge.created_by ?? null,
-      note: dbEdge.note ?? null
-    }
-  }
 }
 
