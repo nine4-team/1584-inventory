@@ -720,7 +720,7 @@ export default function TransactionItemsList({ items, onItemsChange, projectId, 
               Total Items: {items.length}
             </div>
             <div className="text-lg font-semibold text-gray-900">
-              Total: {formatCurrency(
+              Subtotal: {formatCurrency(
                 totalAmount || items.reduce((sum, item) => sum + (parseFloat(item.projectPrice || item.purchasePrice || '0') || 0), 0).toString()
               )}
             </div>

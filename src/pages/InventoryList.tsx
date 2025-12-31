@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Plus, Search, RotateCcw, Camera, Trash2, QrCode, Filter, ArrowUpDown, Receipt } from 'lucide-react'
 import ContextLink from '@/components/ContextLink'
-import { unifiedItemsService, integrationService } from '@/services/inventoryService'
+import { unifiedItemsService, integrationService, transactionService } from '@/services/inventoryService'
+import { supabase } from '@/services/supabase'
 import { lineageService } from '@/services/lineageService'
 import { ImageUploadService } from '@/services/imageService'
 import { Item, ItemImage } from '@/types'
@@ -17,6 +18,7 @@ import { getInventoryListGroupKey } from '@/utils/itemGrouping'
 import CollapsedDuplicateGroup from '@/components/ui/CollapsedDuplicateGroup'
 import InventoryItemRow from '@/components/items/InventoryItemRow'
 import { getTransactionDisplayInfo, getTransactionRoute } from '@/utils/transactionDisplayUtils'
+import BulkItemControls from '@/components/ui/BulkItemControls'
 
 interface InventoryListProps {
   projectId: string
@@ -31,6 +33,8 @@ export default function InventoryList({ projectId, projectName, items: propItems
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
   const [items, setItems] = useState<Item[]>(propItems || [])
   const [error, setError] = useState<string | null>(null)
+  const itemListContainerRef = useRef<HTMLDivElement>(null)
+  const [itemListContainerWidth, setItemListContainerWidth] = useState<number | undefined>(undefined)
   
   // Show loading spinner only if account is loading - items come from props (parent handles that loading)
   const isLoading = accountLoading
@@ -41,6 +45,19 @@ export default function InventoryList({ projectId, projectName, items: propItems
   const [sortMode, setSortMode] = useState<'alphabetical' | 'creationDate'>('alphabetical')
   const [showSortMenu, setShowSortMenu] = useState(false)
   const { showSuccess, showError } = useToast()
+
+  // Track item list container width for bulk controls
+  useEffect(() => {
+    const updateWidth = () => {
+      if (itemListContainerRef.current) {
+        setItemListContainerWidth(itemListContainerRef.current.offsetWidth)
+      }
+    }
+
+    updateWidth()
+    window.addEventListener('resize', updateWidth)
+    return () => window.removeEventListener('resize', updateWidth)
+  }, [])
 
   const parseMoney = (value?: string | number | null) => {
     if (value === undefined || value === null) return 0
@@ -329,14 +346,148 @@ export default function InventoryList({ projectId, projectName, items: propItems
     }
   }
 
-  const handleBulkDelete = async () => {
-    if (selectedItems.size === 0) return
-
-    const confirmMessage = `Are you sure you want to delete ${selectedItems.size} item(s)? This action cannot be undone.`
-
-    if (!confirm(confirmMessage)) {
+  const handleBulkAssignToTransaction = async (transactionId: string) => {
+    if (!currentAccountId) {
+      setError('Account ID is required')
       return
     }
+
+    const itemIds = Array.from(selectedItems)
+    if (itemIds.length === 0) return
+
+    try {
+      // Update each item's transactionId and update transaction's item_ids
+      const updatePromises = itemIds.map(async (itemId) => {
+        // Update the item's transactionId
+        await unifiedItemsService.updateItem(currentAccountId, itemId, {
+          transactionId: transactionId
+        })
+
+        // Update lineage pointers
+        try {
+          await lineageService.updateItemLineagePointers(currentAccountId, itemId, transactionId)
+        } catch (lineageError) {
+          console.warn('Failed to update lineage pointers for item:', itemId, lineageError)
+        }
+      })
+
+      await Promise.all(updatePromises)
+
+      // Update transaction's item_ids array using the service method
+      // We'll update the transaction's item_ids by fetching, adding, and updating
+      try {
+        const { data: transactionData, error: fetchError } = await supabase
+          .from('transactions')
+          .select('item_ids')
+          .eq('account_id', currentAccountId)
+          .eq('transaction_id', transactionId)
+          .single()
+
+        if (!fetchError && transactionData) {
+          const currentItemIds: string[] = Array.isArray(transactionData.item_ids) ? transactionData.item_ids : []
+          const updatedItemIds = [...new Set([...currentItemIds, ...itemIds])] // Avoid duplicates
+
+          const { error: updateError } = await supabase
+            .from('transactions')
+            .update({
+              item_ids: updatedItemIds,
+              updated_at: new Date().toISOString()
+            })
+            .eq('account_id', currentAccountId)
+            .eq('transaction_id', transactionId)
+
+          if (updateError) {
+            console.warn('Failed to update transaction item_ids:', updateError)
+          }
+        }
+      } catch (txError) {
+        console.warn('Failed to update transaction item_ids:', txError)
+        // Don't fail the whole operation if this fails
+      }
+
+      showSuccess(`Assigned ${itemIds.length} item${itemIds.length !== 1 ? 's' : ''} to transaction`)
+    } catch (error) {
+      console.error('Failed to assign items to transaction:', error)
+      setError('Failed to assign items to transaction. Please try again.')
+      throw error
+    }
+  }
+
+  const handleBulkSetLocation = async (location: string) => {
+    if (!currentAccountId) {
+      setError('Account ID is required')
+      return
+    }
+
+    const itemIds = Array.from(selectedItems)
+    if (itemIds.length === 0) return
+
+    try {
+      const updatePromises = itemIds.map(itemId =>
+        unifiedItemsService.updateItem(currentAccountId, itemId, {
+          space: location
+        })
+      )
+
+      await Promise.all(updatePromises)
+      showSuccess(`Updated location for ${itemIds.length} item${itemIds.length !== 1 ? 's' : ''}`)
+    } catch (error) {
+      console.error('Failed to set location:', error)
+      setError('Failed to set location. Please try again.')
+      throw error
+    }
+  }
+
+  const handleBulkSetDisposition = async (disposition: ItemDisposition) => {
+    if (!currentAccountId) {
+      setError('Account ID is required')
+      return
+    }
+
+    const itemIds = Array.from(selectedItems)
+    if (itemIds.length === 0) return
+
+    try {
+      const updatePromises = itemIds.map(async (itemId) => {
+        const item = items.find(i => i.itemId === itemId)
+        if (!item) return
+
+        // Update disposition
+        await unifiedItemsService.updateItem(currentAccountId, itemId, {
+          disposition: disposition
+        })
+
+        // If disposition is set to 'inventory', trigger deallocation process
+        if (disposition === 'inventory') {
+          try {
+            await integrationService.handleItemDeallocation(
+              currentAccountId,
+              itemId,
+              item.projectId || '',
+              disposition
+            )
+          } catch (deallocationError) {
+            console.error('Failed to handle deallocation for item:', itemId, deallocationError)
+            // Revert the disposition change if deallocation fails
+            await unifiedItemsService.updateItem(currentAccountId, itemId, {
+              disposition: item.disposition || null
+            })
+            throw deallocationError
+          }
+        }
+      })
+
+      await Promise.all(updatePromises)
+      showSuccess(`Updated disposition for ${itemIds.length} item${itemIds.length !== 1 ? 's' : ''}`)
+    } catch (error) {
+      console.error('Failed to set disposition:', error)
+      setError('Failed to set disposition. Please try again.')
+      throw error
+    }
+  }
+
+  const handleBulkDelete = async () => {
+    if (selectedItems.size === 0) return
 
     if (!currentAccountId) {
       setError('Account ID is required')
@@ -356,11 +507,13 @@ export default function InventoryList({ projectId, projectName, items: propItems
 
       await Promise.all(deletePromises)
       setError(null)
+      showSuccess(`Deleted ${idsToDelete.length} item${idsToDelete.length !== 1 ? 's' : ''}`)
     } catch (error) {
       console.error('Failed to delete items:', error)
       setError('Failed to delete some items. Please try again.')
       // Reload items to ensure UI stays in sync if delete failed
       await handleRetry()
+      throw error
     }
   }
 
@@ -671,7 +824,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
         </div>
       ) : (
         !isLoading && !error && (
-          <div className="bg-white shadow overflow-hidden sm:rounded-md">
+          <div ref={itemListContainerRef} className="bg-white shadow overflow-hidden sm:rounded-md" style={{ paddingBottom: selectedItems.size > 0 ? '80px' : '0' }}>
             <ul className="divide-y divide-gray-200">
               {groupedItems.map(({ groupKey, items: groupItems }, groupIndex) => {
                 // Single item - render directly
@@ -771,14 +924,18 @@ export default function InventoryList({ projectId, projectName, items: propItems
                               {transactionDisplayInfo ? (
                                 <span className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors">
                                   <Receipt className="h-3 w-3 mr-1" />
-                                  <ContextLink
-                                    to={transactionRoute ? buildContextUrl(transactionRoute.path, transactionRoute.projectId ? { project: transactionRoute.projectId } : undefined) : ''}
-                                    className="hover:underline font-medium"
+                                  <span
+                                    className="hover:underline font-medium cursor-pointer"
                                     title={`View transaction: ${transactionDisplayInfo.title}`}
-                                    onClick={(e) => e.stopPropagation()}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      if (transactionRoute) {
+                                        window.location.href = buildContextUrl(transactionRoute.path, transactionRoute.projectId ? { project: transactionRoute.projectId } : undefined)
+                                      }
+                                    }}
                                   >
                                     {transactionDisplayInfo.title} {transactionDisplayInfo.amount}
-                                  </ContextLink>
+                                  </span>
                                 </span>
                               ) : (
                                 firstItem.source && <span className="text-xs font-medium text-gray-600">{firstItem.source}</span>
@@ -853,6 +1010,18 @@ export default function InventoryList({ projectId, projectName, items: propItems
           </div>
         )
       )}
+
+      {/* Bulk Item Controls */}
+      <BulkItemControls
+        selectedItemIds={selectedItems}
+        projectId={projectId}
+        onAssignToTransaction={handleBulkAssignToTransaction}
+        onSetLocation={handleBulkSetLocation}
+        onSetDisposition={handleBulkSetDisposition}
+        onDelete={handleBulkDelete}
+        onClearSelection={() => setSelectedItems(new Set())}
+        itemListContainerWidth={itemListContainerWidth}
+      />
     </div>
   )
 }

@@ -306,15 +306,19 @@ export default function InventoryItemRow({
                   {item.sku && <span className="font-medium">SKU: {item.sku}</span>}
                   {(item.sku || transactionDisplayInfo || item.source) && <span className="mx-2 text-gray-400">•</span>}
                   {transactionDisplayInfo ? (
-                    <span className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors">
+                    <span
+                      className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors cursor-pointer hover:underline"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (transactionRoute) {
+                          // Programmatically navigate instead of using nested link
+                          window.location.href = buildContextUrl(transactionRoute.path, transactionRoute.projectId ? { project: transactionRoute.projectId } : undefined)
+                        }
+                      }}
+                      title={`View transaction: ${transactionDisplayInfo.title}`}
+                    >
                       <Receipt className="h-3 w-3 mr-1" />
-                      <ContextLink
-                        to={transactionRoute ? buildContextUrl(transactionRoute.path, transactionRoute.projectId ? { project: transactionRoute.projectId } : undefined) : ''}
-                        className="hover:underline font-medium"
-                        title={`View transaction: ${transactionDisplayInfo.title}`}
-                      >
-                        {transactionDisplayInfo.title} {transactionDisplayInfo.amount}
-                      </ContextLink>
+                      {transactionDisplayInfo.title} {transactionDisplayInfo.amount}
                     </span>
                   ) : (
                     item.source && <span className="text-xs font-medium text-gray-600">{item.source}</span>
