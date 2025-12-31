@@ -17,8 +17,8 @@ import { projectItemNew } from '@/utils/routes'
 import { getInventoryListGroupKey } from '@/utils/itemGrouping'
 import CollapsedDuplicateGroup from '@/components/ui/CollapsedDuplicateGroup'
 import InventoryItemRow from '@/components/items/InventoryItemRow'
-import { getTransactionDisplayInfo, getTransactionRoute } from '@/utils/transactionDisplayUtils'
 import BulkItemControls from '@/components/ui/BulkItemControls'
+import { useTransactionDisplayInfo } from '@/hooks/useTransactionDisplayInfo'
 
 interface InventoryListProps {
   projectId: string
@@ -865,26 +865,11 @@ export default function InventoryList({ projectId, projectName, items: propItems
                 // Component to handle transaction display info for grouped items
                 const GroupedItemSummary = () => {
                   const { buildContextUrl } = useNavigationContext()
-                  const [transactionDisplayInfo, setTransactionDisplayInfo] = useState<{title: string, amount: string} | null>(null)
-                  const [transactionRoute, setTransactionRoute] = useState<{path: string, projectId: string | null} | null>(null)
-
-                  useEffect(() => {
-                    const fetchTransactionData = async () => {
-                      if (firstItem.transactionId && currentAccountId) {
-                        const [displayInfo, route] = await Promise.all([
-                          getTransactionDisplayInfo(currentAccountId, firstItem.transactionId, 20),
-                          getTransactionRoute(firstItem.transactionId, currentAccountId, projectId)
-                        ])
-                        setTransactionDisplayInfo(displayInfo)
-                        setTransactionRoute(route)
-                      } else {
-                        setTransactionDisplayInfo(null)
-                        setTransactionRoute(null)
-                      }
-                    }
-
-                    fetchTransactionData()
-                  }, [firstItem.transactionId, currentAccountId, projectId])
+                  const { displayInfo: transactionDisplayInfo, route: transactionRoute, isLoading: isLoadingTransaction } = useTransactionDisplayInfo(
+                    currentAccountId,
+                    firstItem.transactionId,
+                    projectId
+                  )
 
                   return (
                     <>
@@ -920,23 +905,36 @@ export default function InventoryList({ projectId, projectName, items: propItems
                             {/* SKU and conditional transaction/source display */}
                             <div>
                               {firstItem.sku && <span className="font-medium">SKU: {firstItem.sku}</span>}
-                              {(firstItem.sku || transactionDisplayInfo || firstItem.source) && <span className="mx-2 text-gray-400">•</span>}
-                              {transactionDisplayInfo ? (
-                                <span className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors">
-                                  <Receipt className="h-3 w-3 mr-1" />
-                                  <span
-                                    className="hover:underline font-medium cursor-pointer"
-                                    title={`View transaction: ${transactionDisplayInfo.title}`}
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      if (transactionRoute) {
-                                        window.location.href = buildContextUrl(transactionRoute.path, transactionRoute.projectId ? { project: transactionRoute.projectId } : undefined)
-                                      }
-                                    }}
-                                  >
-                                    {transactionDisplayInfo.title} {transactionDisplayInfo.amount}
+                              {(firstItem.sku || firstItem.transactionId || firstItem.source) && <span className="mx-2 text-gray-400">•</span>}
+                              {firstItem.transactionId ? (
+                                // Always show transaction area when transactionId exists
+                                transactionDisplayInfo ? (
+                                  <span className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors">
+                                    <Receipt className="h-3 w-3 mr-1" />
+                                    <span
+                                      className="hover:underline font-medium cursor-pointer"
+                                      title={`View transaction: ${transactionDisplayInfo.title}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        if (transactionRoute) {
+                                          window.location.href = buildContextUrl(transactionRoute.path, transactionRoute.projectId ? { project: transactionRoute.projectId } : undefined)
+                                        }
+                                      }}
+                                    >
+                                      {transactionDisplayInfo.title} {transactionDisplayInfo.amount}
+                                    </span>
                                   </span>
-                                </span>
+                                ) : isLoadingTransaction ? (
+                                  <span className="inline-flex items-center text-xs font-medium text-gray-500">
+                                    <Receipt className="h-3 w-3 mr-1" />
+                                    Loading transaction...
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center text-xs font-medium text-gray-500">
+                                    <Receipt className="h-3 w-3 mr-1" />
+                                    Transaction
+                                  </span>
+                                )
                               ) : (
                                 firstItem.source && <span className="text-xs font-medium text-gray-600">{firstItem.source}</span>
                               )}

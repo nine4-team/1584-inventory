@@ -5,6 +5,7 @@ import { transactionService } from '@/services/inventoryService'
 import { DISPOSITION_OPTIONS, displayDispositionLabel } from '@/utils/dispositionUtils'
 import type { ItemDisposition } from '@/types'
 import { useAccount } from '@/contexts/AccountContext'
+import { Combobox } from '@/components/ui/Combobox'
 
 interface BulkItemControlsProps {
   selectedItemIds: Set<string>
@@ -206,27 +207,23 @@ export default function BulkItemControls({
               </h3>
             </div>
             <div className="px-6 py-4">
-              <label htmlFor="transaction-select" className="block text-sm font-medium text-gray-700 mb-2">
-                Select Transaction
-              </label>
-              <select
-                id="transaction-select"
+              <Combobox
+                label="Select Transaction"
                 value={selectedTransactionId}
-                onChange={(e) => setSelectedTransactionId(e.target.value)}
-                className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                onChange={setSelectedTransactionId}
                 disabled={loadingTransactions || isProcessing}
-              >
-                <option value="">Select a transaction</option>
-                {loadingTransactions ? (
-                  <option disabled>Loading transactions...</option>
-                ) : (
-                  transactions.map((transaction) => (
-                    <option key={transaction.transactionId} value={transaction.transactionId}>
-                      {new Date(transaction.transactionDate).toLocaleDateString()} - {getCanonicalTransactionTitle(transaction)} - ${transaction.amount}
-                    </option>
-                  ))
-                )}
-              </select>
+                loading={loadingTransactions}
+                placeholder={loadingTransactions ? "Loading transactions..." : "Select a transaction"}
+                options={
+                  loadingTransactions ? [] : [
+                    { id: '', label: 'Select a transaction' },
+                    ...transactions.map((transaction) => ({
+                      id: transaction.transactionId,
+                      label: `${new Date(transaction.transactionDate).toLocaleDateString()} - ${getCanonicalTransactionTitle(transaction)} - $${transaction.amount}`
+                    }))
+                  ]
+                }
+              />
             </div>
             <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
               <button
@@ -307,23 +304,20 @@ export default function BulkItemControls({
               </h3>
             </div>
             <div className="px-6 py-4">
-              <label htmlFor="disposition-select" className="block text-sm font-medium text-gray-700 mb-2">
-                Disposition
-              </label>
-              <select
-                id="disposition-select"
+              <Combobox
+                label="Disposition"
                 value={selectedDisposition}
-                onChange={(e) => setSelectedDisposition(e.target.value as ItemDisposition | '')}
-                className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                onChange={(value) => setSelectedDisposition(value as ItemDisposition | '')}
                 disabled={isProcessing}
-              >
-                <option value="">Select a disposition</option>
-                {DISPOSITION_OPTIONS.map((disposition) => (
-                  <option key={disposition} value={disposition}>
-                    {displayDispositionLabel(disposition)}
-                  </option>
-                ))}
-              </select>
+                placeholder="Select a disposition"
+                options={[
+                  { id: '', label: 'Select a disposition' },
+                  ...DISPOSITION_OPTIONS.map((disposition) => ({
+                    id: disposition,
+                    label: displayDispositionLabel(disposition)
+                  }))
+                ]}
+              />
             </div>
             <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
               <button

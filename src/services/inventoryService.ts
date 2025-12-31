@@ -1218,6 +1218,14 @@ export const transactionService = {
       console.warn('Failed to recompute needs_review after transaction update:', e)
     })
     }
+
+    // Invalidate transaction display info cache so UI updates immediately
+    try {
+      const { invalidateTransactionDisplayInfo } = await import('@/hooks/useTransactionDisplayInfo')
+      invalidateTransactionDisplayInfo(accountId, transactionId)
+    } catch (e) {
+      console.warn('Failed to invalidate transaction display info cache:', e)
+    }
   },
 
   // Delete transaction (account-scoped)

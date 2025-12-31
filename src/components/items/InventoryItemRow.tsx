@@ -3,9 +3,9 @@ import { Bookmark, Camera, ChevronDown, Edit, Copy, Receipt } from 'lucide-react
 import ContextLink from '@/components/ContextLink'
 import { Item } from '@/types'
 import { normalizeDisposition, dispositionsEqual, displayDispositionLabel, DISPOSITION_OPTIONS } from '@/utils/dispositionUtils'
-import { getTransactionDisplayInfo, getTransactionRoute } from '@/utils/transactionDisplayUtils'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
+import { useTransactionDisplayInfo } from '@/hooks/useTransactionDisplayInfo'
 import type { ItemDisposition } from '@/types'
 
 interface InventoryItemRowProps {
@@ -47,27 +47,12 @@ export default function InventoryItemRow({
 }: InventoryItemRowProps) {
   const { currentAccountId } = useAccount()
   const { buildContextUrl } = useNavigationContext()
-  const [transactionDisplayInfo, setTransactionDisplayInfo] = useState<{title: string, amount: string} | null>(null)
-  const [transactionRoute, setTransactionRoute] = useState<{path: string, projectId: string | null} | null>(null)
+  const { displayInfo: transactionDisplayInfo, route: transactionRoute, isLoading: isLoadingTransaction } = useTransactionDisplayInfo(
+    currentAccountId,
+    item.transactionId,
+    projectId
+  )
 
-  // Fetch transaction display info and route when component mounts or transactionId changes
-  useEffect(() => {
-    const fetchTransactionData = async () => {
-      if (item.transactionId && currentAccountId) {
-        const [displayInfo, route] = await Promise.all([
-          getTransactionDisplayInfo(currentAccountId, item.transactionId, 20),
-          getTransactionRoute(item.transactionId, currentAccountId, projectId)
-        ])
-        setTransactionDisplayInfo(displayInfo)
-        setTransactionRoute(route)
-      } else {
-        setTransactionDisplayInfo(null)
-        setTransactionRoute(null)
-      }
-    }
-
-    fetchTransactionData()
-  }, [item.transactionId, currentAccountId, projectId])
 
   const formatCurrency = (amount?: string | number | null) => {
     const value =
@@ -304,22 +289,35 @@ export default function InventoryItemRow({
                 {/* SKU and conditional transaction/source display */}
                 <div>
                   {item.sku && <span className="font-medium">SKU: {item.sku}</span>}
-                  {(item.sku || transactionDisplayInfo || item.source) && <span className="mx-2 text-gray-400">•</span>}
-                  {transactionDisplayInfo ? (
-                    <span
-                      className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors cursor-pointer hover:underline"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (transactionRoute) {
-                          // Programmatically navigate instead of using nested link
-                          window.location.href = buildContextUrl(transactionRoute.path, transactionRoute.projectId ? { project: transactionRoute.projectId } : undefined)
-                        }
-                      }}
-                      title={`View transaction: ${transactionDisplayInfo.title}`}
-                    >
-                      <Receipt className="h-3 w-3 mr-1" />
-                      {transactionDisplayInfo.title} {transactionDisplayInfo.amount}
-                    </span>
+                  {(item.sku || item.transactionId || item.source) && <span className="mx-2 text-gray-400">•</span>}
+                  {item.transactionId ? (
+                    // Always show transaction area when transactionId exists
+                    transactionDisplayInfo ? (
+                      <span
+                        className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors cursor-pointer hover:underline"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (transactionRoute) {
+                            // Programmatically navigate instead of using nested link
+                            window.location.href = buildContextUrl(transactionRoute.path, transactionRoute.projectId ? { project: transactionRoute.projectId } : undefined)
+                          }
+                        }}
+                        title={`View transaction: ${transactionDisplayInfo.title}`}
+                      >
+                        <Receipt className="h-3 w-3 mr-1" />
+                        {transactionDisplayInfo.title} {transactionDisplayInfo.amount}
+                      </span>
+                    ) : isLoadingTransaction ? (
+                      <span className="inline-flex items-center text-xs font-medium text-gray-500">
+                        <Receipt className="h-3 w-3 mr-1" />
+                        Loading transaction...
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center text-xs font-medium text-gray-500">
+                        <Receipt className="h-3 w-3 mr-1" />
+                        Transaction
+                      </span>
+                    )
                   ) : (
                     item.source && <span className="text-xs font-medium text-gray-600">{item.source}</span>
                   )}

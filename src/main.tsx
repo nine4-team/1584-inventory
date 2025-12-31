@@ -6,6 +6,7 @@ import App from './App.tsx'
 import './index.css'
 import { AuthProvider } from './contexts/AuthContext'
 import { NavigationStackProvider } from './contexts/NavigationStackContext'
+import { setGlobalQueryClient } from './utils/queryClient'
 
 // Create a client
 const queryClient = new QueryClient({
@@ -22,6 +23,9 @@ const queryClient = new QueryClient({
     },
   },
 })
+
+// Set global reference for services
+setGlobalQueryClient(queryClient)
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
