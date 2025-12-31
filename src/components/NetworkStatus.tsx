@@ -74,7 +74,7 @@ export function NetworkStatus() {
 
   useEffect(() => {
     if (channelWarnings.length > 0) {
-      console.warn('[NetworkStatus] Realtime channels inactive or disconnected', channelWarnings)
+      // console.warn('[NetworkStatus] Realtime channels inactive or disconnected', channelWarnings)
     }
   }, [channelWarnings])
 

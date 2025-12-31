@@ -40,11 +40,11 @@ export function SyncStatus() {
 
   useEffect(() => {
     if (projectsNeedingAttention.length > 0) {
-      console.warn('[SyncStatus] Realtime channels inactive', {
-        projects: projectsNeedingAttention,
-        realtimeStatus,
-        lastDisconnectedAt,
-      })
+      // console.warn('[SyncStatus] Realtime channels inactive', {
+      //   projects: projectsNeedingAttention,
+      //   realtimeStatus,
+      //   lastDisconnectedAt,
+      // })
     }
   }, [projectsNeedingAttention, realtimeStatus, lastDisconnectedAt])
 

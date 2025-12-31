@@ -1038,7 +1038,7 @@ export default function BusinessInventory() {
                             summary={<GroupedItemSummary />}
                           >
                             {/* Render individual items in the expanded group */}
-                            <ul className="divide-y divide-gray-200 rounded-lg overflow-hidden list-none p-0 m-0">
+                            <ul className="divide-y divide-gray-200 rounded-lg overflow-visible list-none p-0 m-0">
                               {groupItems.map((item, itemIndex) => (
                                 <InventoryItemRow
                                   key={item.itemId}

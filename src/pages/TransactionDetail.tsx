@@ -462,6 +462,7 @@ export default function TransactionDetail() {
     const unsubscribe = transactionService.subscribeToTransaction(
       currentAccountId,
       resolvedProjectId,
+      transactionId,
       updatedTransaction => {
         setTransaction(updatedTransaction)
       }
@@ -508,6 +509,7 @@ export default function TransactionDetail() {
 
     // Temporarily disable real-time subscription to debug
     // const unsubscribe = transactionService.subscribeToTransaction(
+    //   currentAccountId,
     //   actualProjectId,
     //   transactionId,
     //   (updatedTransaction) => {
@@ -559,6 +561,7 @@ export default function TransactionDetail() {
     if (window.confirm('Are you sure you want to delete this transaction? This action cannot be undone.')) {
       try {
         await transactionService.deleteTransaction(currentAccountId, projectId, transactionId)
+        await refreshRealtimeAfterWrite(true)
         navigate(projectId ? projectTransactions(projectId) : '/projects')
       } catch (error) {
         console.error('Error deleting transaction:', error)

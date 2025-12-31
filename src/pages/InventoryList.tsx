@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Plus, Search, RotateCcw, Camera, Trash2, QrCode, Filter, ArrowUpDown, Receipt } from 'lucide-react'
 import ContextLink from '@/components/ContextLink'
 import { unifiedItemsService, integrationService, transactionService } from '@/services/inventoryService'
@@ -19,6 +19,7 @@ import CollapsedDuplicateGroup from '@/components/ui/CollapsedDuplicateGroup'
 import InventoryItemRow from '@/components/items/InventoryItemRow'
 import BulkItemControls from '@/components/ui/BulkItemControls'
 import { useTransactionDisplayInfo } from '@/hooks/useTransactionDisplayInfo'
+import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 
 interface InventoryListProps {
   projectId: string
@@ -45,6 +46,12 @@ export default function InventoryList({ projectId, projectName, items: propItems
   const [sortMode, setSortMode] = useState<'alphabetical' | 'creationDate'>('alphabetical')
   const [showSortMenu, setShowSortMenu] = useState(false)
   const { showSuccess, showError } = useToast()
+  const { refreshCollections: refreshRealtimeCollections } = useProjectRealtime(projectId)
+  const refreshRealtimeAfterWrite = useCallback(() => {
+    return refreshRealtimeCollections().catch(err => {
+      console.debug('InventoryList: realtime refresh failed', err)
+    })
+  }, [refreshRealtimeCollections])
 
   // Track item list container width for bulk controls
   useEffect(() => {
@@ -506,6 +513,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
       )
 
       await Promise.all(deletePromises)
+      await refreshRealtimeAfterWrite()
       setError(null)
       showSuccess(`Deleted ${idsToDelete.length} item${idsToDelete.length !== 1 ? 's' : ''}`)
     } catch (error) {
@@ -948,7 +956,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
                       summary={<GroupedItemSummary />}
                     >
                       {/* Render individual items in the expanded group */}
-                      <ul className="divide-y divide-gray-200 rounded-lg overflow-hidden list-none p-0 m-0">
+                      <ul className="divide-y divide-gray-200 rounded-lg overflow-visible list-none p-0 m-0">
                         {groupItems.map((item, itemIndex) => (
                           <InventoryItemRow
                             key={item.itemId}

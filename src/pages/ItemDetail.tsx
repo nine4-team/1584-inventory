@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { ArrowLeft, Bookmark, QrCode, Trash2, Edit, FileText, ImagePlus, ChevronDown, Copy, X } from 'lucide-react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
@@ -20,6 +20,7 @@ import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { projectItemEdit, projectItems, projectTransactionDetail } from '@/utils/routes'
 import { Combobox } from '@/components/ui/Combobox'
 import { supabase } from '@/services/supabase'
+import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 
 export default function ItemDetail({ itemId: propItemId, projectId: propProjectId, onClose }: { itemId?: string; projectId?: string; onClose?: () => void } = {}) {
   const { id, projectId: routeProjectId, itemId } = useParams<{ id?: string; projectId?: string; itemId?: string }>()
@@ -440,6 +441,24 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
     }
   }
 
+  const itemProjectId = item?.projectId ?? null
+  const derivedRealtimeProjectId = useMemo(() => {
+    if (projectId) return projectId
+    return itemProjectId
+  }, [projectId, itemProjectId])
+
+  const { refreshCollections: refreshRealtimeCollections } = useProjectRealtime(derivedRealtimeProjectId)
+  const refreshRealtimeAfterWrite = useCallback(
+    () => {
+      if (!derivedRealtimeProjectId) return Promise.resolve()
+      return refreshRealtimeCollections()
+        .catch(err => {
+          console.debug('ItemDetail: realtime refresh failed', err)
+        })
+    },
+    [derivedRealtimeProjectId, refreshRealtimeCollections]
+  )
+
   const handleDeleteItem = async () => {
     if (!item || !currentAccountId) return
 
@@ -449,6 +468,7 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
 
     try {
       await unifiedItemsService.deleteItem(currentAccountId, item.itemId)
+      await refreshRealtimeAfterWrite()
       if (isBusinessInventoryItem) {
         navigate('/business-inventory')
       } else if (projectId) {

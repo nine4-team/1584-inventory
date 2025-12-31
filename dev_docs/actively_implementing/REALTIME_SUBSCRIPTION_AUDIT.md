@@ -14,7 +14,7 @@
 ## Current Architecture (High-Level)
 1. `ProjectRealtimeProvider` (mounted in `App.tsx`) owns all Supabase realtime channels for the active account. Any route that calls `useProjectRealtime(projectId)` increments a reference count so the provider keeps the project’s `project`, `transactions`, `items`, and lineage subscriptions alive even when the original owner unmounts.
 2. `ProjectLayout`, transaction/detail views, invoice + summary pages, and business-inventory routes consume provider snapshots instead of wiring their own listeners. They call the provider’s `refreshProject` / `refreshCollections` helpers for deterministic refetches after heavy writes or reconnect events.
-3. Write-heavy flows (duplicate/merge handlers, uploads, deletes) now invoke the provider refresh helpers immediately after Supabase writes to guarantee UI convergence even when realtime payloads lag.
+3. Write-heavy transaction flows (duplicate/merge handlers, uploads, deletes) now invoke the provider refresh helpers immediately after Supabase writes; item-level delete paths still need the same treatment (see Findings + Remediation).
 4. `SyncStatus` + `useRealtimeConnectionStatus` continue to monitor socket health, while the provider exposes channel counts so we can warn operators whenever active channels exist but the Supabase socket is reconnecting.
 5. The custom service worker delegates `sync-operations` events to any active client, which then runs `operationQueue.processQueue()` and reports completion back via `PROCESS_OPERATION_QUEUE_RESULT`.
 
@@ -31,6 +31,14 @@
    ```360:394:src/services/operationQueue.ts```  
    ```1:220:src/services/serviceWorker.ts```
 
+## Remediation — December 31, 2025
+1. **Resolved — Transaction delete ghosts on detail views.** After deleting a transaction, `TransactionDetail` now awaits `refreshRealtimeAfterWrite(true)` before navigation so the provider snapshot (and every routed consumer) drops the row immediately, even if realtime payloads lag.  
+   ```558:567:src/pages/TransactionDetail.tsx```
+2. **Outstanding — Item detail deletes bypass the provider.** The standalone `ItemDetail` screen deletes and navigates away without calling `refreshCollections`, so the originating project list still shows the removed item until Supabase emits the DELETE event.  
+   ```443:458:src/pages/ItemDetail.tsx```
+3. **Outstanding — Project inventory bulk deletes rely on eventual realtime.** `InventoryList` optimistically filters the deleted ids and assumes realtime convergence; other subscribers continue to see “ghost” rows until the DELETE payload arrives.  
+   ```489:516:src/pages/InventoryList.tsx```
+
 ## Findings (Latest)
 | # | Area | Status | Notes |
 |---|------|--------|-------|
@@ -40,6 +48,7 @@
 | 4 | `useRealtimeSubscription` unused | ✅ Resolved | Hook re-exports `useProjectRealtime`; the provider centralizes channel management. |
 | 5 | Background sync placeholder | ✅ Resolved | Service worker now asks the foreground queue to process pending operations and reports completion back. |
 | 6 | Lineage per-item realtime channels exceed limits | ❌ Open | Inventory + detail views spawn a Supabase channel per item, quickly tripping `ChannelRateLimitReached` / `ClientJoinRateLimitReached` errors so lineage updates never arrive. |
+| 7 | Item/inventory deletes skip provider refresh | ❌ Open | Item detail + `InventoryList` deletes navigate/optimistically filter without calling `refreshCollections`, so “ghost” rows persist until realtime catches up. |
 
 ## Regression: Lineage subscriptions overwhelm Supabase limits
 - **Impact:** Inventory, business inventory, and detail screens loop over visible items and call `lineageService.subscribeToItemLineageForItem` for each row. Every call spins up a brand-new Supabase channel and immediately subscribes, so opening a list of 40–60 items attempts 40–60 concurrent joins. Supabase enforces ~200 channels per socket and ~10 joins/sec, triggering `ChannelRateLimitReached` and `ClientJoinRateLimitReached` errors. Once the limit is hit, no lineage callbacks fire and UI state lags indefinitely.
@@ -58,6 +67,7 @@ The original realtime design assumed `ProjectLayout` would stay mounted for all 
 5. **Shared lineage bus:** Replace per-item Supabase subscriptions with an account-scoped channel that multiplexes lineage events to registered listeners, preventing rate-limit errors and simplifying teardown.
 
 ## Next Steps
+- Hook item-detail and project-inventory delete handlers into the provider refresh helpers so deletes converge instantly like the transaction flows.
 - Persist per-project telemetry (channel counts, last refresh timestamps, last disconnect reason) on the provider snapshots and surface them inside `SyncStatus` / `NetworkStatus`.
 - Refactor invoice/client-summary/property-management views to consume provider snapshots instead of making redundant Supabase fetches.
 - Add Vitest coverage for multi-project reference counting and teardown (simulate two tabs registering/releasing the same project).
@@ -87,6 +97,8 @@ The original realtime design assumed `ProjectLayout` would stay mounted for all 
   ```49:77:src/pages/ProjectInvoice.tsx```  
   ```23:40:src/pages/PropertyManagementSummary.tsx```  
   ```26:43:src/pages/ClientSummary.tsx```
+- `TransactionDetail` delete handler now awaits `refreshRealtimeAfterWrite(true)` so removing a transaction immediately updates the shared snapshot and list views even if realtime payloads lag.  
+  ```558:567:src/pages/TransactionDetail.tsx```
 - `TransactionItemsList` hardens duplicate + merge flows by invoking the provider’s `refreshCollections` fallback immediately after Supabase writes.  
   ```409:757:src/components/TransactionItemsList.tsx```
 - `public/sw-custom.js` now forwards background sync events to any active client, which in turn calls `operationQueue.processQueue()` and reports completion back to the service worker.  
