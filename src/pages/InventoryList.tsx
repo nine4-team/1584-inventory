@@ -870,7 +870,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
                       </div>
 
                       {/* Right column: Text content */}
-                      <ContextLink to={projectId ? `/item/${firstItem.itemId}?project=${projectId}` : `/item/${firstItem.itemId}`} className="flex-1 min-w-0">
+                      <div className="flex-1 min-w-0">
                         <div>
                           <h4 className="text-sm font-medium text-gray-900 mb-1">
                             {firstItem.description || 'No description'}
@@ -921,7 +921,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
                             )}
                           </div>
                         </div>
-                      </ContextLink>
+                      </div>
                     </>
                   )
                 }

@@ -311,8 +311,10 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
         ...entry,
         items: itemsData,
       }))
+      const now = Date.now()
       applyTelemetryPatch(projectId, {
-        lastItemsRefreshAt: Date.now(),
+        lastItemsRefreshAt: now,
+        lastCollectionsRefreshAt: now,
       })
       return itemsData
     },
@@ -327,8 +329,10 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
         ...entry,
         transactions: transactionsData,
       }))
+      const now = Date.now()
       applyTelemetryPatch(projectId, {
-        lastTransactionsRefreshAt: Date.now(),
+        lastTransactionsRefreshAt: now,
+        lastCollectionsRefreshAt: now,
       })
       return transactionsData
     },
@@ -384,6 +388,11 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
             ...entry,
             transactions: updatedTransactions,
           }))
+          const now = Date.now()
+          applyTelemetryPatch(projectId, {
+            lastTransactionsRefreshAt: now,
+            lastCollectionsRefreshAt: now,
+          })
           attachLineageSubscriptions(projectId, updatedTransactions)
         },
         transactionsSeed,
@@ -400,6 +409,11 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
             ...entry,
             items: updatedItems,
           }))
+          const now = Date.now()
+          applyTelemetryPatch(projectId, {
+            lastItemsRefreshAt: now,
+            lastCollectionsRefreshAt: now,
+          })
         },
         itemsSeed,
         {

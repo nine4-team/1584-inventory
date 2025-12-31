@@ -972,7 +972,7 @@ export default function BusinessInventory() {
                             </div>
 
                             {/* Right column: Text content */}
-                            <ContextLink to={`/business-inventory/${firstItem.itemId}`} className="flex-1 min-w-0">
+                            <div className="flex-1 min-w-0">
                               <div>
                                 <h4 className="text-sm font-medium text-gray-900 mb-1">
                                   {firstItem.description || 'No description'}
@@ -984,16 +984,21 @@ export default function BusinessInventory() {
                                     {firstItem.sku && <span className="font-medium">SKU: {firstItem.sku}</span>}
                                     {(firstItem.sku || transactionDisplayInfo || firstItem.source) && <span className="mx-2 text-gray-400">•</span>}
                                     {transactionDisplayInfo ? (
-                                      <span className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors">
+                                      <span
+                                        className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors cursor-pointer hover:underline"
+                                        title={`View transaction: ${transactionDisplayInfo.title}`}
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          if (transactionRoute) {
+                                            window.location.href = buildContextUrl(
+                                              transactionRoute.path,
+                                              transactionRoute.projectId ? { project: transactionRoute.projectId } : undefined
+                                            )
+                                          }
+                                        }}
+                                      >
                                         <Receipt className="h-3 w-3 mr-1" />
-                                        <ContextLink
-                                          to={transactionRoute ? buildContextUrl(transactionRoute.path, transactionRoute.projectId ? { project: transactionRoute.projectId } : undefined) : ''}
-                                          className="hover:underline font-medium"
-                                          title={`View transaction: ${transactionDisplayInfo.title}`}
-                                          onClick={(e) => e.stopPropagation()}
-                                        >
-                                          {transactionDisplayInfo.title} {transactionDisplayInfo.amount}
-                                        </ContextLink>
+                                        {transactionDisplayInfo.title} {transactionDisplayInfo.amount}
                                       </span>
                                     ) : (
                                       firstItem.source && <span className="text-xs font-medium text-gray-600">{firstItem.source}</span>
@@ -1006,7 +1011,7 @@ export default function BusinessInventory() {
                                   )}
                                 </div>
                               </div>
-                            </ContextLink>
+                            </div>
                           </>
                         )
                       }

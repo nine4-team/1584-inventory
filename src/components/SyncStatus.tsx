@@ -9,10 +9,9 @@ export function SyncStatus() {
   const [queueLength, setQueueLength] = useState(0)
   const [isSyncing, setIsSyncing] = useState(false)
   const [lastSyncError, setLastSyncError] = useState<string | null>(null)
-  const [refreshingProjects, setRefreshingProjects] = useState<Set<string>>(new Set())
-  const { hasActiveRealtimeChannels, isRealtimeConnected, realtimeStatus } = useRealtimeConnectionStatus()
-  const { snapshots, refreshCollections } = useProjectRealtimeOverview()
-  const shouldShowRealtimeWarning = hasActiveRealtimeChannels && !isRealtimeConnected
+  const { hasActiveRealtimeChannels, isRealtimeConnected, realtimeStatus, lastDisconnectedAt } =
+    useRealtimeConnectionStatus()
+  const { snapshots } = useProjectRealtimeOverview()
   const now = Date.now()
 
   const telemetryEntries = useMemo(() => {
@@ -39,35 +38,15 @@ export function SyncStatus() {
     return staleCollections || disconnectWarning
   })
 
-  const formatRelative = (timestamp: number | null) => {
-    if (!timestamp) return 'never'
-    const diff = Math.max(0, now - timestamp)
-    if (diff < 1000) return 'just now'
-    if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`
-    const minutes = Math.round(diff / 60_000)
-    if (minutes < 60) return `${minutes}m ago`
-    const hours = Math.round(minutes / 60)
-    return `${hours}h ago`
-  }
-
-  const handleProjectRefresh = async (projectId: string) => {
-    setRefreshingProjects(prev => {
-      const next = new Set(prev)
-      next.add(projectId)
-      return next
-    })
-    try {
-      await refreshCollections(projectId, { includeProject: true })
-    } catch (error) {
-      console.debug('SyncStatus: manual project refresh failed', error)
-    } finally {
-      setRefreshingProjects(prev => {
-        const next = new Set(prev)
-        next.delete(projectId)
-        return next
+  useEffect(() => {
+    if (projectsNeedingAttention.length > 0) {
+      console.warn('[SyncStatus] Realtime channels inactive', {
+        projects: projectsNeedingAttention,
+        realtimeStatus,
+        lastDisconnectedAt,
       })
     }
-  }
+  }, [projectsNeedingAttention, realtimeStatus, lastDisconnectedAt])
 
   useEffect(() => {
     const updateStatus = () => {
@@ -108,17 +87,15 @@ export function SyncStatus() {
     }
   }
 
-  if (queueLength === 0 && !isSyncing && !lastSyncError && !shouldShowRealtimeWarning) {
+  if (queueLength === 0 && !isSyncing && !lastSyncError) {
     return null // Nothing to show
   }
 
-  type StatusVariant = 'error' | 'realtime' | 'syncing' | 'queue' | 'success'
+  type StatusVariant = 'error' | 'syncing' | 'queue' | 'success'
   let statusVariant: StatusVariant = 'success'
 
   if (lastSyncError) {
     statusVariant = 'error'
-  } else if (shouldShowRealtimeWarning) {
-    statusVariant = 'realtime'
   } else if (isSyncing) {
     statusVariant = 'syncing'
   } else if (queueLength > 0) {
@@ -127,7 +104,6 @@ export function SyncStatus() {
 
   const variantClasses: Record<StatusVariant, string> = {
     error: 'bg-red-50 text-red-800 border border-red-200',
-    realtime: 'bg-orange-50 text-orange-900 border border-orange-200',
     syncing: 'bg-blue-50 text-blue-800 border border-blue-200',
     queue: 'bg-yellow-50 text-yellow-800 border border-yellow-200',
     success: 'bg-green-50 text-green-800 border border-green-200',
@@ -153,7 +129,6 @@ export function SyncStatus() {
   const statusIcon = (() => {
     switch (statusVariant) {
       case 'error':
-      case 'realtime':
         return <AlertCircle className="w-4 h-4" />
       case 'syncing':
         return <RefreshCw className="w-4 h-4 animate-spin" />
@@ -181,38 +156,6 @@ export function SyncStatus() {
             </button>
           )}
         </div>
-
-        {shouldShowRealtimeWarning && projectsNeedingAttention.length > 0 && (
-          <div className="mt-2 text-xs">
-            <p className="font-semibold mb-1">Realtime paused on:</p>
-            <ul className="space-y-1">
-              {projectsNeedingAttention.map(({ projectId, projectName, telemetry }) => (
-                <li key={projectId} className="flex items-center gap-2 justify-between">
-                  <span className="flex-1">
-                    <span>
-                      {projectName ?? projectId} · {telemetry?.activeChannelCount ?? 0} chan /
-                      {' '}
-                      {telemetry?.lineageSubscriptionCount ?? 0} lineage
-                    </span>
-                    <span className="block text-[11px] text-orange-900/80">
-                      Last refresh {formatRelative(telemetry?.lastCollectionsRefreshAt ?? null)}
-                      {telemetry?.lastDisconnectReason && telemetry.lastDisconnectAt
-                        ? ` · ${telemetry.lastDisconnectReason}`
-                        : ''}
-                    </span>
-                  </span>
-                  <button
-                    onClick={() => handleProjectRefresh(projectId)}
-                    disabled={refreshingProjects.has(projectId)}
-                    className="px-2 py-0.5 text-[11px] bg-white/80 border rounded hover:bg-white disabled:opacity-60"
-                  >
-                    Refresh
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
       </div>
     </div>
   )

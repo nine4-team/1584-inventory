@@ -326,7 +326,7 @@ export default function ItemPreviewCard({
 
                   {/* Dropdown menu */}
                   {openDispositionMenu === itemId && (
-                    <div className="disposition-menu absolute top-full right-0 mt-1 w-32 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                    <div className="disposition-menu absolute top-full right-0 mt-1 w-32 bg-white border border-gray-200 rounded-md shadow-lg z-20">
                       <div className="py-1">
                         {DISPOSITION_OPTIONS.map((disposition) => (
                           <button

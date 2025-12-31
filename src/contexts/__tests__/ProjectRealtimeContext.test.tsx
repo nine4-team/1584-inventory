@@ -79,6 +79,16 @@ const TestConsumer = ({ projectId }: { projectId: string }) => {
   )
 }
 
+const TelemetryConsumer = ({ projectId }: { projectId: string }) => {
+  const { telemetry } = useProjectRealtime(projectId)
+  return (
+    <div>
+      <span data-testid="last-collections">{telemetry.lastCollectionsRefreshAt ?? ''}</span>
+      <span data-testid="last-transactions">{telemetry.lastTransactionsRefreshAt ?? ''}</span>
+    </div>
+  )
+}
+
 describe('ProjectRealtimeProvider', () => {
   let transactionCallback: ((txs: any[]) => void) | null = null
   let transactionUnsubscribe: ReturnType<typeof vi.fn>
@@ -125,6 +135,36 @@ describe('ProjectRealtimeProvider', () => {
     await waitFor(() => {
       expect(screen.getByTestId('transaction-count')).toHaveTextContent('2')
     })
+  })
+
+  it('updates telemetry timestamps when realtime payloads arrive', async () => {
+    let currentTime = new Date('2025-01-01T00:00:00Z').getTime()
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => currentTime)
+
+    try {
+      render(
+        <ProjectRealtimeProvider>
+          <TelemetryConsumer projectId="project-1" />
+        </ProjectRealtimeProvider>
+      )
+
+      const initial = Number((await screen.findByTestId('last-collections')).textContent)
+      expect(initial).toBeGreaterThan(0)
+
+      currentTime = new Date('2025-01-01T00:05:00Z').getTime()
+      const newTransaction = { ...baseTransaction, transactionId: 'tx-2' }
+      act(() => {
+        transactionCallback?.([baseTransaction, newTransaction])
+      })
+
+      await waitFor(() => {
+        const updated = Number(screen.getByTestId('last-collections').textContent)
+        expect(updated).toBeGreaterThan(initial)
+        expect(Number(screen.getByTestId('last-transactions').textContent)).toBe(updated)
+      })
+    } finally {
+      nowSpy.mockRestore()
+    }
   })
 
   it('refreshes collections when fallback refresh is invoked', async () => {

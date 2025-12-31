@@ -29,6 +29,7 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
   const [searchParams] = useSearchParams()
   const [item, setItem] = useState<Item | null>(null)
   const [projectName, setProjectName] = useState<string>('')
+  const [isLoadingItem, setIsLoadingItem] = useState<boolean>(false)
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<number>(0)
   const [openDispositionMenu, setOpenDispositionMenu] = useState(false)
@@ -85,6 +86,7 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
       console.log('🔄 ItemDetail useEffect triggered. itemId:', actualItemId, 'id:', id, 'projectId:', projectId)
 
       if (actualItemId) {
+        setIsLoadingItem(true)
         try {
           if (!currentAccountId) return
           
@@ -126,6 +128,9 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
         } catch (error) {
           console.error('❌ Failed to fetch item:', error)
           setItem(null)
+        }
+        finally {
+          setIsLoadingItem(false)
         }
       } else {
         console.log('⚠️ No itemId or id in URL parameters')
@@ -603,10 +608,44 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
     }
   }
 
+  if (isLoadingItem) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center space-x-4">
+          {onClose ? (
+            <button
+              onClick={(e) => {
+                e.preventDefault()
+                onClose()
+              }}
+              className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
+            >
+              <ArrowLeft className="h-4 w-4 mr-1" />
+              Back
+            </button>
+          ) : (
+            <ContextBackLink
+              fallback={backDestination}
+              className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
+            >
+              <ArrowLeft className="h-4 w-4 mr-1" />
+              Back
+            </ContextBackLink>
+          )}
+        </div>
+        <div className="bg-white shadow rounded-lg">
+          <div className="px-4 py-5 sm:p-6">
+            <p className="text-gray-500">Loading item...</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   if (!item) {
     return (
       <div className="space-y-6">
-      <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-4">
           {onClose ? (
             <button
               onClick={(e) => {
