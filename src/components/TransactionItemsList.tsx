@@ -10,8 +10,10 @@ import { unifiedItemsService, integrationService } from '@/services/inventorySer
 import { getTransactionDisplayInfo, getTransactionRoute } from '@/utils/transactionDisplayUtils'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
+import { useToast } from '@/components/ui/ToastContext'
 import ContextLink from './ContextLink'
 import type { ItemDisposition } from '@/types'
+import ItemPreviewCard, { type ItemPreviewData } from './items/ItemPreviewCard'
 
 interface TransactionItemsListProps {
   items: TransactionItemFormData[]
@@ -24,9 +26,10 @@ interface TransactionItemsListProps {
   totalAmount?: string // Optional total amount to display instead of calculating from items
   showSelectionControls?: boolean // Whether to show select/merge buttons and checkboxes
   onDeleteItem?: (itemId: string, item: TransactionItemFormData) => Promise<boolean | void> | boolean | void
+  getItemLink?: (item: TransactionItemFormData) => string | null
 }
 
-export default function TransactionItemsList({ items, onItemsChange, onAddItem, onUpdateItem, projectId, projectName, onImageFilesChange, totalAmount, showSelectionControls = true, onDeleteItem }: TransactionItemsListProps) {
+export default function TransactionItemsList({ items, onItemsChange, onAddItem, onUpdateItem, projectId, projectName, onImageFilesChange, totalAmount, showSelectionControls = true, onDeleteItem, getItemLink }: TransactionItemsListProps) {
   const [isAddingItem, setIsAddingItem] = useState(false)
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set())
@@ -34,10 +37,13 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
   const [mergeMasterId, setMergeMasterId] = useState<string | null>(null)
   const [openDispositionMenu, setOpenDispositionMenu] = useState<string | null>(null)
   const [deletingItemIds, setDeletingItemIds] = useState<Set<string>>(new Set())
+  const [bookmarkedItemIds, setBookmarkedItemIds] = useState<Set<string>>(new Set())
+  const [duplicatingItemIds, setDuplicatingItemIds] = useState<Set<string>>(new Set())
   const [transactionDisplayInfos, setTransactionDisplayInfos] = useState<Map<string, {title: string, amount: string} | null>>(new Map())
   const [transactionRoutes, setTransactionRoutes] = useState<Map<string, {path: string, projectId: string | null}>>(new Map())
   const { currentAccountId } = useAccount()
   const { buildContextUrl } = useNavigationContext()
+  const { showError, showSuccess } = useToast()
 
   useEffect(() => {
     setSelectedItemIds(prev => {
@@ -233,6 +239,73 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
     })
   }
 
+  const handleDuplicateItem = async (itemId: string) => {
+    const itemToDuplicate = items.find(item => item.id === itemId)
+    if (!itemToDuplicate) return
+
+    const isPersistedItem = Boolean(itemToDuplicate.transactionId)
+
+    if (isPersistedItem) {
+      if (!currentAccountId || !projectId) {
+        console.error('TransactionItemsList: missing account or project context for duplication', { currentAccountId, projectId })
+        showError('Cannot duplicate item: missing project context.')
+        return
+      }
+
+      if (duplicatingItemIds.has(itemId)) {
+        return
+      }
+
+      setDuplicatingItemIds(prev => {
+        const next = new Set(prev)
+        next.add(itemId)
+        return next
+      })
+
+      try {
+        await unifiedItemsService.duplicateItem(currentAccountId, projectId, itemId)
+        showSuccess('Item duplicated.')
+        onItemsChange([...items])
+      } catch (error) {
+        console.error('TransactionItemsList: failed to duplicate persisted item', error)
+        showError('Failed to duplicate item. Please try again.')
+      } finally {
+        setDuplicatingItemIds(prev => {
+          const next = new Set(prev)
+          next.delete(itemId)
+          return next
+        })
+      }
+      return
+    }
+
+    // Create a duplicate with a new ID
+    const duplicatedItem: TransactionItemFormData = {
+      ...itemToDuplicate,
+      id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      // Clear any transaction-specific fields that shouldn't be duplicated
+      transactionId: itemToDuplicate.transactionId, // Keep the same transaction ID
+    }
+
+    // Find the index of the original item and insert the duplicate right after it
+    const originalIndex = items.findIndex(item => item.id === itemId)
+    const newItems = [...items]
+    newItems.splice(originalIndex + 1, 0, duplicatedItem)
+    onItemsChange(newItems)
+  }
+
+  const handleBookmarkItem = (itemId: string) => {
+    setBookmarkedItemIds(prev => {
+      const next = new Set(prev)
+      if (next.has(itemId)) {
+        next.delete(itemId)
+      } else {
+        next.add(itemId)
+      }
+      return next
+    })
+  }
+
   const getItemToEdit = () => {
     if (!editingItemId) return null
     return items.find(item => item.id === editingItemId) || null
@@ -354,152 +427,49 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
     setSelectedItemIds(newSelected)
   }
 
-  const renderTransactionItem = (item: TransactionItemFormData, groupIndex: number, groupSize?: number, itemIndexInGroup?: number) => (
-    <div key={item.id} className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-      <div className="flex items-start gap-4">
-        {showSelectionControls && (
-          <div className="pt-1">
-            <input
-              type="checkbox"
-              aria-label={`Select ${item.description || `item ${groupIndex + 1}`}`}
-              checked={selectedItemIds.has(item.id)}
-              onChange={(e) => toggleItemSelection(item.id, e.target.checked)}
-              className="h-4 w-4 text-primary-600 border-gray-300 rounded"
-            />
-          </div>
-        )}
-        {item.images && item.images.length > 0 && (
-          <div className="mr-4">
-            <img
-              src={item.images.find(img => img.isPrimary)?.url || item.images[0].url}
-              alt={item.images[0].alt || item.images[0].fileName}
-              className="h-12 w-12 rounded-md object-cover border border-gray-200"
-            />
-          </div>
-        )}
-        <div className="flex-1">
-          <div className="flex items-center space-x-4 mb-2">
-            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
-              Item {groupIndex + 1}
-              {groupSize && groupSize > 1 && itemIndexInGroup && (
-                <span className="ml-1 text-primary-600">×{itemIndexInGroup}/{groupSize}</span>
-              )}
-            </span>
-            <span className="text-sm text-gray-500">
-              {formatCurrency(item.projectPrice || item.purchasePrice || '')}
-            </span>
-            {transactionDisplayInfos.get(item.id) && (
-              <span className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors ml-2">
-                <Receipt className="h-3 w-3 mr-1" />
-                <ContextLink
-                  to={buildContextUrl(
-                    transactionRoutes.get(item.id)!.path,
-                    transactionRoutes.get(item.id)!.projectId ? { project: transactionRoutes.get(item.id)!.projectId! } : undefined
-                  )}
-                  className="hover:underline font-medium"
-                  title={`View transaction: ${transactionDisplayInfos.get(item.id)?.title}`}
-                >
-                  {transactionDisplayInfos.get(item.id)?.title} {transactionDisplayInfos.get(item.id)?.amount}
-                </ContextLink>
-              </span>
-            )}
-          </div>
+  const renderTransactionItem = (item: TransactionItemFormData, groupIndex: number, groupSize?: number, itemIndexInGroup?: number) => {
+    // Convert TransactionItemFormData to ItemPreviewData
+    const previewData: ItemPreviewData = {
+      id: item.id,
+      description: item.description,
+      sku: item.sku,
+      purchasePrice: item.purchasePrice,
+      projectPrice: item.projectPrice,
+      marketValue: item.marketValue,
+      disposition: item.disposition,
+      images: item.images,
+      transactionId: item.transactionId,
+      space: item.space,
+      notes: item.notes,
+      bookmark: bookmarkedItemIds.has(item.id)
+    }
 
-          <h4 className="text-sm font-medium text-gray-900 mb-1">
-            {item.description || 'No description'}
-          </h4>
+    const resolvedItemLink = getItemLink?.(item) ?? undefined
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
-            {item.sku && (
-              <div>
-                <span className="font-medium">SKU:</span> {item.sku}
-              </div>
-            )}
-            {item.marketValue && (
-              <div>
-                <span className="font-medium">Market Value:</span> ${item.marketValue}
-              </div>
-            )}
-          </div>
-
-          {item.notes && (
-            <div className="mt-2 text-sm text-gray-600">
-              <span className="font-medium">Notes:</span> {item.notes}
-            </div>
-          )}
-
-        </div>
-
-        <div className="flex items-center space-x-2 ml-auto">
-          <div className="relative">
-            <span
-              onClick={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                toggleDispositionMenu(item.id)
-              }}
-              className={`disposition-badge ${getDispositionBadgeClasses(item.disposition)}`}
-              title="Change disposition"
-            >
-              {displayDispositionLabel(item.disposition) || 'Not Set'}
-              <ChevronDown className="h-3 w-3 ml-1" />
-            </span>
-
-            {/* Dropdown menu */}
-            {openDispositionMenu === item.id && (
-              <div className="disposition-menu absolute top-full right-0 mt-1 w-32 bg-white border border-gray-200 rounded-md shadow-lg z-10">
-                <div className="py-1">
-                  {DISPOSITION_OPTIONS.map((disposition) => (
-                    <button
-                      key={disposition}
-                      onClick={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        updateDisposition(item.id, disposition)
-                      }}
-                      className={`block w-full text-left px-3 py-2 text-xs hover:bg-gray-50 ${
-                        dispositionsEqual(item.disposition, disposition) ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
-                      }`}
-                    >
-                      {displayDispositionLabel(disposition)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <button
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              handleEditItem(item.id)
-            }}
-            className="text-primary-600 hover:text-primary-900 p-1"
-            title="Edit item"
-          >
-            <Edit className="h-4 w-4" />
-          </button>
-          <button
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              void handleDeleteItem(item.id)
-            }}
-            className="text-red-600 hover:text-red-900 p-1 disabled:opacity-50 disabled:cursor-not-allowed"
-            title={deletingItemIds.has(item.id) ? 'Deleting item' : 'Delete item'}
-            disabled={deletingItemIds.has(item.id)}
-          >
-            {deletingItemIds.has(item.id) ? (
-              <span className="text-xs font-medium">...</span>
-            ) : (
-              <X className="h-4 w-4" />
-            )}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
+    return (
+      <ItemPreviewCard
+        key={item.id}
+        item={previewData}
+        isSelected={selectedItemIds.has(item.id)}
+        onSelect={toggleItemSelection}
+        showCheckbox={showSelectionControls}
+        onBookmark={handleBookmarkItem}
+        onDuplicate={handleDuplicateItem}
+        onEdit={(href) => handleEditItem(item.id)}
+        onDispositionUpdate={updateDisposition}
+        uploadingImages={new Set()}
+        openDispositionMenu={openDispositionMenu}
+        setOpenDispositionMenu={setOpenDispositionMenu}
+        deletingItemIds={deletingItemIds}
+        context="transaction"
+        projectId={projectId}
+        itemLink={resolvedItemLink}
+        duplicateCount={groupSize}
+        duplicateIndex={itemIndexInGroup}
+        itemNumber={groupIndex + 1}
+      />
+    )
+  }
 
   const closeMergeDialog = () => {
     setIsMergeDialogOpen(false)
@@ -689,26 +659,12 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
                     </h4>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
-                      {/* SKU and conditional transaction/source display */}
-                      <div>
-                        {firstItem.sku && <span className="font-medium">SKU: {firstItem.sku}</span>}
-                        {(firstItem.sku || firstItemTransactionInfo || firstItem.source) && <span className="mx-2 text-gray-400">•</span>}
-                        {firstItemTransactionInfo && firstItemTransactionRoute ? (
-                          <span className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors">
-                            <Receipt className="h-3 w-3 mr-1" />
-                            <ContextLink
-                              to={buildContextUrl(firstItemTransactionRoute.path, firstItemTransactionRoute.projectId ? { project: firstItemTransactionRoute.projectId } : undefined)}
-                              className="hover:underline font-medium"
-                              title={`View transaction: ${firstItemTransactionInfo.title}`}
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              {firstItemTransactionInfo.title} {firstItemTransactionInfo.amount}
-                            </ContextLink>
-                          </span>
-                        ) : (
-                          firstItem.source && <span className="text-xs font-medium text-gray-600">{firstItem.source}</span>
-                        )}
-                      </div>
+                      {/* SKU display (no transaction link in transaction context) */}
+                      {firstItem.sku && (
+                        <div>
+                          <span className="font-medium">SKU: {firstItem.sku}</span>
+                        </div>
+                      )}
                       {firstItem.marketValue && (
                         <div>
                           <span className="font-medium">Market Value:</span> ${firstItem.marketValue}
