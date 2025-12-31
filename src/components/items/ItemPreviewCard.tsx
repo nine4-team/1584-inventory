@@ -45,6 +45,7 @@ interface ItemPreviewCardProps {
   deletingItemIds?: Set<string>
   // Navigation
   itemLink?: string // Custom link for item detail page
+  onClick?: () => void // Custom click handler for item detail
   editLink?: string // Custom link for edit page
   context?: 'project' | 'businessInventory' | 'transaction'
   projectId?: string
@@ -74,6 +75,7 @@ export default function ItemPreviewCard({
   setOpenDispositionMenu,
   deletingItemIds = new Set(),
   itemLink,
+  onClick,
   editLink,
   context,
   projectId,
@@ -208,8 +210,8 @@ export default function ItemPreviewCard({
 
   const hasActions = showBookmark || showEdit || showDuplicate || showDelete || showDisposition
 
-  return (
-    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+  const cardContent = (
+    <>
       {/* Top row: checkbox, item count, price, controls */}
       {(showCheckbox || duplicateCount || priceLabel || hasActions) && (
         <div className="flex items-center gap-4 mb-3">
@@ -220,7 +222,11 @@ export default function ItemPreviewCard({
               aria-label={`Select ${item.description || `item ${itemNumber || ''}`}`}
               className="h-4 w-4 text-primary-600 border-gray-300 rounded"
               checked={isSelected}
-              onChange={(e) => onSelect(itemId, e.target.checked)}
+              onChange={(e) => {
+                e.stopPropagation()
+                onSelect(itemId, e.target.checked)
+              }}
+              onClick={(e) => e.stopPropagation()}
             />
           )}
 
@@ -378,37 +384,58 @@ export default function ItemPreviewCard({
           )}
         </div>
 
-        {/* Right column: All text content wrapped in link */}
-        {(itemLink || item.itemId || item.id) && getItemLink() !== '#' ? (
-          <ContextLink to={getItemLink()} className="flex-1 min-w-0">
-            <ItemContent
-              item={item}
-              showTransactionLink={showTransactionLink}
-              transactionDisplayInfo={transactionDisplayInfo}
-              transactionRoute={transactionRoute}
-              isLoadingTransaction={isLoadingTransaction}
-              locationValue={showLocation ? locationValue : undefined}
-              showNotes={showNotes}
-              formatCurrency={formatCurrency}
-              buildContextUrl={buildContextUrl}
-            />
-          </ContextLink>
-        ) : (
-          <div className="flex-1 min-w-0">
-            <ItemContent
-              item={item}
-              showTransactionLink={showTransactionLink}
-              transactionDisplayInfo={transactionDisplayInfo}
-              transactionRoute={transactionRoute}
-              isLoadingTransaction={isLoadingTransaction}
-              locationValue={showLocation ? locationValue : undefined}
-              showNotes={showNotes}
-              formatCurrency={formatCurrency}
-              buildContextUrl={buildContextUrl}
-            />
-          </div>
-        )}
+        {/* Right column: All text content */}
+        <div className="flex-1 min-w-0">
+          <ItemContent
+            item={item}
+            showTransactionLink={showTransactionLink}
+            transactionDisplayInfo={transactionDisplayInfo}
+            transactionRoute={transactionRoute}
+            isLoadingTransaction={isLoadingTransaction}
+            locationValue={showLocation ? locationValue : undefined}
+            showNotes={showNotes}
+            formatCurrency={formatCurrency}
+            buildContextUrl={buildContextUrl}
+          />
+        </div>
       </div>
+    </>
+  )
+
+  // Determine if we should wrap in a link
+  const shouldWrapInLink = !onClick && (itemLink || item.itemId || item.id) && getItemLink() !== '#'
+  const linkUrl = shouldWrapInLink ? getItemLink() : undefined
+
+  if (onClick) {
+    return (
+      <div 
+        className="bg-gray-50 border border-gray-200 rounded-lg p-4 cursor-pointer hover:bg-gray-100 transition-colors"
+        onClick={(e) => {
+          // Only trigger onClick if the click wasn't on an interactive element
+          const target = e.target as HTMLElement
+          if (!target.closest('button') && !target.closest('a') && !target.closest('input[type="checkbox"]')) {
+            onClick()
+          }
+        }}
+      >
+        {cardContent}
+      </div>
+    )
+  }
+
+  if (shouldWrapInLink && linkUrl) {
+    return (
+      <ContextLink to={linkUrl} className="block">
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 hover:bg-gray-100 transition-colors">
+          {cardContent}
+        </div>
+      </ContextLink>
+    )
+  }
+
+  return (
+    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+      {cardContent}
     </div>
   )
 }

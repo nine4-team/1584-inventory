@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { ArrowLeft, Bookmark, QrCode, Trash2, Edit, FileText, ImagePlus, ChevronDown, Copy } from 'lucide-react'
+import { ArrowLeft, Bookmark, QrCode, Trash2, Edit, FileText, ImagePlus, ChevronDown, Copy, X } from 'lucide-react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import ContextBackLink from '@/components/ContextBackLink'
@@ -19,7 +19,7 @@ import { useAccount } from '@/contexts/AccountContext'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { projectItemEdit, projectItems, projectTransactionDetail } from '@/utils/routes'
 
-export default function ItemDetail() {
+export default function ItemDetail({ itemId: propItemId, projectId: propProjectId, onClose }: { itemId?: string; projectId?: string; onClose?: () => void } = {}) {
   const { id, projectId: routeProjectId, itemId } = useParams<{ id?: string; projectId?: string; itemId?: string }>()
   const ENABLE_QR = import.meta.env.VITE_ENABLE_QR === 'true'
   const navigate = useStackedNavigate()
@@ -36,12 +36,12 @@ export default function ItemDetail() {
   const stickyRef = useRef<HTMLDivElement>(null)
 
   // Use itemId if available (from /project/:projectId/items/:itemId), otherwise use id (from /item/:id)
-  const actualItemId = itemId || id
+  const actualItemId = propItemId || itemId || id
 
   const queryProjectId = searchParams.get('project') || ''
 
   // Determine project context from nested routes or search params (legacy deep links)
-  const projectId = routeProjectId || queryProjectId || ''
+  const projectId = propProjectId || routeProjectId || queryProjectId || ''
 
   // Check if this is a business inventory item (no project context)
   const isBusinessInventoryItem = !projectId && location.pathname.startsWith('/business-inventory/')
@@ -474,13 +474,26 @@ export default function ItemDetail() {
     return (
       <div className="space-y-6">
       <div className="flex items-center space-x-4">
-          <ContextBackLink
-            fallback={backDestination}
-            className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
-          >
-            <ArrowLeft className="h-4 w-4 mr-1" />
-            Back
-          </ContextBackLink>
+          {onClose ? (
+            <button
+              onClick={(e) => {
+                e.preventDefault()
+                onClose()
+              }}
+              className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
+            >
+              <ArrowLeft className="h-4 w-4 mr-1" />
+              Back
+            </button>
+          ) : (
+            <ContextBackLink
+              fallback={backDestination}
+              className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
+            >
+              <ArrowLeft className="h-4 w-4 mr-1" />
+              Back
+            </ContextBackLink>
+          )}
         </div>
         <div className="bg-white shadow rounded-lg">
           <div className="px-4 py-5 sm:p-6">
@@ -493,287 +506,323 @@ export default function ItemDetail() {
     )
   }
 
+  const content = (
+    <div className="space-y-4">
+
+      {/* Item information */}
+      <div className="bg-white shadow rounded-lg overflow-hidden">
+        <div className="px-6 py-4">
+          <h1 className="text-xl font-semibold text-gray-900">{item.description}</h1>
+        </div>
+
+        {/* Item Images */}
+        <div className="px-6 py-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-lg font-medium text-gray-900 flex items-center">
+              <ImagePlus className="h-5 w-5 mr-2" />
+              Item Images
+            </h3>
+            <button
+              onClick={handleSelectFromGallery}
+              disabled={isUploadingImage}
+              className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+              title="Add images from gallery or camera"
+            >
+              <ImagePlus className="h-3 w-3 mr-1" />
+              {isUploadingImage
+                ? uploadProgress > 0 && uploadProgress < 100
+                  ? `Uploading... ${Math.round(uploadProgress)}%`
+                  : 'Uploading...'
+                : 'Add Images'
+              }
+            </button>
+          </div>
+
+          {item.images && item.images.length > 0 ? (
+            <ImagePreview
+              images={item.images}
+              onRemoveImage={handleRemoveImage}
+              onSetPrimary={handleSetPrimaryImage}
+              maxImages={5}
+              size="md"
+              showControls={true}
+            />
+          ) : (
+            <div className="text-center py-8">
+              <ImagePlus className="mx-auto h-8 w-8 text-gray-400" />
+              <h3 className="mt-2 text-sm font-medium text-gray-900">No images uploaded</h3>
+            </div>
+          )}
+        </div>
+
+        {/* Item Details */}
+        <div className="px-6 py-4">
+          <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
+            <FileText className="h-5 w-5 mr-2" />
+            Item Details
+          </h3>
+          <dl className="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-3">
+            {item.source && (
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Source</dt>
+                <dd className="mt-1 text-sm text-gray-900 capitalize">{item.source}</dd>
+              </div>
+            )}
+
+            {item.sku && (
+              <div>
+                <dt className="text-sm font-medium text-gray-500">SKU</dt>
+                <dd className="mt-1 text-sm text-gray-900">{item.sku}</dd>
+              </div>
+            )}
+
+            {item.space && (
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Space</dt>
+                <dd className="mt-1 text-sm text-gray-900">{item.space}</dd>
+              </div>
+            )}
+
+            {item.purchasePrice && (
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Purchase Price</dt>
+                <p className="text-xs text-gray-500 mt-1">What the item was purchased for</p>
+                <dd className="mt-1 text-sm text-gray-900 font-medium">{formatCurrency(item.purchasePrice)}</dd>
+                {item.taxAmountPurchasePrice !== undefined && (
+                  <p className="mt-1 text-sm text-gray-600">Tax on purchase: {formatCurrency(item.taxAmountPurchasePrice)}</p>
+                )}
+              </div>
+            )}
+
+            {item.projectPrice && (
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Project Price</dt>
+                <p className="text-xs text-gray-500 mt-1">What the client is charged</p>
+                <dd className="mt-1 text-sm text-gray-900 font-medium">{formatCurrency(item.projectPrice)}</dd>
+                {item.taxAmountProjectPrice !== undefined && (
+                  <p className="mt-1 text-sm text-gray-600">Tax on project: {formatCurrency(item.taxAmountProjectPrice)}</p>
+                )}
+              </div>
+            )}
+
+            {item.marketValue && (
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Market Value</dt>
+                <p className="text-xs text-gray-500 mt-1">The fair market value of the item</p>
+                <dd className="mt-1 text-sm text-gray-900 font-medium">${item.marketValue}</dd>
+              </div>
+            )}
+            {item.taxRatePct !== undefined && (
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Tax Rate</dt>
+                <p className="text-xs text-gray-500 mt-1">Applied tax rate for this item</p>
+                <dd className="mt-1 text-sm text-gray-900 font-medium">{item.taxRatePct}%</dd>
+              </div>
+            )}
+
+            {item.paymentMethod && (
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Payment Method</dt>
+                <dd className="mt-1 text-sm text-gray-900">{item.paymentMethod}</dd>
+              </div>
+            )}
+
+            {item.notes && item.notes !== 'No notes' && (
+              <div className="sm:col-span-3">
+                <dt className="text-sm font-medium text-gray-500">Notes</dt>
+                <dd className="mt-1 text-sm text-gray-900 bg-gray-50 p-3 rounded-md">{item.notes}</dd>
+              </div>
+            )}
+          </dl>
+        </div>
+
+
+        {/* Metadata */}
+        <div className="px-6 py-4 bg-gray-50">
+          <div className="relative">
+            <dl className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-3">
+              <div>
+                <dt className="text-xs font-medium text-gray-500 uppercase tracking-wide">Project</dt>
+                <dd className="mt-1 text-sm text-gray-900">{projectName}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-medium text-gray-500 uppercase tracking-wide">Created</dt>
+                <dd className="mt-1 text-sm text-gray-900">{formatDate(item.dateCreated)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-medium text-gray-500 uppercase tracking-wide">Transaction</dt>
+                <dd className="mt-1 text-sm text-gray-900">
+                  <ContextLink
+                    to={isBusinessInventoryItem
+                      ? buildContextUrl(`/business-inventory/transaction/${item.transactionId}`)
+                      : projectId
+                        ? buildContextUrl(projectTransactionDetail(projectId, item.transactionId))
+                        : item.projectId
+                          ? buildContextUrl(projectTransactionDetail(item.projectId, item.transactionId))
+                          : buildContextUrl('/projects')
+                    }
+                    className="text-primary-600 hover:text-primary-800 underline"
+                  >
+                    {item.transactionId
+                      ? item.transactionId.startsWith('INV_PURCHASE')
+                        ? 'INV_PURCHASE...'
+                        : (item.transactionId.length > 12 ? `${item.transactionId.slice(0, 12)}...` : item.transactionId)
+                      : ''}
+                  </ContextLink>
+                </dd>
+              </div>
+            {/* Lineage breadcrumb (compact) */}
+            {item.itemId && (
+              <div className="sm:col-span-3 mt-2">
+                <ItemLineageBreadcrumb itemId={item.itemId} />
+              </div>
+            )}
+            </dl>
+
+            {/* Delete button in lower right corner */}
+            <div className="absolute bottom-0 right-0">
+              <button
+                onClick={handleDeleteItem}
+                className="inline-flex items-center justify-center p-2 border border-red-300 text-sm font-medium rounded-md text-red-700 bg-red-50 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                title="Delete Item"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+
   return (
     <div className="space-y-6">
-      {/* Sticky Header Controls */}
-      <div
-        ref={stickyRef}
-        className={`sticky top-0 bg-gray-50 z-10 px-4 py-2 ${isSticky ? 'border-b border-gray-200' : ''}`}
-      >
-        {/* Back button and controls row */}
-        <div className="flex items-center justify-between gap-4">
-          <ContextBackLink
-            fallback={backDestination}
-            className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
+      {onClose ? (
+        <div className="bg-white border border-gray-200 rounded-lg p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-medium text-gray-900">Item</h3>
+            <button
+              onClick={(e) => {
+                e.preventDefault()
+                onClose()
+              }}
+              className="text-gray-400 hover:text-gray-600"
+              type="button"
+              aria-label="Close item view"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+          {content}
+        </div>
+      ) : (
+        <>
+          <div
+            ref={stickyRef}
+            className={`sticky top-0 bg-gray-50 z-10 px-4 py-2 ${isSticky ? 'border-b border-gray-200' : ''}`}
           >
-            <ArrowLeft className="h-4 w-4 mr-1" />
-            Back
-          </ContextBackLink>
-
-          <div className="flex flex-wrap gap-2 sm:space-x-2">
-            <button
-              onClick={toggleBookmark}
-              className={`inline-flex items-center justify-center p-2 border text-sm font-medium rounded-md ${
-                item.bookmark
-                  ? 'border-red-300 text-red-700 bg-red-50 hover:bg-red-100'
-                  : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
-              } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500`}
-              title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
-            >
-              <Bookmark className="h-4 w-4" fill={item.bookmark ? 'currentColor' : 'none'} />
-            </button>
-
-            <ContextLink
-              to={isBusinessInventoryItem
-                ? buildContextUrl(`/business-inventory/${item.itemId}/edit`)
-              : projectId
-                ? buildContextUrl(projectItemEdit(projectId, item.itemId), { project: projectId })
-                : buildContextUrl(`/business-inventory/${item.itemId}/edit`)
-              }
-              className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-              title="Edit Item"
-            >
-              <Edit className="h-4 w-4" />
-            </ContextLink>
-
-            <button
-              onClick={() => duplicateItem(item.itemId)}
-              className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-              title="Duplicate Item"
-            >
-              <Copy className="h-4 w-4" />
-            </button>
-
-            {ENABLE_QR && (
-              <button
-                className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                onClick={() => window.open(`/qr-image/${item.qrKey}`, '_blank')}
-                title="View QR Code"
-              >
-                <QrCode className="h-4 w-4" />
-              </button>
-            )}
-
-
-            <div className="relative">
-              <span
-                onClick={toggleDispositionMenu}
-                className={`disposition-badge ${getDispositionBadgeClasses(item.disposition)}`}
-              >
-                {displayDispositionLabel(item.disposition)}
-                <ChevronDown className="h-3 w-3 ml-1" />
-              </span>
-
-              {/* Dropdown menu */}
-              {openDispositionMenu && (
-                <div className="disposition-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-20">
-                  <div className="py-2">
-                    {DISPOSITION_OPTIONS.map((disposition) => (
-                      <button
-                        key={disposition}
-                        onClick={() => updateDisposition(disposition)}
-                        className={`block w-full text-left px-4 py-3 text-sm hover:bg-gray-50 ${
-                          dispositionsEqual(item.disposition, disposition) ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
-                        }`}
-                      >
-                        {displayDispositionLabel(disposition)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Content */}
-      <div className="space-y-4">
-
-        {/* Item information */}
-        <div className="bg-white shadow rounded-lg overflow-hidden">
-          <div className="px-6 py-4">
-            <h1 className="text-xl font-semibold text-gray-900">{item.description}</h1>
-          </div>
-
-          {/* Item Images */}
-          <div className="px-6 py-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-lg font-medium text-gray-900 flex items-center">
-                <ImagePlus className="h-5 w-5 mr-2" />
-                Item Images
-              </h3>
-              <button
-                onClick={handleSelectFromGallery}
-                disabled={isUploadingImage}
-                className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
-                title="Add images from gallery or camera"
-              >
-                <ImagePlus className="h-3 w-3 mr-1" />
-                {isUploadingImage
-                  ? uploadProgress > 0 && uploadProgress < 100
-                    ? `Uploading... ${Math.round(uploadProgress)}%`
-                    : 'Uploading...'
-                  : 'Add Images'
-                }
-              </button>
-            </div>
-
-            {item.images && item.images.length > 0 ? (
-              <ImagePreview
-                images={item.images}
-                onRemoveImage={handleRemoveImage}
-                onSetPrimary={handleSetPrimaryImage}
-                maxImages={5}
-                size="md"
-                showControls={true}
-              />
-            ) : (
-              <div className="text-center py-8">
-                <ImagePlus className="mx-auto h-8 w-8 text-gray-400" />
-                <h3 className="mt-2 text-sm font-medium text-gray-900">No images uploaded</h3>
-              </div>
-            )}
-          </div>
-
-          {/* Item Details */}
-          <div className="px-6 py-4">
-            <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
-              <FileText className="h-5 w-5 mr-2" />
-              Item Details
-            </h3>
-            <dl className="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-3">
-              {item.source && (
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Source</dt>
-                  <dd className="mt-1 text-sm text-gray-900 capitalize">{item.source}</dd>
-                </div>
-              )}
-
-              {item.sku && (
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">SKU</dt>
-                  <dd className="mt-1 text-sm text-gray-900">{item.sku}</dd>
-                </div>
-              )}
-
-              {item.space && (
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Space</dt>
-                  <dd className="mt-1 text-sm text-gray-900">{item.space}</dd>
-                </div>
-              )}
-
-              {item.purchasePrice && (
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Purchase Price</dt>
-                  <p className="text-xs text-gray-500 mt-1">What the item was purchased for</p>
-                  <dd className="mt-1 text-sm text-gray-900 font-medium">{formatCurrency(item.purchasePrice)}</dd>
-                  {item.taxAmountPurchasePrice !== undefined && (
-                    <p className="mt-1 text-sm text-gray-600">Tax on purchase: {formatCurrency(item.taxAmountPurchasePrice)}</p>
-                  )}
-                </div>
-              )}
-
-              {item.projectPrice && (
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Project Price</dt>
-                  <p className="text-xs text-gray-500 mt-1">What the client is charged</p>
-                  <dd className="mt-1 text-sm text-gray-900 font-medium">{formatCurrency(item.projectPrice)}</dd>
-                  {item.taxAmountProjectPrice !== undefined && (
-                    <p className="mt-1 text-sm text-gray-600">Tax on project: {formatCurrency(item.taxAmountProjectPrice)}</p>
-                  )}
-                </div>
-              )}
-
-              {item.marketValue && (
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Market Value</dt>
-                  <p className="text-xs text-gray-500 mt-1">The fair market value of the item</p>
-                  <dd className="mt-1 text-sm text-gray-900 font-medium">${item.marketValue}</dd>
-                </div>
-              )}
-              {item.taxRatePct !== undefined && (
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Tax Rate</dt>
-                  <p className="text-xs text-gray-500 mt-1">Applied tax rate for this item</p>
-                  <dd className="mt-1 text-sm text-gray-900 font-medium">{item.taxRatePct}%</dd>
-                </div>
-              )}
-
-              {item.paymentMethod && (
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Payment Method</dt>
-                  <dd className="mt-1 text-sm text-gray-900">{item.paymentMethod}</dd>
-                </div>
-              )}
-
-              {item.notes && item.notes !== 'No notes' && (
-                <div className="sm:col-span-3">
-                  <dt className="text-sm font-medium text-gray-500">Notes</dt>
-                  <dd className="mt-1 text-sm text-gray-900 bg-gray-50 p-3 rounded-md">{item.notes}</dd>
-                </div>
-              )}
-            </dl>
-          </div>
-
-
-          {/* Metadata */}
-          <div className="px-6 py-4 bg-gray-50">
-            <div className="relative">
-              <dl className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-3">
-                <div>
-                  <dt className="text-xs font-medium text-gray-500 uppercase tracking-wide">Project</dt>
-                  <dd className="mt-1 text-sm text-gray-900">{projectName}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs font-medium text-gray-500 uppercase tracking-wide">Created</dt>
-                  <dd className="mt-1 text-sm text-gray-900">{formatDate(item.dateCreated)}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs font-medium text-gray-500 uppercase tracking-wide">Transaction</dt>
-                  <dd className="mt-1 text-sm text-gray-900">
-                    <ContextLink
-                      to={isBusinessInventoryItem
-                        ? buildContextUrl(`/business-inventory/transaction/${item.transactionId}`)
-                        : projectId
-                          ? buildContextUrl(projectTransactionDetail(projectId, item.transactionId))
-                          : item.projectId
-                            ? buildContextUrl(projectTransactionDetail(item.projectId, item.transactionId))
-                            : buildContextUrl('/projects')
-                      }
-                      className="text-primary-600 hover:text-primary-800 underline"
-                    >
-                      {item.transactionId
-                        ? item.transactionId.startsWith('INV_PURCHASE')
-                          ? 'INV_PURCHASE...'
-                          : (item.transactionId.length > 12 ? `${item.transactionId.slice(0, 12)}...` : item.transactionId)
-                        : ''}
-                    </ContextLink>
-                  </dd>
-                </div>
-              {/* Lineage breadcrumb (compact) */}
-              {item.itemId && (
-                <div className="sm:col-span-3 mt-2">
-                  <ItemLineageBreadcrumb itemId={item.itemId} />
-                </div>
-              )}
-              </dl>
-
-              {/* Delete button in lower right corner */}
-              <div className="absolute bottom-0 right-0">
+            {/* Back button and controls row */}
+            <div className="flex items-center justify-between gap-4">
+              {onClose ? (
                 <button
-                  onClick={handleDeleteItem}
-                  className="inline-flex items-center justify-center p-2 border border-red-300 text-sm font-medium rounded-md text-red-700 bg-red-50 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-                  title="Delete Item"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    onClose()
+                  }}
+                  className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <ArrowLeft className="h-4 w-4 mr-1" />
+                  Back
                 </button>
+              ) : (
+                <ContextBackLink
+                  fallback={backDestination}
+                  className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
+                >
+                  <ArrowLeft className="h-4 w-4 mr-1" />
+                  Back
+                </ContextBackLink>
+              )}
+
+              <div className="flex flex-wrap gap-2 sm:space-x-2">
+                <button
+                  onClick={toggleBookmark}
+                  className={`inline-flex items-center justify-center p-2 border text-sm font-medium rounded-md ${
+                    item.bookmark
+                      ? 'border-red-300 text-red-700 bg-red-50 hover:bg-red-100'
+                      : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
+                  } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500`}
+                  title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
+                >
+                  <Bookmark className="h-4 w-4" fill={item.bookmark ? 'currentColor' : 'none'} />
+                </button>
+
+                <ContextLink
+                  to={isBusinessInventoryItem
+                    ? buildContextUrl(`/business-inventory/${item.itemId}/edit`)
+                  : projectId
+                    ? buildContextUrl(projectItemEdit(projectId, item.itemId), { project: projectId })
+                    : buildContextUrl(`/business-inventory/${item.itemId}/edit`)
+                  }
+                  className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                  title="Edit Item"
+                >
+                  <Edit className="h-4 w-4" />
+                </ContextLink>
+
+                <button
+                  onClick={() => duplicateItem(item.itemId)}
+                  className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                  title="Duplicate Item"
+                >
+                  <Copy className="h-4 w-4" />
+                </button>
+
+                {ENABLE_QR && (
+                  <button
+                    className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                    onClick={() => window.open(`/qr-image/${item.qrKey}`, '_blank')}
+                    title="View QR Code"
+                  >
+                    <QrCode className="h-4 w-4" />
+                  </button>
+                )}
+
+
+                <div className="relative">
+                  <span
+                    onClick={toggleDispositionMenu}
+                    className={`disposition-badge ${getDispositionBadgeClasses(item.disposition)}`}
+                  >
+                    {displayDispositionLabel(item.disposition)}
+                    <ChevronDown className="h-3 w-3 ml-1" />
+                  </span>
+
+                  {/* Dropdown menu */}
+                  {openDispositionMenu && (
+                    <div className="disposition-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-20">
+                      <div className="py-2">
+                        {DISPOSITION_OPTIONS.map((disposition) => (
+                          <button
+                            key={disposition}
+                            onClick={() => updateDisposition(disposition)}
+                            className={`block w-full text-left px-4 py-3 text-sm hover:bg-gray-50 ${
+                              dispositionsEqual(item.disposition, disposition) ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
+                            }`}
+                          >
+                            {displayDispositionLabel(disposition)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      </div>
+          {content}
+        </>
+      )}
     </div>
   )
 }

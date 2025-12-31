@@ -2,15 +2,16 @@ import { useEffect, useMemo, useState } from 'react'
 import { Edit, X, Plus, GitMerge, ChevronDown, Receipt, Camera } from 'lucide-react'
 import { TransactionItemFormData } from '@/types'
 import TransactionItemForm from './TransactionItemForm'
+import ItemDetail from '@/pages/ItemDetail'
 import { normalizeMoneyToTwoDecimalString } from '@/utils/money'
 import { getTransactionFormGroupKey } from '@/utils/itemGrouping'
 import CollapsedDuplicateGroup from './ui/CollapsedDuplicateGroup'
 import { normalizeDisposition, displayDispositionLabel, DISPOSITION_OPTIONS, dispositionsEqual } from '@/utils/dispositionUtils'
 import { unifiedItemsService, integrationService } from '@/services/inventoryService'
 import { getTransactionDisplayInfo, getTransactionRoute } from '@/utils/transactionDisplayUtils'
+import { projectItemDetail } from '@/utils/routes'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
-import { useToast } from '@/components/ui/ToastContext'
 import ContextLink from './ContextLink'
 import type { ItemDisposition } from '@/types'
 import ItemPreviewCard, { type ItemPreviewData } from './items/ItemPreviewCard'
@@ -26,24 +27,22 @@ interface TransactionItemsListProps {
   totalAmount?: string // Optional total amount to display instead of calculating from items
   showSelectionControls?: boolean // Whether to show select/merge buttons and checkboxes
   onDeleteItem?: (itemId: string, item: TransactionItemFormData) => Promise<boolean | void> | boolean | void
-  getItemLink?: (item: TransactionItemFormData) => string | null
 }
 
-export default function TransactionItemsList({ items, onItemsChange, onAddItem, onUpdateItem, projectId, projectName, onImageFilesChange, totalAmount, showSelectionControls = true, onDeleteItem, getItemLink }: TransactionItemsListProps) {
+export default function TransactionItemsList({ items, onItemsChange, onAddItem, onUpdateItem, projectId, projectName, onImageFilesChange, totalAmount, showSelectionControls = true, onDeleteItem }: TransactionItemsListProps) {
   const [isAddingItem, setIsAddingItem] = useState(false)
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
+  const [viewingItemId, setViewingItemId] = useState<string | null>(null)
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set())
   const [isMergeDialogOpen, setIsMergeDialogOpen] = useState(false)
   const [mergeMasterId, setMergeMasterId] = useState<string | null>(null)
   const [openDispositionMenu, setOpenDispositionMenu] = useState<string | null>(null)
   const [deletingItemIds, setDeletingItemIds] = useState<Set<string>>(new Set())
   const [bookmarkedItemIds, setBookmarkedItemIds] = useState<Set<string>>(new Set())
-  const [duplicatingItemIds, setDuplicatingItemIds] = useState<Set<string>>(new Set())
   const [transactionDisplayInfos, setTransactionDisplayInfos] = useState<Map<string, {title: string, amount: string} | null>>(new Map())
   const [transactionRoutes, setTransactionRoutes] = useState<Map<string, {path: string, projectId: string | null}>>(new Map())
   const { currentAccountId } = useAccount()
   const { buildContextUrl } = useNavigationContext()
-  const { showError, showSuccess } = useToast()
 
   useEffect(() => {
     setSelectedItemIds(prev => {
@@ -239,45 +238,9 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
     })
   }
 
-  const handleDuplicateItem = async (itemId: string) => {
+  const handleDuplicateItem = (itemId: string) => {
     const itemToDuplicate = items.find(item => item.id === itemId)
     if (!itemToDuplicate) return
-
-    const isPersistedItem = Boolean(itemToDuplicate.transactionId)
-
-    if (isPersistedItem) {
-      if (!currentAccountId || !projectId) {
-        console.error('TransactionItemsList: missing account or project context for duplication', { currentAccountId, projectId })
-        showError('Cannot duplicate item: missing project context.')
-        return
-      }
-
-      if (duplicatingItemIds.has(itemId)) {
-        return
-      }
-
-      setDuplicatingItemIds(prev => {
-        const next = new Set(prev)
-        next.add(itemId)
-        return next
-      })
-
-      try {
-        await unifiedItemsService.duplicateItem(currentAccountId, projectId, itemId)
-        showSuccess('Item duplicated.')
-        onItemsChange([...items])
-      } catch (error) {
-        console.error('TransactionItemsList: failed to duplicate persisted item', error)
-        showError('Failed to duplicate item. Please try again.')
-      } finally {
-        setDuplicatingItemIds(prev => {
-          const next = new Set(prev)
-          next.delete(itemId)
-          return next
-        })
-      }
-      return
-    }
 
     // Create a duplicate with a new ID
     const duplicatedItem: TransactionItemFormData = {
@@ -444,7 +407,8 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
       bookmark: bookmarkedItemIds.has(item.id)
     }
 
-    const resolvedItemLink = getItemLink?.(item) ?? undefined
+    // Determine if item is persisted (has a real UUID, not a temp ID starting with 'item-')
+    const isPersisted = item.id && !item.id.toString().startsWith('item-')
 
     return (
       <ItemPreviewCard
@@ -456,6 +420,7 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
         onBookmark={handleBookmarkItem}
         onDuplicate={handleDuplicateItem}
         onEdit={(href) => handleEditItem(item.id)}
+        onClick={isPersisted ? () => setViewingItemId(item.id) : undefined}
         onDispositionUpdate={updateDisposition}
         uploadingImages={new Set()}
         openDispositionMenu={openDispositionMenu}
@@ -463,7 +428,6 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
         deletingItemIds={deletingItemIds}
         context="transaction"
         projectId={projectId}
-        itemLink={resolvedItemLink}
         duplicateCount={groupSize}
         duplicateIndex={itemIndexInGroup}
         itemNumber={groupIndex + 1}
@@ -562,6 +526,16 @@ export default function TransactionItemsList({ items, onItemsChange, onAddItem, 
         projectId={projectId}
         projectName={projectName}
         onImageFilesChange={onImageFilesChange}
+      />
+    )
+  }
+
+  if (viewingItemId) {
+    return (
+      <ItemDetail
+        itemId={viewingItemId}
+        projectId={projectId}
+        onClose={() => setViewingItemId(null)}
       />
     )
   }

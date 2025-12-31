@@ -1,5 +1,5 @@
 import { ArrowLeft, Edit, Trash2, Image as ImageIcon, Package } from 'lucide-react'
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import ImageGallery from '@/components/ui/ImageGallery'
 import { TransactionImagePreview } from '@/components/ui/ImagePreview'
 import { useParams } from 'react-router-dom'
@@ -62,7 +62,6 @@ const buildDisplayItems = (items: Item[], movedOutItemIds: Set<string>): Display
     images: item.images || [],
     taxAmountPurchasePrice: item.taxAmountPurchasePrice,
     taxAmountProjectPrice: item.taxAmountProjectPrice,
-    transactionId: item.transactionId || undefined,
     _latestTransactionId: item.latestTransactionId,
     _transactionId: item.transactionId || undefined,
     _projectId: item.projectId ?? null,
@@ -142,25 +141,6 @@ export default function TransactionDetail() {
   const { inTransaction: itemsInTransaction, movedOut: itemsMovedOut } = useMemo(() => {
     return splitItemsByMovement(items as DisplayTransactionItem[], transactionId)
   }, [items, transactionId])
-  const transactionProjectId = transaction?.projectId
-  const resolveItemLink = useCallback(
-    (item: TransactionItemFormData) => {
-      const persistedId = (item.id || '').trim()
-      if (!persistedId || persistedId.startsWith('item-')) {
-        return null
-      }
-
-      const displayItem = item as DisplayTransactionItem
-      const owningProjectId = displayItem._projectId || projectId || transactionProjectId
-
-      if (owningProjectId) {
-        return projectItemDetail(owningProjectId, persistedId)
-      }
-
-      return `/item/${persistedId}`
-    },
-    [projectId, transactionProjectId]
-  )
   const [isAddingItem, setIsAddingItem] = useState(false)
   const { showError, showSuccess } = useToast()
   const { buildContextUrl, getBackDestination } = useNavigationContext()
@@ -1269,7 +1249,6 @@ export default function TransactionDetail() {
                     projectName={project?.name}
                     onImageFilesChange={handleImageFilesChange}
                     onDeleteItem={handleDeletePersistedItem}
-                    getItemLink={resolveItemLink}
                   />
                 </div>
               )}
@@ -1294,7 +1273,6 @@ export default function TransactionDetail() {
                       onImageFilesChange={handleImageFilesChange}
                       onDeleteItem={handleDeletePersistedItem}
                       showSelectionControls={false}
-                      getItemLink={resolveItemLink}
                     />
                   </div>
                 </div>
