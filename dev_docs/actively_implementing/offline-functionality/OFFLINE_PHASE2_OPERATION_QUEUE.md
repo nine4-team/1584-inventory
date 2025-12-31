@@ -313,70 +313,53 @@ export const operationQueue = new OperationQueue()
 
 ## Step 2: Background Sync Service Worker
 
-### Update `/public/sw.js` (your service worker file)
+### Update `/public/sw-custom.js` (service worker bridge)
+
+The production service worker now delegates **all** Background Sync events to whichever foreground tab is currently in focus. That tab already owns the IndexedDB-aware queue logic, so we avoid duplicating queue code inside the worker and get better insight/telemetry in the UI. The worker:
+
+1. Listens for `'sync'` events tagged `sync-operations`.
+2. Broadcasts a `PROCESS_OPERATION_QUEUE` message to every controlled client.
+3. Waits for a matching `PROCESS_OPERATION_QUEUE_RESULT` response before resolving the sync event (with a timeout to reject hung tabs).
 
 ```javascript
-// Register background sync
-self.addEventListener('sync', event => {
+// Excerpt from public/sw-custom.js
+self.addEventListener('sync', (event) => {
   if (event.tag === 'sync-operations') {
-    event.waitUntil(syncOperations())
+    event.waitUntil(forwardQueueWorkToClients())
   }
 })
 
-async function syncOperations() {
-  try {
-    // Import the operation queue logic
-    const { operationQueue } = await import('./operationQueue.js')
+async function forwardQueueWorkToClients() {
+  const clients = await self.clients.matchAll({ includeUncontrolled: false })
 
-    // Process all queued operations
-    await operationQueue.processQueue()
-
-    // Notify the app that sync is complete
-    self.clients.matchAll().then(clients => {
-      clients.forEach(client => {
-        client.postMessage({
-          type: 'SYNC_COMPLETE',
-          success: true
-        })
-      })
-    })
-  } catch (error) {
-    console.error('Background sync failed:', error)
-
-    self.clients.matchAll().then(clients => {
-      clients.forEach(client => {
-        client.postMessage({
-          type: 'SYNC_COMPLETE',
-          success: false,
-          error: error.message
-        })
-      })
-    })
+  if (clients.length === 0) {
+    // Nothing to do — foreground will retry when a tab opens.
+    return
   }
+
+  const resultPromise = new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('queue timeout')), 5000)
+
+    const handleMessage = (event) => {
+      if (event.data?.type === 'PROCESS_OPERATION_QUEUE_RESULT') {
+        clearTimeout(timeout)
+        self.removeEventListener('message', handleMessage)
+        return event.data.success ? resolve(true) : reject(new Error(event.data.error || 'queue failed'))
+      }
+    }
+
+    self.addEventListener('message', handleMessage)
+  })
+
+  clients.forEach((client) => {
+    client.postMessage({ type: 'PROCESS_OPERATION_QUEUE' })
+  })
+
+  await resultPromise
 }
-
-// Handle messages from the main thread
-self.addEventListener('message', event => {
-  if (event.data && event.data.type === 'SKIP_WAITING') {
-    self.skipWaiting()
-  }
-})
 ```
 
-### Create `/public/operationQueue.js` (service worker compatible version)
-
-```javascript
-// Simplified version for service worker
-class OperationQueueWorker {
-  async processQueue() {
-    // This will be implemented to work with IndexedDB in the service worker context
-    // For now, we'll trigger a sync from the main thread
-    return true
-  }
-}
-
-const operationQueue = new OperationQueueWorker()
-```
+Foreground tabs listen for `PROCESS_OPERATION_QUEUE` and call `operationQueue.processQueue()`, then reply with `PROCESS_OPERATION_QUEUE_RESULT`. This keeps all IndexedDB access within the window context (simpler permission story) while still satisfying the Background Sync contract.
 
 ## Step 3: Optimistic Updates Integration
 
@@ -474,28 +457,37 @@ export function SyncStatus() {
   const [queueLength, setQueueLength] = useState(0)
   const [isSyncing, setIsSyncing] = useState(false)
   const [lastSyncError, setLastSyncError] = useState<string | null>(null)
+  const { socketState, hasActiveChannels } = useRealtimeConnectionStatus()
 
   useEffect(() => {
     const updateStatus = () => {
       setQueueLength(operationQueue.getQueueLength())
     }
 
-    // Update immediately
     updateStatus()
-
-    // Check periodically
     const interval = setInterval(updateStatus, 2000)
 
-    // Listen for sync complete messages from service worker
     const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'SYNC_COMPLETE') {
-        setIsSyncing(false)
-        if (!event.data.success) {
-          setLastSyncError(event.data.error || 'Sync failed')
-        } else {
-          setLastSyncError(null)
-        }
-        updateStatus()
+      if (event.data?.type === 'PROCESS_OPERATION_QUEUE') {
+        setIsSyncing(true)
+        operationQueue.processQueue().then(
+          () => {
+            setIsSyncing(false)
+            event.source?.postMessage?.({
+              type: 'PROCESS_OPERATION_QUEUE_RESULT',
+              success: true,
+            })
+          },
+          (error: Error) => {
+            setIsSyncing(false)
+            setLastSyncError(error.message)
+            event.source?.postMessage?.({
+              type: 'PROCESS_OPERATION_QUEUE_RESULT',
+              success: false,
+              error: error.message,
+            })
+          }
+        )
       }
     }
 
@@ -520,8 +512,10 @@ export function SyncStatus() {
     }
   }
 
-  if (queueLength === 0 && !isSyncing && !lastSyncError) {
-    return null // Nothing to show
+  const showRealtimeWarning = hasActiveChannels && socketState !== 'open'
+
+  if (queueLength === 0 && !isSyncing && !lastSyncError && !showRealtimeWarning) {
+    return null
   }
 
   return (
@@ -529,7 +523,7 @@ export function SyncStatus() {
       <div className={`px-4 py-2 rounded-lg shadow-lg text-sm font-medium ${
         lastSyncError
           ? 'bg-red-50 text-red-800 border border-red-200'
-          : isSyncing
+          : isSyncing || showRealtimeWarning
           ? 'bg-blue-50 text-blue-800 border border-blue-200'
           : queueLength > 0
           ? 'bg-yellow-50 text-yellow-800 border border-yellow-200'
@@ -540,7 +534,7 @@ export function SyncStatus() {
             <AlertCircle className="w-4 h-4" />
           ) : isSyncing ? (
             <RefreshCw className="w-4 h-4 animate-spin" />
-          ) : queueLength > 0 ? (
+          ) : queueLength > 0 || showRealtimeWarning ? (
             <RefreshCw className="w-4 h-4" />
           ) : (
             <CheckCircle className="w-4 h-4" />
@@ -549,12 +543,13 @@ export function SyncStatus() {
           <span>
             {lastSyncError
               ? `Sync error: ${lastSyncError}`
+              : showRealtimeWarning
+              ? 'Realtime reconnecting — keeping queue warm'
               : isSyncing
               ? 'Syncing changes...'
               : queueLength > 0
               ? `${queueLength} change${queueLength === 1 ? '' : 's'} pending`
-              : 'All changes synced'
-            }
+              : 'All changes synced'}
           </span>
 
           {queueLength > 0 && !isSyncing && (
