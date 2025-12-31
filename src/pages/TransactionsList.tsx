@@ -237,102 +237,97 @@ export default function TransactionsList({ projectId: propProjectId, transaction
 
   return (
     <div className="space-y-4">
-      {/* Header - Add Transaction button */}
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-2">
-        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+      {/* Controls - Sticky Container */}
+      <div className="sticky top-0 z-10 bg-white border-b border-gray-200 py-3 mb-2">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Add Button */}
           <ContextLink
             to={buildContextUrl(projectTransactionNew(projectId), { project: projectId })}
-            className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 transition-colors duration-200 w-full sm:w-auto"
+            className="inline-flex items-center justify-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 transition-colors duration-200 flex-shrink-0"
           >
             <Plus className="h-4 w-4 mr-2" />
-            Add Transaction
+            Add
           </ContextLink>
+
+          {/* Import Wayfair Invoice Button */}
           <ContextLink
             to={buildContextUrl(projectTransactionImport(projectId), { project: projectId })}
-            className="inline-flex items-center justify-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 transition-colors duration-200 w-full sm:w-auto"
+            className="inline-flex items-center justify-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 transition-colors duration-200 flex-shrink-0"
             title="Import a Wayfair invoice PDF"
           >
             <FileUp className="h-4 w-4 mr-2" />
             Import Wayfair Invoice
           </ContextLink>
-        </div>
-      </div>
 
-      {/* Search and Controls - Sticky Container */}
-      <div className="sticky top-0 z-10 bg-white border-b border-gray-200 pb-0 mb-2">
-        <div className="space-y-0">
-          {/* Search Bar */}
-          <div className="relative pt-2">
+          {/* Filter Button */}
+          <div className="relative flex-shrink-0">
+            <button
+              onClick={() => setShowFilterMenu(!showFilterMenu)}
+              className={`filter-button inline-flex items-center justify-center px-3 py-2 border text-sm font-medium rounded-md transition-colors duration-200 ${
+                filterMode === 'all'
+                  ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
+                  : 'border-primary-500 text-primary-600 bg-primary-50 hover:bg-primary-100'
+              }`}
+              title="Filter transactions"
+            >
+              <Filter className="h-4 w-4 mr-2" />
+              Filter
+            </button>
+
+            {/* Filter Dropdown Menu */}
+            {showFilterMenu && (
+              <div className="filter-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                <div className="py-1">
+                  <button
+                    onClick={() => {
+                      setFilterMode('all')
+                      setShowFilterMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      filterMode === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    All Transactions
+                  </button>
+                  <button
+                    onClick={() => {
+                      setFilterMode('we-owe')
+                      setShowFilterMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      filterMode === 'we-owe' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    We Owe
+                  </button>
+                  <button
+                    onClick={() => {
+                      setFilterMode('client-owes')
+                      setShowFilterMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      filterMode === 'client-owes' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    Client Owes
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Search Bar - wraps onto its own line on mobile */}
+          <div className="relative flex-1 min-w-[200px] w-full sm:w-auto">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <Search className="h-5 w-5 text-gray-400" />
             </div>
             <input
               type="text"
-              className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-base"
+              className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
               placeholder="Search transactions by source, type, or notes..."
               value={searchQuery || ''}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
-          </div>
-
-          {/* Filter Controls */}
-          <div className="flex items-center justify-end gap-4 p-3 rounded-lg">
-            {/* Filter Button */}
-            <div className="relative">
-              <button
-                onClick={() => setShowFilterMenu(!showFilterMenu)}
-                className={`filter-button inline-flex items-center justify-center px-3 py-2 border text-sm font-medium rounded-md transition-colors duration-200 ${
-                  filterMode === 'all'
-                    ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
-                    : 'border-primary-500 text-primary-600 bg-primary-50 hover:bg-primary-100'
-                }`}
-                title="Filter transactions"
-              >
-                <Filter className="h-4 w-4 mr-2" />
-                Filter
-              </button>
-
-              {/* Filter Dropdown Menu */}
-              {showFilterMenu && (
-                <div className="filter-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-10">
-                  <div className="py-1">
-                    <button
-                      onClick={() => {
-                        setFilterMode('all')
-                        setShowFilterMenu(false)
-                      }}
-                      className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                        filterMode === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                      }`}
-                    >
-                      All Transactions
-                    </button>
-                    <button
-                      onClick={() => {
-                        setFilterMode('we-owe')
-                        setShowFilterMenu(false)
-                      }}
-                      className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                        filterMode === 'we-owe' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                      }`}
-                    >
-                      We Owe
-                    </button>
-                    <button
-                      onClick={() => {
-                        setFilterMode('client-owes')
-                        setShowFilterMenu(false)
-                      }}
-                      className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                        filterMode === 'client-owes' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                      }`}
-                    >
-                      Client Owes
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
           </div>
         </div>
       </div>

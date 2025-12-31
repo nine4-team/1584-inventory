@@ -28,6 +28,7 @@ interface TransactionItemsListProps {
   showSelectionControls?: boolean // Whether to show select/merge buttons and checkboxes
   onDeleteItem?: (itemId: string, item: TransactionItemFormData) => Promise<boolean | void> | boolean | void
   enablePersistedItemFeatures?: boolean // Whether to enable bookmark/disposition features that require persisted items
+  containerId?: string // ID of the container element to track for sticky behavior
 }
 
 export default function TransactionItemsList({
@@ -41,7 +42,8 @@ export default function TransactionItemsList({
   totalAmount,
   showSelectionControls = true,
   onDeleteItem,
-  enablePersistedItemFeatures = true
+  enablePersistedItemFeatures = true,
+  containerId
 }: TransactionItemsListProps) {
   const [isAddingItem, setIsAddingItem] = useState(false)
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
@@ -59,6 +61,7 @@ export default function TransactionItemsList({
   const [showFilterMenu, setShowFilterMenu] = useState(false)
   const [sortMode, setSortMode] = useState<'alphabetical' | 'price'>('alphabetical')
   const [showSortMenu, setShowSortMenu] = useState(false)
+  const [shouldStick, setShouldStick] = useState(true)
   const { currentAccountId } = useAccount()
   const { buildContextUrl } = useNavigationContext()
 
@@ -114,6 +117,67 @@ export default function TransactionItemsList({
       return valid.size === prev.size ? prev : valid
     })
   }, [items])
+
+  // Track when transaction items container is scrolled past for sticky controls
+  useEffect(() => {
+    if (!containerId) {
+      // If no containerId, default to sticky behavior
+      setShouldStick(true)
+      return
+    }
+
+    const checkScrollPosition = () => {
+      const container = document.getElementById(containerId)
+      const sentinel = document.getElementById('transaction-items-sentinel')
+      
+      if (!container || !sentinel) {
+        // If elements don't exist, default to sticky
+        setShouldStick(true)
+        return
+      }
+
+      const containerRect = container.getBoundingClientRect()
+      const sentinelRect = sentinel.getBoundingClientRect()
+      
+      // Unstick only when the entire container (including sentinel) is scrolled past
+      // i.e., when the bottom of the sentinel is above the top of the viewport
+      const isFullyScrolledPast = sentinelRect.bottom < 0
+      setShouldStick(!isFullyScrolledPast)
+    }
+
+    // Check immediately
+    checkScrollPosition()
+
+    // Set up IntersectionObserver on the sentinel
+    const sentinel = document.getElementById('transaction-items-sentinel')
+    let observer: IntersectionObserver | null = null
+
+    if (sentinel) {
+      observer = new IntersectionObserver(
+        (entries) => {
+          checkScrollPosition()
+        },
+        {
+          root: null,
+          rootMargin: '0px',
+          threshold: 0
+        }
+      )
+      observer.observe(sentinel)
+    }
+
+    // Also listen to scroll events for more responsive updates
+    window.addEventListener('scroll', checkScrollPosition, { passive: true })
+    window.addEventListener('resize', checkScrollPosition, { passive: true })
+
+    return () => {
+      if (observer) {
+        observer.disconnect()
+      }
+      window.removeEventListener('scroll', checkScrollPosition)
+      window.removeEventListener('resize', checkScrollPosition)
+    }
+  }, [containerId])
 
   // Close menus when clicking outside
   useEffect(() => {
@@ -710,7 +774,7 @@ export default function TransactionItemsList({
   return (
     <div className="space-y-4">
       {items.length > 0 && showSelectionControls && (
-        <div className="sticky top-0 z-10 bg-white border-b border-gray-200 py-3 mb-4">
+        <div className={`z-10 bg-white border-b border-gray-200 py-3 mb-4 ${shouldStick ? 'sticky top-0' : ''}`}>
           <div className="flex flex-wrap items-center gap-3">
             {/* Select All Checkbox */}
             <label className="flex items-center cursor-pointer flex-shrink-0">
@@ -730,7 +794,7 @@ export default function TransactionItemsList({
               className="inline-flex items-center gap-1 px-3 py-2 rounded-md border border-transparent text-sm font-medium text-white bg-primary-600 hover:bg-primary-900 flex-shrink-0"
             >
               <Plus className="h-4 w-4" />
-              Add
+              Create Item
             </button>
 
             {/* Sort Button */}
@@ -935,18 +999,6 @@ export default function TransactionItemsList({
             </CollapsedDuplicateGroup>
           )
         })}
-
-        {/* Add Item Button */}
-        <div className="text-center py-8 border-2 border-dashed border-gray-300 rounded-lg">
-          <button
-            onClick={() => setIsAddingItem(true)}
-            className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-            title="Add new item"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Add Item
-          </button>
-        </div>
 
         {items.length > 0 && (
           <div className="flex justify-between items-center pt-4 border-t border-gray-200">

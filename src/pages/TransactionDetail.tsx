@@ -919,7 +919,7 @@ export default function TransactionDetail() {
       </div>
 
       {/* Transaction Details */}
-      <div className="bg-white shadow rounded-lg overflow-hidden">
+      <div className="bg-white shadow rounded-lg">
         <div className="px-6 py-6 border-b border-gray-200">
           <h1 className="text-2xl font-bold text-gray-900 leading-tight">
             {getCanonicalTransactionTitle(transaction)} - {formatCurrency(transaction.amount)}
@@ -1176,7 +1176,7 @@ export default function TransactionDetail() {
         )}
 
         {/* Transaction Items */}
-        <div className="px-6 py-6 border-t border-gray-200">
+        <div className="px-6 py-6 border-t border-gray-200" id="transaction-items-container">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-medium text-gray-900 flex items-center">
               <Package className="h-5 w-5 mr-2" />
@@ -1208,6 +1208,7 @@ export default function TransactionDetail() {
                     projectName={project?.name}
                     onImageFilesChange={handleImageFilesChange}
                     onDeleteItem={handleDeletePersistedItem}
+                    containerId="transaction-items-container"
                   />
                 </div>
               )}
@@ -1259,6 +1260,8 @@ export default function TransactionDetail() {
               onImageFilesChange={handleImageFilesChange}
             />
           )}
+          {/* Sentinel element to detect when container is scrolled past */}
+          <div id="transaction-items-sentinel" className="h-1" />
         </div>
 
         {/* Transaction Audit */}
