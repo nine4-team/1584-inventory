@@ -670,11 +670,75 @@ export default function TransactionDetail() {
     })
   }
 
-  const handleSaveItem = async (item: TransactionItemFormData) => {
+  const uploadItemImages = async (targetItemId: string, sourceItem: TransactionItemFormData) => {
+    if (!currentAccountId) return
+
+    let imageFiles = imageFilesMap.get(sourceItem.id)
+    if (!imageFiles && sourceItem.imageFiles) {
+      imageFiles = sourceItem.imageFiles
+    }
+
+    if (!imageFiles || imageFiles.length === 0) {
+      return
+    }
+
+    try {
+      const uploadedImages = await Promise.all(
+        imageFiles.map(async (file, index) => {
+          try {
+            const uploadResult = await ImageUploadService.uploadItemImage(
+              file,
+              project ? project.name : 'Unknown Project',
+              targetItemId
+            )
+
+            return {
+              url: uploadResult.url,
+              alt: file.name,
+              isPrimary: index === 0,
+              uploadedAt: new Date(),
+              fileName: file.name,
+              size: file.size,
+              mimeType: file.type
+            }
+          } catch (uploadError) {
+            console.error(`Failed to upload ${file.name}:`, uploadError)
+            return {
+              url: '',
+              alt: file.name,
+              isPrimary: false,
+              uploadedAt: new Date(),
+              fileName: file.name,
+              size: file.size,
+              mimeType: file.type
+            }
+          }
+        })
+      )
+
+      const validImages = uploadedImages.filter(img => img.url && img.url.trim() !== '')
+
+      if (validImages.length > 0) {
+        await unifiedItemsService.updateItem(currentAccountId, targetItemId, { images: validImages })
+      }
+    } catch (error) {
+      console.error('Error in image upload process:', error)
+    } finally {
+      setImageFilesMap(prev => {
+        if (!prev.has(sourceItem.id)) {
+          return prev
+        }
+        const next = new Map(prev)
+        next.delete(sourceItem.id)
+        return next
+      })
+    }
+  }
+
+  const handleCreateItem = async (item: TransactionItemFormData) => {
     if (!projectId || !transactionId || !transaction || !currentAccountId) return
 
     try {
-      // Create the item linked to the existing transaction
       const itemData = {
         ...item,
         projectId: projectId,
@@ -693,74 +757,43 @@ export default function TransactionDetail() {
         space: item.space || '',
         disposition: 'purchased'
       }
+
       const itemId = await unifiedItemsService.createItem(currentAccountId, itemData)
+      await uploadItemImages(itemId, item)
 
-      // Upload item images if any
-      // Try to get files from the map first, then fall back to item.imageFiles
-      let imageFiles = imageFilesMap.get(item.id)
-      if (!imageFiles && item.imageFiles) {
-        imageFiles = item.imageFiles
-      }
-
-      if (imageFiles && imageFiles.length > 0) {
-        try {
-          const uploadedImages = await Promise.all(
-            imageFiles.map(async (file, index) => {
-              try {
-                const uploadResult = await ImageUploadService.uploadItemImage(
-                  file,
-                  project ? project.name : 'Unknown Project',
-                  itemId
-                )
-
-                return {
-                  url: uploadResult.url,
-                  alt: file.name,
-                  isPrimary: index === 0, // First image is primary
-                  uploadedAt: new Date(),
-                  fileName: file.name,
-                  size: file.size,
-                  mimeType: file.type
-                }
-              } catch (uploadError) {
-                console.error(`Failed to upload ${file.name}:`, uploadError)
-                // Return a placeholder for failed uploads so the process continues
-                return {
-                  url: '',
-                  alt: file.name,
-                  isPrimary: false,
-                  uploadedAt: new Date(),
-                  fileName: file.name,
-                  size: file.size,
-                  mimeType: file.type
-                }
-              }
-            })
-          )
-
-          // Filter out failed uploads (empty URLs)
-          const validImages = uploadedImages.filter(img => img.url && img.url.trim() !== '')
-
-          // Update the item with uploaded images
-          if (validImages.length > 0) {
-            await unifiedItemsService.updateItem(currentAccountId, itemId, { images: validImages })
-          }
-        } catch (error) {
-          console.error('Error in image upload process:', error)
-        }
-      }
-
-      // Refresh the transaction items list
-      refreshTransactionItems()
-
-      // Reset state
+      await refreshTransactionItems()
       setIsAddingItem(false)
-      setImageFilesMap(new Map())
-
       showSuccess('Item added successfully')
     } catch (error) {
       console.error('Error adding item:', error)
       showError('Failed to add item. Please try again.')
+    }
+  }
+
+  const handleUpdateItem = async (item: TransactionItemFormData) => {
+    if (!currentAccountId) return
+
+    try {
+      const updateData = {
+        description: item.description,
+        sku: item.sku || '',
+        purchasePrice: item.purchasePrice || '',
+        projectPrice: item.projectPrice || '',
+        marketValue: item.marketValue || '',
+        notes: item.notes || '',
+        space: item.space || '',
+        taxAmountPurchasePrice: item.taxAmountPurchasePrice,
+        taxAmountProjectPrice: item.taxAmountProjectPrice
+      }
+
+      await unifiedItemsService.updateItem(currentAccountId, item.id, updateData)
+      await uploadItemImages(item.id, item)
+
+      await refreshTransactionItems()
+      showSuccess('Item updated successfully')
+    } catch (error) {
+      console.error('Error updating item:', error)
+      showError('Failed to update item. Please try again.')
     }
   }
 
@@ -1210,6 +1243,8 @@ export default function TransactionDetail() {
                       // For now, just refresh the transaction items
                       refreshTransactionItems()
                     }}
+                    onAddItem={handleCreateItem}
+                    onUpdateItem={handleUpdateItem}
                     projectId={projectId}
                     projectName={project?.name}
                     onImageFilesChange={handleImageFilesChange}
@@ -1231,10 +1266,12 @@ export default function TransactionDetail() {
                         // For now, just refresh the transaction items
                         refreshTransactionItems()
                       }}
+                      onAddItem={handleCreateItem}
+                      onUpdateItem={handleUpdateItem}
                       projectId={projectId}
                       projectName={project?.name}
                       onImageFilesChange={handleImageFilesChange}
-                    onDeleteItem={handleDeletePersistedItem}
+                      onDeleteItem={handleDeletePersistedItem}
                       showSelectionControls={false}
                     />
                   </div>
@@ -1256,7 +1293,7 @@ export default function TransactionDetail() {
             </div>
           ) : (
             <TransactionItemForm
-              onSave={handleSaveItem}
+              onSave={handleCreateItem}
               onCancel={handleCancelAddItem}
               projectId={projectId}
               projectName={project ? project.name : ''}

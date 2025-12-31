@@ -16,6 +16,8 @@ import type { ItemDisposition } from '@/types'
 interface TransactionItemsListProps {
   items: TransactionItemFormData[]
   onItemsChange: (items: TransactionItemFormData[]) => void
+  onAddItem?: (item: TransactionItemFormData) => Promise<void> | void
+  onUpdateItem?: (item: TransactionItemFormData) => Promise<void> | void
   projectId?: string
   projectName?: string
   onImageFilesChange?: (itemId: string, imageFiles: File[]) => void
@@ -24,7 +26,7 @@ interface TransactionItemsListProps {
   onDeleteItem?: (itemId: string, item: TransactionItemFormData) => Promise<boolean | void> | boolean | void
 }
 
-export default function TransactionItemsList({ items, onItemsChange, projectId, projectName, onImageFilesChange, totalAmount, showSelectionControls = true, onDeleteItem }: TransactionItemsListProps) {
+export default function TransactionItemsList({ items, onItemsChange, onAddItem, onUpdateItem, projectId, projectName, onImageFilesChange, totalAmount, showSelectionControls = true, onDeleteItem }: TransactionItemsListProps) {
   const [isAddingItem, setIsAddingItem] = useState(false)
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set())
@@ -130,25 +132,53 @@ export default function TransactionItemsList({ items, onItemsChange, projectId, 
       })
   }, [items])
 
-  const handleSaveItem = (item: TransactionItemFormData) => {
-    if (editingItemId) {
-      // Update existing item
-      const updatedItems = items.map(existingItem =>
-        existingItem.id === editingItemId ? item : existingItem
-      )
-      onItemsChange(updatedItems)
-    } else {
-      // Add new item
-      onItemsChange([...items, item])
-    }
+  const handleSaveItem = async (item: TransactionItemFormData) => {
+    const isEditing = !!editingItemId
+    const shouldDelegate = isEditing ? !!onUpdateItem : !!onAddItem
 
-    // Handle image files if they exist
-    if (item.imageFiles && item.imageFiles.length > 0 && onImageFilesChange) {
-      onImageFilesChange(item.id, item.imageFiles)
-    }
+    try {
+      if (shouldDelegate) {
+        if (isEditing) {
+          await onUpdateItem?.(item)
+        } else {
+          await onAddItem?.(item)
+        }
 
-    setIsAddingItem(false)
-    setEditingItemId(null)
+        if (item.imageFiles && item.imageFiles.length > 0 && onImageFilesChange) {
+          onImageFilesChange(item.id, item.imageFiles)
+        }
+
+        // Notify parent so it can refresh/persist as needed
+        if (isEditing) {
+          onItemsChange(items)
+        } else {
+          onItemsChange([...items, item])
+        }
+
+        setIsAddingItem(false)
+        setEditingItemId(null)
+        return
+      }
+
+      // Fallback: manage local state when no persistence callbacks are provided
+      if (isEditing) {
+        const updatedItems = items.map(existingItem =>
+          existingItem.id === editingItemId ? item : existingItem
+        )
+        onItemsChange(updatedItems)
+      } else {
+        onItemsChange([...items, item])
+      }
+
+      if (item.imageFiles && item.imageFiles.length > 0 && onImageFilesChange) {
+        onImageFilesChange(item.id, item.imageFiles)
+      }
+
+      setIsAddingItem(false)
+      setEditingItemId(null)
+    } catch (error) {
+      console.error('TransactionItemsList: failed to save item', error)
+    }
   }
 
   const handleCancelItem = () => {
