@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { ArrowLeft, FileUp, Save, Shield, Trash2 } from 'lucide-react'
 import ContextBackLink from '@/components/ContextBackLink'
 import TransactionItemsList from '@/components/TransactionItemsList'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useToast } from '@/components/ui/ToastContext'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
-import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { useAuth } from '@/contexts/AuthContext'
 import { useAccount } from '@/contexts/AccountContext'
 import { extractPdfText } from '@/utils/pdfTextExtraction'
@@ -19,6 +18,7 @@ import { extractPdfEmbeddedImages, type PdfEmbeddedImagePlacement } from '@/util
 import { COMPANY_NAME } from '@/constants/company'
 import type { ItemImage, TransactionItemFormData } from '@/types'
 import { projectTransactionDetail, projectTransactions } from '@/utils/routes'
+import { navigateToReturnToOrFallback } from '@/utils/navigationReturnTo'
 
 function getTodayIsoDate(): string {
   const today = new Date()
@@ -381,13 +381,18 @@ function createPreviewItemImageFromFile(file: File, isPrimary: boolean): ItemIma
 export default function ImportWayfairInvoice() {
   const { id, projectId: routeProjectId } = useParams<{ id?: string; projectId?: string }>()
   const resolvedProjectId = routeProjectId || id
-  const navigate = useStackedNavigate()
+  const navigate = useNavigate()
+  const location = useLocation()
   const { user, isOwner } = useAuth()
   const { currentAccountId } = useAccount()
   const { getBackDestination } = useNavigationContext()
   const { showError, showInfo, showSuccess, showWarning } = useToast()
   const activeParseRunRef = useRef(0)
   const invoiceFileInputRef = useRef<HTMLInputElement | null>(null)
+  const fallbackPath = useMemo(
+    () => (resolvedProjectId ? projectTransactions(resolvedProjectId) : '/projects'),
+    [resolvedProjectId]
+  )
 
   if (!currentAccountId && !isOwner()) {
     return (
@@ -401,9 +406,7 @@ export default function ImportWayfairInvoice() {
             You don&apos;t have permission to import transactions. Please contact an administrator if you need access.
           </p>
           <ContextBackLink
-            fallback={getBackDestination(
-              resolvedProjectId ? projectTransactions(resolvedProjectId) : '/projects'
-            )}
+            fallback={getBackDestination(fallbackPath)}
             className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700"
           >
             Back to Project
@@ -934,7 +937,11 @@ export default function ImportWayfairInvoice() {
       }
 
       showSuccess('Transaction created.')
-      navigate(projectTransactionDetail(resolvedProjectId, transactionId))
+      navigateToReturnToOrFallback(
+        navigate,
+        location,
+        projectTransactionDetail(resolvedProjectId, transactionId)
+      )
     } catch (err) {
       console.error('Failed to create transaction from Wayfair invoice:', err)
       const message = err instanceof Error ? err.message : 'Failed to create transaction. Please try again.'
@@ -974,9 +981,7 @@ export default function ImportWayfairInvoice() {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <ContextBackLink
-            fallback={getBackDestination(
-              resolvedProjectId ? projectTransactions(resolvedProjectId) : '/projects'
-            )}
+            fallback={getBackDestination(fallbackPath)}
             className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
           >
             <ArrowLeft className="h-4 w-4 mr-1" />

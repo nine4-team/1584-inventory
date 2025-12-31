@@ -19,6 +19,7 @@ import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import CategorySelect from '@/components/CategorySelect'
 import TransactionItemsList from '@/components/TransactionItemsList'
 import { projectTransactionDetail, projectTransactions } from '@/utils/routes'
+import { getReturnToFromLocation, navigateToReturnToOrFallback } from '@/utils/navigationReturnTo'
 
 export default function EditTransaction() {
   const { id, projectId: routeProjectId, transactionId } = useParams<{ id?: string; projectId?: string; transactionId: string }>()
@@ -41,10 +42,15 @@ export default function EditTransaction() {
   }, [projectId, transactionId])
 
   const handleBackNavigation = useCallback(() => {
+    const returnTo = getReturnToFromLocation(location)
+    if (returnTo) {
+      navigate(returnTo, { replace: true })
+      return
+    }
     const fallback = getBackDestination(defaultBackPath)
     const target = navigationStack.pop(location.pathname + location.search) || fallback
     navigate(target)
-  }, [defaultBackPath, getBackDestination, location.pathname, location.search, navigationStack, navigate])
+  }, [defaultBackPath, getBackDestination, location, navigationStack, navigate])
 
   // Check if user has permission to edit transactions (USER role or higher)
   if (!hasRole(UserRole.USER)) {
@@ -499,11 +505,7 @@ export default function EditTransaction() {
       }
 
       await transactionService.updateTransaction(currentAccountId, projectId, transactionId, updateData)
-      if (projectId) {
-        navigate(projectTransactionDetail(projectId, transactionId))
-      } else {
-        navigate('/projects')
-      }
+      navigateToReturnToOrFallback(navigate, location, defaultBackPath)
     } catch (error) {
       console.error('Error updating transaction:', error)
       // Set a general error message instead of targeting specific fields

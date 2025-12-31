@@ -1,9 +1,8 @@
 import { ArrowLeft, Save, X } from 'lucide-react'
-import { useParams } from 'react-router-dom'
+import { useParams, useLocation, useNavigate } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
-import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
-import { useState, FormEvent, useEffect, useRef } from 'react'
+import { useState, FormEvent, useEffect, useRef, useMemo } from 'react'
 import { transactionService, projectService, unifiedItemsService } from '@/services/inventoryService'
 import { ImageUploadService } from '@/services/imageService'
 import { TransactionSource } from '@/constants/transactionSources'
@@ -21,6 +20,7 @@ import { DISPOSITION_OPTIONS, displayDispositionLabel } from '@/utils/dispositio
 
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, COMPANY_NAME } from '@/constants/company'
 import { projectItems } from '@/utils/routes'
+import { navigateToReturnToOrFallback } from '@/utils/navigationReturnTo'
 
 // Get canonical transaction title for display
 const getCanonicalTransactionTitle = (transaction: Transaction): string => {
@@ -52,8 +52,11 @@ type AddItemFormData = {
 export default function AddItem() {
   const { id, projectId: routeProjectId } = useParams<{ id?: string; projectId?: string }>()
   const projectId = routeProjectId || id
-  const navigate = useStackedNavigate()
+  const navigate = useNavigate()
+  const location = useLocation()
   const { getBackDestination } = useNavigationContext()
+  const fallbackPath = useMemo(() => (projectId ? projectItems(projectId) : '/projects'), [projectId])
+
   const { hasRole } = useAuth()
   const { currentAccountId } = useAccount()
   const { showError } = useToast()
@@ -73,7 +76,7 @@ export default function AddItem() {
             You don't have permission to add items. Please contact an administrator if you need access.
           </p>
           <ContextBackLink
-            fallback={getBackDestination(projectId ? projectItems(projectId) : '/projects')}
+            fallback={getBackDestination(fallbackPath)}
             className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700"
           >
             Back to Project
@@ -207,11 +210,7 @@ export default function AddItem() {
         return
       }
       await unifiedItemsService.createItem(currentAccountId, itemData)
-      if (projectId) {
-        navigate(projectItems(projectId))
-      } else {
-        navigate('/projects')
-      }
+      navigateToReturnToOrFallback(navigate, location, fallbackPath)
     } catch (error) {
       console.error('Error creating item:', error)
       setErrors({ submit: 'Failed to create item. Please try again.' })
@@ -356,7 +355,7 @@ export default function AddItem() {
         {/* Back button row */}
         <div className="flex items-center justify-between">
           <ContextBackLink
-            fallback={getBackDestination(projectId ? projectItems(projectId) : '/projects')}
+            fallback={getBackDestination(fallbackPath)}
             className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
           >
             <ArrowLeft className="h-4 w-4 mr-1" />
@@ -728,7 +727,7 @@ export default function AddItem() {
           {/* Form Actions - Normal on desktop, hidden on mobile (replaced by sticky bar) */}
           <div className="hidden sm:flex justify-end sm:space-x-3 pt-4">
           <ContextBackLink
-            fallback={getBackDestination(projectId ? projectItems(projectId) : '/projects')}
+            fallback={getBackDestination(fallbackPath)}
             className="inline-flex justify-center items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
           >
             <X className="h-4 w-4 mr-2" />

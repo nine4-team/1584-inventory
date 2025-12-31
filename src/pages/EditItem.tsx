@@ -1,8 +1,7 @@
 import { ArrowLeft, Save, X } from 'lucide-react'
-import { useParams } from 'react-router-dom'
+import { useParams, useLocation, useNavigate } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
-import { useStackedNavigate } from '@/hooks/useStackedNavigate'
-import { useState, FormEvent, useEffect, useRef } from 'react'
+import { useState, FormEvent, useEffect, useRef, useMemo } from 'react'
 import { transactionService, unifiedItemsService } from '@/services/inventoryService'
 import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import { Transaction } from '@/types'
@@ -14,6 +13,7 @@ import { Shield } from 'lucide-react'
 
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, COMPANY_NAME } from '@/constants/company'
 import { projectItemDetail, projectItems } from '@/utils/routes'
+import { getReturnToFromLocation, navigateToReturnToOrFallback } from '@/utils/navigationReturnTo'
 
 // Get canonical transaction title for display
 const getCanonicalTransactionTitle = (transaction: Transaction): string => {
@@ -31,18 +31,22 @@ const getCanonicalTransactionTitle = (transaction: Transaction): string => {
 export default function EditItem() {
   const { id, projectId: routeProjectId, itemId } = useParams<{ id?: string; projectId?: string; itemId?: string }>()
   const projectId = routeProjectId || id
-  const navigate = useStackedNavigate()
+  const navigate = useNavigate()
+  const location = useLocation()
   const { hasRole } = useAuth()
   const { currentAccountId } = useAccount()
 
-  // Get returnTo parameter for back navigation
-  const getBackDestination = () => {
-    const searchParams = new URLSearchParams(window.location.search)
-    const returnTo = searchParams.get('returnTo')
-    if (returnTo) return decodeURIComponent(returnTo)
+  const fallbackPath = useMemo(() => {
     if (projectId && itemId) return projectItemDetail(projectId, itemId)
     if (projectId) return projectItems(projectId)
     return '/projects'
+  }, [projectId, itemId])
+
+  // Get returnTo parameter for back navigation
+  const getBackDestination = () => {
+    const returnTo = getReturnToFromLocation(location)
+    if (returnTo) return returnTo
+    return fallbackPath
   }
 
   // Check if user has permission to edit items (USER role or higher)
@@ -219,19 +223,7 @@ export default function EditItem() {
 
     try {
       await unifiedItemsService.updateItem(currentAccountId, itemId, itemData)
-
-      // Use returnTo if available, otherwise go to inventory tab
-      const searchParams = new URLSearchParams(window.location.search)
-      const returnTo = searchParams.get('returnTo')
-      if (returnTo) {
-        navigate(returnTo)
-      } else {
-        if (projectId) {
-          navigate(projectItems(projectId))
-        } else {
-          navigate('/projects')
-        }
-      }
+      navigateToReturnToOrFallback(navigate, location, fallbackPath)
     } catch (error) {
       console.error('Error updating item:', error)
       console.error('Form data being submitted:', itemData)

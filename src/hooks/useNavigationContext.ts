@@ -1,6 +1,7 @@
 import { useLocation } from 'react-router-dom'
 import { useNavigationStack } from '../contexts/NavigationStackContext'
 import { projectTransactionDetail } from '@/utils/routes'
+import { getReturnToFromLocation } from '@/utils/navigationReturnTo'
 
 export interface NavigationContext {
   getBackDestination: (defaultPath: string) => string
@@ -26,8 +27,8 @@ export function useNavigationContext(): NavigationContext {
         // ignore if stack not available
       }
 
-      // Check for returnTo parameter next
-      const returnTo = searchParams.get('returnTo')
+      // Check for returnTo from state or query next
+      const returnTo = getReturnToFromLocation(location)
       if (returnTo) return returnTo
 
       // Check for from parameter and handle accordingly

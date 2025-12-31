@@ -1,9 +1,8 @@
 import { ArrowLeft, Save, X } from 'lucide-react'
-import { useParams } from 'react-router-dom'
+import { useParams, useLocation, useNavigate } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
-import { useStackedNavigate } from '@/hooks/useStackedNavigate'
-import { useState, FormEvent, useEffect } from 'react'
+import { useState, FormEvent, useEffect, useMemo } from 'react'
 import { TransactionFormData, TransactionValidationErrors, TransactionItemFormData, ItemImage, TaxPreset } from '@/types'
 import { COMPANY_NAME, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { transactionService, projectService } from '@/services/inventoryService'
@@ -19,11 +18,15 @@ import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import { getDefaultCategory } from '@/services/accountPresetsService'
 import CategorySelect from '@/components/CategorySelect'
 import { projectTransactions } from '@/utils/routes'
+import { navigateToReturnToOrFallback } from '@/utils/navigationReturnTo'
 
 export default function AddTransaction() {
   const { id, projectId: routeProjectId } = useParams<{ id?: string; projectId?: string }>()
   const projectId = routeProjectId || id
-  const navigate = useStackedNavigate()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const fallbackPath = useMemo(() => (projectId ? projectTransactions(projectId) : '/projects'), [projectId])
+
   const { user, isOwner } = useAuth()
   const { currentAccountId } = useAccount()
   const { getBackDestination } = useNavigationContext()
@@ -42,7 +45,7 @@ export default function AddTransaction() {
             You don't have permission to add transactions. Please contact an administrator if you need access.
           </p>
           <ContextBackLink
-            fallback={getBackDestination(projectId ? projectTransactions(projectId) : '/projects')}
+            fallback={getBackDestination(fallbackPath)}
             className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700"
           >
             Back to Project
@@ -449,11 +452,7 @@ export default function AddTransaction() {
         }
       }
 
-      if (projectId) {
-        navigate(projectTransactions(projectId))
-      } else {
-        navigate('/projects')
-      }
+      navigateToReturnToOrFallback(navigate, location, fallbackPath)
     } catch (error) {
       console.error('Error creating transaction:', error)
       setErrors({ general: error instanceof Error ? error.message : 'Failed to create transaction. Please try again.' })
@@ -523,7 +522,7 @@ export default function AddTransaction() {
         {/* Back button row */}
         <div className="flex items-center justify-between">
           <ContextBackLink
-            fallback={getBackDestination(projectId ? projectTransactions(projectId) : '/projects')}
+            fallback={getBackDestination(fallbackPath)}
             className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
           >
             <ArrowLeft className="h-4 w-4 mr-1" />

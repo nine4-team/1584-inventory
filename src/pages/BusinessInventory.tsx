@@ -896,7 +896,7 @@ export default function BusinessInventory() {
               ) : (
                 <div className="bg-white shadow overflow-hidden sm:rounded-md">
                   <ul className="divide-y divide-gray-200">
-                    {groupedItems.map(({ groupKey, items: groupItems }) => {
+                    {groupedItems.map(({ groupKey, items: groupItems }, groupIndex) => {
                       // Single item - render directly
                       if (groupItems.length === 1) {
                         const item = groupItems[0]

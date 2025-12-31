@@ -104,8 +104,9 @@ export default function CategorySelect({
         <label htmlFor={id} className="block text-sm font-medium text-gray-700" style={{ color: '#374151' }}>
           {label}
           {required && (
-            <span className="ml-1 text-red-600" aria-hidden="true">
+            <span className="ml-1 text-black">
               *
+              <span className="sr-only"> required</span>
             </span>
           )}
         </label>

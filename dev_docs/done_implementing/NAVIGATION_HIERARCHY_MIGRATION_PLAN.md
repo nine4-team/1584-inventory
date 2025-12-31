@@ -4,52 +4,21 @@
 
 Update navigation to be **hierarchical and URL-driven**:
 
-- **Projects** (root)
-- **Project** (folder root)
-- **Project section** (items, transactions, budget, etc.)
-- **Entity detail** (item detail, transaction detail)
-- **Deep flows** (edit forms, import flows)
-
-Desired behavior:
-
-- **Back is hierarchical**:
-  - Edit → returns to detail
-  - Detail → returns to the correct project + section
-  - Section → returns to the project root
-- URLs are **shareable**, **refresh-safe**, and support deep links.
-- We keep backward compatibility for existing links (`/project/:id?tab=...`, existing entity routes) via redirects.
+... (Goal content) ...
 
 ---
 
-## Current State (as of 2025-12-28)
+## Current Implementation Status (Updated 2025-12-30)
 
-### Unresolved / Not Implemented Yet
-
-- `ProjectLayout` still reloads the entire shell whenever the user switches between **Items / Transactions / Budget / Accounting**. Root cause: the layout’s data-loading effect depends on `stackedNavigate`, which changes whenever the URL changes, so switching tabs retriggers the effect and shows the global “Loading project…” state. The fix is to keep stable dependencies (avoid including `stackedNavigate` or other tab-dependent callbacks) so the layout fetches once per project and nested routes change without flashing.
-
-### Routing
-
-Routes are declared in `src/App.tsx` using `react-router-dom` `<Routes>/<Route>`.
-
-Notable patterns:
-
-- Project is currently: `/project/:id` with **section selected via query param**:
-  - `?tab=inventory|transactions`
-  - `?budgetTab=budget|accounting` (nested “budget tabs” state)
-- Entity routes already exist:
-  - `/project/:id/item/:itemId` (Item detail)
-  - `/project/:id/transaction/:transactionId` (Transaction detail)
-
-### UX note: why clicking an item/transaction “reloads” the page
-
-When you click a row inside the project page, we navigate to a **different route** (`/project/:id/item/:itemId` or `/project/:id/transaction/:transactionId`).
-This is **client-side navigation** (not a full document reload), but it can *feel* like a reload because:
-
-- The **project page component unmounts** and the detail page mounts (big UI swap).
-- The detail page may show a loading state while fetching data (flash/spinner).
-- List state (scroll, filters, selection) can be lost if the list unmounts.
-
-This plan’s move to **nested, hierarchical routes** is the best-practice fix: keep the project “shell” mounted and swap only the nested content.
+| Feature / Issue | Status | Notes |
+| :--- | :--- | :--- |
+| **Hierarchical URL Structure** | ✅ Mostly Done | `/project/:id/items` and `/project/:id/transactions` are the canonical routes. |
+| **Legacy Redirects** | ✅ Done | Old `?tab=` URLs and entity-detail deep links redirect correctly. |
+| **Project Shell Persistence** | ✅ Done | `ProjectLayout` persists correctly across section changes without flashing or full-page reloads. |
+| **Back Navigation (Edit → Detail)** | ⚠️ **Partially Broken** | Transaction edit/cancel now pops the stack correctly, but item edit/create and other flows that still call `useStackedNavigate` on save (e.g. `EditItem`, `AddItem`) re-push the edit URL so Back loops. |
+| **Wayfair Invoice Flow** | ❌ **Broken** | The importer still navigates with `useStackedNavigate`, so creating an invoice returns to the import tool first instead of the transaction list. |
+| **Layout Consistency** | ⚠️ **In Progress** | Clarified: Item Detail/Edit should open **inline** when accessed from a Transaction Detail page, but may still need full-screen focus for primary entity navigation. |
+| **In-Shell Reports** | ❌ Pending | Invoice and Summaries are still rendered as "escape routes" (outside the project shell). |
 
 ---
 
@@ -62,18 +31,13 @@ This section is a **reality check** against the acceptance criteria and the “r
 - Nested project routes exist: `/project/:projectId/*` with children for `items`, `transactions`, `budget`, and section-scoped entity routes (detail/edit/new/import).
 - Legacy redirects exist for old `?tab=` and old entity paths, preserving query params.
 - A `ProjectLayout` exists and provides `<Outlet />` + context so section pages can reuse loaded project/items/transactions.
+- **Project Shell Persistence**: Switching between section tabs (Items / Transactions / Budget / Accounting) no longer reloads the entire shell or triggers a global "Loading..." flash. Data dependencies are stable.
+- **Retry vs Refresh**: `ProjectLayout.retryLoadProject` increments a `reloadToken` and refetches data instead of calling `navigate(0)`, keeping the shell mounted during error recovery.
+- **Default section behavior**: `/project/:id` now consults `lastProjectSection` and falls back to `transactions`, matching the plan’s recommendation when no preference is stored.
 
-### ❌ NOT implemented correctly (root causes of the “reload” feel)
+### ❌ NOT implemented correctly (pending work)
 
-#### 1) **Global Suspense fallback still blanks the entire app during route changes**
-
-- Current implementation wraps the entire routing tree in a single `<Suspense fallback={...}>`.
-- Because many pages/layouts are `lazy()` loaded, navigating to a route whose JS chunk is not already loaded will **replace the entire UI with the fallback** (everything disappears, then “Loading”).
-- This directly defeats the “keep the project shell mounted” UX goal even if routes are nested correctly.
-
-**Fix requirement (conceptual):** move Suspense boundaries *down* (e.g., to outlet/content level) or prefetch route chunks so the project shell does not disappear when swapping child routes.
-
-#### 2) **Some project navigation still escapes the `ProjectLayout` route tree**
+#### 1) **Some project navigation still escapes the `ProjectLayout` route tree**
 
 If a link goes to a route that is **not nested** under `/project/:projectId/*`, the project shell will unmount and you’ll see the “big swap”.
 
@@ -90,51 +54,43 @@ Even with nested entity routes present (`/project/:projectId/items/:itemId`), **
 - Ensure all “within a project” navigation uses section-scoped paths (`/project/:projectId/items/...` and `/project/:projectId/transactions/...`).
 - Either nest invoice/summaries under `ProjectLayout` (as project-scoped routes) or treat them as deliberate “leave project shell” destinations (and accept the UI swap).
 
-#### 3) **A hard refresh-style recovery path exists (`navigate(0)` / history go(0))**
+#### 2) **Inventory item links still bypass the nested route tree**
 
-The plan explicitly said:
+- `InventoryItemRow` and downstream preview components still generate `/item/${itemId}` (and `/item/${itemId}?project=...`) even when rendered inside a project context.
+- Clicking those links from `/project/:projectId/items` ejects the user from `ProjectLayout`, so the shell disappears and the user loses local UI state.
 
-> Avoid patterns like `navigate(0)` unless you truly want a full refresh; use “refetch” logic instead.
+**Fix requirement (conceptual):**
+- Use the helpers from `src/utils/routes.ts` (`projectItemDetail`, `projectItemEdit`) whenever an item belongs to the active project.
+- Only use the global `/item/:id` form when the context is genuinely outside of a project (e.g., business inventory).
 
-Observed implementation has a “retry” path that effectively does a **refresh-style navigation**. This is a direct mismatch with the UX goal and can contribute to “reload” behavior under failure/retry.
-
-**Fix requirement (conceptual):** retry should call the same data-loading function, not reload the current route.
-
-#### 4) **Stringly-typed project routes still exist in a few places**
-
-Phase 0 goal was to reduce route strings by using helpers (`src/utils/routes.ts`).
-
-Observed: some navigation still hardcodes project routes (e.g., invoice/summaries). This increases the chance that links bypass the nested/canonical route tree.
-
-**Fix requirement (conceptual):** use route helper functions for *all* project-scoped navigation, especially from `ProjectLayout`.
-
-#### 5) Minor deviation: budget sub-tab param name drift
+#### 3) Minor deviation: budget sub-tab param name drift
 
 The plan’s Option A referenced `/project/:projectId/budget?tab=budget|accounting` (illustrative).
 Observed implementation uses `budgetTab` as the query param name.
 
 This is not the cause of the “reload feel”, but it is a **documentation drift** that makes future work/debugging harder.
 
-#### 6) Minor deviation: default section differs from the plan recommendation
+#### 4) Clarification: inline vs full-screen entity flows
 
-The plan recommended defaulting `/project/:id` to **transactions** (unless product preference differs).
-Observed implementation currently defaults to **items** when there is no explicit preference stored.
+- **Current State**: Most entity detail, edit, and create flows currently render nested within the `ProjectLayout` (tab view).
+- **Desired UX (Updated 2025-12-30, reinforced 2026-01-02)**:
+  - **Inline is acceptable only inside Transaction Detail**. When an Item Detail/Edit flow originates from a transaction-level inline experience (`TransactionItemsList`), the inline swap is fine as long as Back returns to the transaction.
+  - **Outside of that scenario, Item and Transaction detail/edit/create screens must always open as dedicated full-screen routes** so the project shell, breadcrumb history, alerts, etc. are retained. Do **not** inline Project Items tab actions again.
+  - **Add/Create flows** (`AddItem`, `AddTransaction`, Wayfair importer, Edit screens) must open with their own URLs. INLINE FORMS ARE A BUG—this note exists precisely so we do not accidentally revert back.
+- **Fix requirement**: Ensure that inline-only navigation (like `setViewingItemId` in `TransactionItemsList`) is scoped to transaction details, and that every route launched from Project Items / Project Transactions tabs uses `projectItemDetail`, `projectTransactionDetail`, etc., never `setViewingItemId`.
 
-This is not the cause of the “reload feel”, but it is another **plan/implementation mismatch** worth correcting or explicitly deciding.
-
-#### 7) Regression: detail/edit flows no longer render as full-screen pages
-
-- Requirement: entity detail, edit, and create flows (`ItemDetail`, `TransactionDetail`, add/edit forms) should **leave the Project shell** and take over the entire viewport to minimize distraction and ensure focused editing.
-- Observed: recent navigation refactor keeps these flows nested under the `items` / `transactions` tabs, so the project tabs/header remain mounted.
-- Impact: review/edit screens now appear constrained inside the tab content area instead of the intended full-screen experience, and their layout/styling regress (breadcrumbs, spacing, escape hatch buttons).
-- Fix requirement: route to the full-screen variants (or mount them outside the section layout) for all detail/add/edit flows so they behave like the pre-migration UX.
-
-#### 8) Back navigation ping-pongs between edit/detail due to stacked navigate usage
+#### 5) Back navigation ping-pongs between edit/detail due to stacked navigate usage
 
 - Requirement: edit flows should respect the hierarchy: **List → Detail → Edit** and Back should walk upward (**Edit → Detail → List**).
-- Observed: `EditTransaction` (and similar forms) invoke the navigation-stack-aware `useStackedNavigate` when leaving the page, which re-pushes the edit URL right before navigating back to detail.
-- Impact: after returning to detail, the navigation stack’s top entry is the edit screen, so pressing Back immediately sends the user back to Edit (sequence becomes Edit → Detail → Edit → List).
-- Fix requirement: edit/cancel/back handlers must pop the stack **without** re-pushing the current URL (use plain `useNavigate` and/or `getBackDestination(returnTo)`), ensuring the next Back truly reaches the list view.
+- Observed: `EditTransaction` now uses plain `useNavigate` + `navigationStack.pop`, but other forms (`EditItem`, `AddItem`, `AddTransaction`, `ProjectInvoice`, `ImportWayfairInvoice`, etc.) still call `useStackedNavigate` when finishing. That hook pushes the *current* edit/creation URL onto the stack immediately before navigating away, so the next Back returns to the form the user just left.
+- Impact: after saving/canceling, the stack’s top entry is still the edit screen, so pressing Back bounces users between Edit ↔ Detail before they can reach the list view.
+- Fix requirement: for flows that are conceptually “going up” the hierarchy, switch to `useNavigate` (or manually pop) so leaving the form does not push another stack entry. Continue to pass `returnTo` via `buildContextUrl` so detail/list fallbacks still work.
+
+#### 6) Wayfair importer still leaves users stuck in its own stack
+
+- The Wayfair import flow uses `useStackedNavigate` for both cancellation and post-create navigation (`src/pages/ImportWayfairInvoice.tsx`), which means the importer page is pushed back onto the stack right before sending the user to a transaction detail.
+- Result: after creating a transaction, Back returns to the importer instead of the transactions list/detail the user expected.
+- Fix requirement: treat the importer like other edit/create flows—pop the stack (or use plain `useNavigate`) when exiting, and default the fallback destination to `projectTransactions(projectId)`.
 
 ### Navigation helpers (already present)
 
