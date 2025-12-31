@@ -13,7 +13,17 @@ function normalizeString(value: string | null | undefined): string {
  */
 function normalizePrice(price: string | null | undefined): string {
   const normalized = normalizeString(price)
-  return normalized.replace(/[^0-9.-]/g, '') // Remove currency symbols and extra characters
+  const sanitized = normalized.replace(/[^0-9.-]/g, '')
+  if (!sanitized) {
+    return ''
+  }
+
+  const numeric = Number.parseFloat(sanitized)
+  if (!Number.isFinite(numeric)) {
+    return sanitized
+  }
+
+  return numeric.toFixed(2)
 }
 
 /**

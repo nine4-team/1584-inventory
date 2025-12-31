@@ -5,6 +5,18 @@ import { getTaxPresetById } from './taxPresetsService'
 import { CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { lineageService } from './lineageService'
 import type { Item, Project, FilterOptions, PaginationOptions, Transaction, TransactionItemFormData, TransactionCompleteness, CompletenessStatus, ItemImage } from '@/types'
+import type { RealtimeChannel } from '@supabase/supabase-js'
+
+type SharedRealtimeEntry<T> = {
+  channel: RealtimeChannel
+  callbacks: Set<(payload: T[]) => void>
+  data: T[]
+}
+
+const transactionRealtimeEntries = new Map<string, SharedRealtimeEntry<Transaction>>()
+let transactionChannelCounter = 0
+const projectItemsRealtimeEntries = new Map<string, SharedRealtimeEntry<Item>>()
+let projectItemsChannelCounter = 0
 
 // Audit Logging Service for allocation/de-allocation events
 export const auditService = {
@@ -1248,75 +1260,117 @@ export const transactionService = {
     callback: (transactions: Transaction[]) => void,
     initialTransactions?: Transaction[]
   ) {
-    let transactions = [...(initialTransactions || [])]
+    const key = `${accountId}:${projectId}`
+    let entry = transactionRealtimeEntries.get(key)
 
-    const channel = supabase
-      .channel(`transactions:${accountId}:${projectId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'transactions',
-          // Listen at account scope so we receive updates when project_id changes
-          filter: 'account_id=eq.' + accountId
-        },
-        async (payload) => {
-          console.log('Transactions change received (account scope)!', payload)
+    if (!entry) {
+      entry = {
+        channel: null as unknown as RealtimeChannel,
+        callbacks: new Set(),
+        data: [...(initialTransactions || [])]
+      }
 
-          const { eventType, new: newRecord, old: oldRecord } = payload
-          const newProjectId = newRecord?.project_id ?? null
-          const oldProjectId = oldRecord?.project_id ?? null
+      const channelName = `transactions:${accountId}:${projectId}:${++transactionChannelCounter}`
+      const channel = supabase
+        .channel(channelName)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'transactions',
+            filter: 'account_id=eq.' + accountId
+          },
+          async (payload) => {
+            const { eventType, new: newRecord, old: oldRecord } = payload
+            const newProjectId = newRecord?.project_id ?? null
+            const oldProjectId = oldRecord?.project_id ?? null
 
-          const matchesProject = (candidate: string | null | undefined) => candidate === projectId
+            const matchesProject = (candidate: string | null | undefined) => candidate === projectId
+            let nextTransactions = entry?.data ?? []
 
-          if (eventType === 'INSERT') {
-            if (matchesProject(newProjectId)) {
-              const newTransaction = _convertTransactionFromDb(newRecord)
-              const [enrichedTransaction] = await _enrichTransactionsWithProjectNames(accountId, [newTransaction])
-              // Ensure no duplicates before adding
-              transactions = [enrichedTransaction, ...transactions.filter(t => t.transactionId !== enrichedTransaction.transactionId)]
+            if (eventType === 'INSERT') {
+              if (matchesProject(newProjectId)) {
+                const newTransaction = _convertTransactionFromDb(newRecord)
+                const [enrichedTransaction] = await _enrichTransactionsWithProjectNames(accountId, [newTransaction])
+                nextTransactions = [enrichedTransaction, ...nextTransactions.filter(t => t.transactionId !== enrichedTransaction.transactionId)]
+              }
+            } else if (eventType === 'UPDATE') {
+              const updatedTransaction = _convertTransactionFromDb(newRecord)
+              const [enrichedTransaction] = await _enrichTransactionsWithProjectNames(accountId, [updatedTransaction])
+
+              const wasInProject = nextTransactions.some(t => t.transactionId === enrichedTransaction.transactionId)
+              const isInProject = matchesProject(newProjectId)
+
+              if (isInProject && !wasInProject) {
+                nextTransactions = [enrichedTransaction, ...nextTransactions]
+              } else if (!isInProject && wasInProject) {
+                nextTransactions = nextTransactions.filter(t => t.transactionId !== enrichedTransaction.transactionId)
+              } else if (isInProject && wasInProject) {
+                nextTransactions = nextTransactions.map(t => t.transactionId === enrichedTransaction.transactionId ? enrichedTransaction : t)
+              }
+            } else if (eventType === 'DELETE') {
+              if (matchesProject(oldProjectId)) {
+                const oldId = oldRecord.transaction_id
+                nextTransactions = nextTransactions.filter(t => t.transactionId !== oldId)
+              }
             }
-          } else if (eventType === 'UPDATE') {
-            const updatedTransaction = _convertTransactionFromDb(newRecord)
-            const [enrichedTransaction] = await _enrichTransactionsWithProjectNames(accountId, [updatedTransaction])
 
-            const wasInProject = transactions.some(t => t.transactionId === enrichedTransaction.transactionId)
-            const isInProject = matchesProject(newProjectId)
-
-            if (isInProject && !wasInProject) {
-              // Transaction moved into this project
-              transactions = [enrichedTransaction, ...transactions]
-            } else if (!isInProject && wasInProject) {
-              // Transaction moved out of this project (or deleted project_id)
-              transactions = transactions.filter(t => t.transactionId !== enrichedTransaction.transactionId)
-            } else if (isInProject && wasInProject) {
-              // Transaction updated within this project
-              transactions = transactions.map(t => t.transactionId === enrichedTransaction.transactionId ? enrichedTransaction : t)
-            }
-            // If !isInProject && !wasInProject → change unrelated to this project, ignore
-          } else if (eventType === 'DELETE') {
-            if (matchesProject(oldProjectId)) {
-              const oldId = oldRecord.transaction_id
-              transactions = transactions.filter(t => t.transactionId !== oldId)
+            if (entry) {
+              entry.data = nextTransactions
+              const sortedTransactions = [...nextTransactions].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+              entry.callbacks.forEach(cb => {
+                try {
+                  cb(sortedTransactions)
+                } catch (err) {
+                  console.error('subscribeToTransactions callback failed', err)
+                }
+              })
             }
           }
+        )
+        .subscribe((status, err) => {
+          if (status === 'SUBSCRIBED') {
+            console.log('Subscribed to transactions channel')
+          }
+          if (err) {
+            console.error('Error subscribing to transactions channel:', err)
+          }
+        })
 
-          const sortedTransactions = [...transactions].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-          callback(sortedTransactions)
-        }
-      )
-      .subscribe((status, err) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('Subscribed to transactions channel')
-        }
-        if (err) {
-          console.error('Error subscribing to transactions channel:', err)
-        }
-      })
+      entry.channel = channel
+      transactionRealtimeEntries.set(key, entry)
+    } else if (initialTransactions && initialTransactions.length && entry.data.length === 0) {
+      entry.data = [...initialTransactions]
+    }
+
+    const subscriberCallback = (transactionsSnapshot: Transaction[]) => {
+      try {
+        callback(transactionsSnapshot)
+      } catch (err) {
+        console.error('subscribeToTransactions callback failed', err)
+      }
+    }
+
+    entry.callbacks.add(subscriberCallback)
+
+    if (entry.data.length > 0) {
+      subscriberCallback([...entry.data])
+    }
 
     return () => {
-      channel.unsubscribe()
+      const existing = transactionRealtimeEntries.get(key)
+      if (!existing) return
+
+      existing.callbacks.delete(subscriberCallback)
+      if (existing.callbacks.size === 0) {
+        try {
+          existing.channel.unsubscribe()
+        } catch (err) {
+          console.warn('Failed to unsubscribe transactions channel', err)
+        }
+        transactionRealtimeEntries.delete(key)
+      }
     }
   },
 
@@ -1714,65 +1768,109 @@ export const unifiedItemsService = {
     callback: (items: Item[]) => void,
     initialItems?: Item[]
   ) {
-    let items = [...(initialItems || [])]
+    const key = `${accountId}:${projectId}`
+    let entry = projectItemsRealtimeEntries.get(key)
 
-    const channel = supabase
-      .channel(`project-items:${accountId}:${projectId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'items',
-          // Broaden filter to account-level to catch updates where project_id changes
-          filter: 'account_id=eq.' + accountId
-        },
-        (payload) => {
-          console.log('Project items change received (broad filter)!', payload)
-          const { eventType, new: newRecord, old: oldRecord } = payload
+    if (!entry) {
+      entry = {
+        channel: null as unknown as RealtimeChannel,
+        callbacks: new Set(),
+        data: [...(initialItems || [])]
+      }
 
-          if (eventType === 'INSERT') {
-            // Add item only if it belongs to the current project
-            if (newRecord.project_id === projectId) {
-              const newItem = this._convertItemFromDb(newRecord)
-              items = [newItem, ...items]
+      const channelName = `project-items:${accountId}:${projectId}:${++projectItemsChannelCounter}`
+      const channel = supabase
+        .channel(channelName)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'items',
+            filter: 'account_id=eq.' + accountId
+          },
+          (payload) => {
+            const { eventType, new: newRecord, old: oldRecord } = payload
+            let nextItems = entry?.data ?? []
+
+            if (eventType === 'INSERT') {
+              if (newRecord.project_id === projectId) {
+                const newItem = this._convertItemFromDb(newRecord)
+                nextItems = [newItem, ...nextItems.filter(i => i.itemId !== newItem.itemId)]
+              }
+            } else if (eventType === 'UPDATE') {
+              const updatedItem = this._convertItemFromDb(newRecord)
+              const wasInProject = nextItems.some(i => i.itemId === updatedItem.itemId)
+              const isInProject = updatedItem.projectId === projectId
+
+              if (isInProject && !wasInProject) {
+                nextItems = [updatedItem, ...nextItems]
+              } else if (!isInProject && wasInProject) {
+                nextItems = nextItems.filter(i => i.itemId !== updatedItem.itemId)
+              } else if (isInProject && wasInProject) {
+                nextItems = nextItems.map(i => i.itemId === updatedItem.itemId ? updatedItem : i)
+              }
+            } else if (eventType === 'DELETE') {
+              if (oldRecord.item_id) {
+                nextItems = nextItems.filter(i => i.itemId !== oldRecord.item_id)
+              }
             }
-          } else if (eventType === 'UPDATE') {
-            const updatedItem = this._convertItemFromDb(newRecord)
-            const wasInProject = items.some(i => i.itemId === updatedItem.itemId)
-            const isInProject = updatedItem.projectId === projectId
 
-            if (isInProject && !wasInProject) {
-              // Item moved INTO this project
-              items = [updatedItem, ...items]
-            } else if (!isInProject && wasInProject) {
-              // Item moved OUT of this project
-              items = items.filter(i => i.itemId !== updatedItem.itemId)
-            } else if (isInProject && wasInProject) {
-              // Item updated WITHIN this project
-              items = items.map(i => i.itemId === updatedItem.itemId ? updatedItem : i)
+            if (entry) {
+              entry.data = nextItems
+              const snapshot = [...nextItems]
+              entry.callbacks.forEach(cb => {
+                try {
+                  cb(snapshot)
+                } catch (err) {
+                  console.error('subscribeToProjectItems callback failed', err)
+                }
+              })
             }
-            // If !isInProject and !wasInProject, do nothing (change between other projects)
-            
-          } else if (eventType === 'DELETE') {
-            const oldId = oldRecord.item_id
-            items = items.filter(i => i.itemId !== oldId)
           }
-          
-          callback([...items])
-        }
-      )
-      .subscribe((status, err) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('Subscribed to project items channel')
-        }
-        if (err) {
-          console.error('Error subscribing to project items channel:', err)
-        }
-      })
+        )
+        .subscribe((status, err) => {
+          if (status === 'SUBSCRIBED') {
+            console.log('Subscribed to project items channel')
+          }
+          if (err) {
+            console.error('Error subscribing to project items channel:', err)
+          }
+        })
+
+      entry.channel = channel
+      projectItemsRealtimeEntries.set(key, entry)
+    } else if (initialItems && initialItems.length && entry.data.length === 0) {
+      entry.data = [...initialItems]
+    }
+
+    const subscriberCallback = (itemsSnapshot: Item[]) => {
+      try {
+        callback(itemsSnapshot)
+      } catch (err) {
+        console.error('subscribeToProjectItems callback failed', err)
+      }
+    }
+
+    entry.callbacks.add(subscriberCallback)
+
+    if (entry.data.length > 0) {
+      subscriberCallback([...entry.data])
+    }
 
     return () => {
-      channel.unsubscribe()
+      const existing = projectItemsRealtimeEntries.get(key)
+      if (!existing) return
+
+      existing.callbacks.delete(subscriberCallback)
+      if (existing.callbacks.size === 0) {
+        try {
+          existing.channel.unsubscribe()
+        } catch (err) {
+          console.warn('Failed to unsubscribe project items channel', err)
+        }
+        projectItemsRealtimeEntries.delete(key)
+      }
     }
   },
 

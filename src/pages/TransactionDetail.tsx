@@ -62,6 +62,7 @@ const buildDisplayItems = (items: Item[], movedOutItemIds: Set<string>): Display
     images: item.images || [],
     taxAmountPurchasePrice: item.taxAmountPurchasePrice,
     taxAmountProjectPrice: item.taxAmountProjectPrice,
+    transactionId: item.transactionId || undefined,
     _latestTransactionId: item.latestTransactionId,
     _transactionId: item.transactionId || undefined,
     _projectId: item.projectId ?? null,
