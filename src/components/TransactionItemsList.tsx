@@ -1018,7 +1018,7 @@ export default function TransactionItemsList({
               Total Items: {filteredItems.length}{filteredItems.length !== items.length ? ` of ${items.length}` : ''}
             </div>
             <div className="text-lg font-semibold text-gray-900">
-              Subtotal: {formatCurrency(
+              Calculated Subtotal: {formatCurrency(
                 totalAmount || filteredItems.reduce((sum, item) => sum + (parseFloat(item.projectPrice || item.purchasePrice || '0') || 0), 0).toString()
               )}
             </div>

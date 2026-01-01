@@ -13,6 +13,13 @@ type SharedRealtimeEntry<T> = {
   data: T[]
 }
 
+const CANONICAL_TRANSACTION_PREFIXES = ['INV_PURCHASE_', 'INV_SALE_', 'INV_TRANSFER_'] as const
+
+export const isCanonicalTransactionId = (transactionId: string | null | undefined): boolean => {
+  if (!transactionId) return false
+  return CANONICAL_TRANSACTION_PREFIXES.some(prefix => transactionId.startsWith(prefix))
+}
+
 const transactionRealtimeEntries = new Map<string, SharedRealtimeEntry<Transaction>>()
 let transactionChannelCounter = 0
 const projectItemsRealtimeEntries = new Map<string, SharedRealtimeEntry<Item>>()
@@ -515,6 +522,11 @@ async function _adjustSumItemPurchasePrices(accountId: string, transactionId: st
   return newSumStr
 }
 
+// NOTE: Database trigger `trg_items_after_delete_sync_item_ids` (see
+// `supabase/migrations/20251231_sync_transaction_item_ids_on_delete.sql`) also
+// removes orphaned IDs when an item row is deleted outside the app. This
+// helper remains necessary for app-driven reallocations/mutations so the UI
+// can observe changes without waiting for the trigger to run.
 async function _updateTransactionItemIds(
   accountId: string,
   transactionId: string | null | undefined,
@@ -702,14 +714,29 @@ export const transactionService = {
   ): Promise<TransactionCompleteness> {
     await ensureAuthenticatedForDatabase()
 
-    // Get transaction and associated items
-    const [transaction, items] = await Promise.all([
-      this.getTransaction(accountId, projectId, transactionId),
-      unifiedItemsService.getItemsForTransaction(accountId, projectId, transactionId)
-    ])
+    // Get transaction and associated items. Prefer the itemIds stored on the
+    // transaction record so we include deallocated/moved items that no longer
+    // have this transaction_id—mirrors TransactionDetail logic. Fall back to
+    // a direct items query when itemIds is empty.
+    const transaction = await this.getTransaction(accountId, projectId, transactionId)
 
     if (!transaction) {
       throw new Error('Transaction not found')
+    }
+
+    const itemIdsFromTransaction = Array.isArray((transaction as any).itemIds)
+      ? ((transaction as any).itemIds as string[])
+      : []
+
+    let items: Item[]
+    if (itemIdsFromTransaction.length > 0) {
+      const itemPromises = itemIdsFromTransaction.map(itemId =>
+        unifiedItemsService.getItemById(accountId, itemId)
+      )
+      const fetched = await Promise.all(itemPromises)
+      items = fetched.filter((item): item is Item => item !== null)
+    } else {
+      items = await unifiedItemsService.getItemsForTransaction(accountId, projectId, transactionId)
     }
 
     // Include items that were moved out of this transaction by consulting lineage edges.
@@ -733,16 +760,28 @@ export const transactionService = {
       console.debug('getTransactionCompleteness - failed to fetch lineage edges:', edgeErr)
     }
 
-    // Calculate items net total (sum of purchase prices)
+    // Calculate items net total using the same logic as the UI's calculated subtotal:
+    // prefer projectPrice (if set) and fall back to purchasePrice.
+    const resolveItemPrice = (item: Item) => {
+      const candidate = item.projectPrice && item.projectPrice.trim() !== ''
+        ? item.projectPrice
+        : item.purchasePrice
+      const parsed = parseFloat(candidate || '0')
+      return isNaN(parsed) ? 0 : parsed
+    }
+
     const itemsNetTotal = combinedItems.reduce((sum, item) => {
-      const purchasePrice = parseFloat(item.purchasePrice || '0')
-      return sum + (isNaN(purchasePrice) ? 0 : purchasePrice)
+      return sum + resolveItemPrice(item)
     }, 0)
 
     const itemsCount = combinedItems.length
     const itemsMissingPriceCount = combinedItems.filter(item => {
-      const purchasePrice = item.purchasePrice
-      return !purchasePrice || purchasePrice.trim() === '' || parseFloat(purchasePrice) === 0
+      const candidate = item.projectPrice && item.projectPrice.trim() !== ''
+        ? item.projectPrice
+        : item.purchasePrice
+      if (!candidate || candidate.trim() === '') return true
+      const parsed = parseFloat(candidate)
+      return isNaN(parsed) || parsed === 0
     }).length
 
     // Calculate transaction subtotal (pre-tax amount)
@@ -822,12 +861,12 @@ export const transactionService = {
    */
   async _recomputeNeedsReview(accountId: string, projectId: string | null | undefined, transactionId: string): Promise<void> {
     try {
-      // Canonical sale and purchase transactions (INV_SALE_*, INV_PURCHASE_*) are system-generated
-      // and represent internal inventory movements, so they should never require review
-      const isCanonicalTransaction = transactionId.startsWith('INV_SALE_') || transactionId.startsWith('INV_PURCHASE_')
+      // Canonical transactions are system-generated and represent internal inventory movements,
+      // so they should never require review.
+      const canonical = isCanonicalTransactionId(transactionId)
 
       let needs: boolean
-      if (isCanonicalTransaction) {
+      if (canonical) {
         // Canonical transactions are never flagged for review
         needs = false
       } else {
@@ -2316,6 +2355,8 @@ export const unifiedItemsService = {
     if (error) throw error
 
     if (existingItem?.transactionId) {
+      // The Postgres trigger handles hard deletes performed outside the app, but we
+      // still clean up eagerly here so TransactionDetail stays in sync immediately.
       _updateTransactionItemIds(accountId, existingItem.transactionId, itemId, 'remove').catch(e => {
         console.warn('Failed to sync transaction item_ids after deleteItem:', e)
       })
@@ -2371,7 +2412,7 @@ export const unifiedItemsService = {
       throw new Error('Item not found')
     }
 
-    const finalAmount = amount || item.projectPrice || item.marketValue || '0.00'
+    const finalAmount = amount || item.projectPrice || item.purchasePrice || item.marketValue || '0.00'
     const currentTransactionId: string | null = item.transactionId || null
 
     console.log('🔄 Starting allocation process:', {
@@ -2869,6 +2910,7 @@ export const unifiedItemsService = {
 
     const existingItemIds = transactionData.item_ids || []
     const updatedItemIds = existingItemIds.filter((id: string) => id !== itemId)
+    const shouldRecalculateAmount = isCanonicalTransactionId(transactionId)
 
     if (updatedItemIds.length === 0) {
       // No items left - delete transaction
@@ -2894,22 +2936,53 @@ export const unifiedItemsService = {
         // Don't throw - allow the allocation to continue even if deletion fails
       }
     } else {
-      // Recalculate amount from remaining items
+      if (!shouldRecalculateAmount) {
+        console.info('ℹ️ Skipping amount recalculation for non-canonical transaction removal', {
+          transactionId,
+          itemId
+        })
+
+        const updateData = {
+          item_ids: updatedItemIds,
+          updated_at: new Date().toISOString()
+        }
+
+        try {
+          const { error: updateError } = await supabase
+            .from('transactions')
+            .update(updateData)
+            .eq('account_id', accountId)
+            .eq('transaction_id', transactionId)
+
+          if (updateError) throw updateError
+
+          console.log('🔗 Updated transaction items without touching amount:', transactionId)
+
+          try {
+            await auditService.logTransactionStateChange(accountId, transactionId, 'updated', transactionData, updateData)
+          } catch (auditError) {
+            console.warn('⚠️ Failed to log transaction update:', auditError)
+          }
+        } catch (error) {
+          console.error('❌ Failed to update transaction items after removal:', transactionId, error)
+        }
+        return
+      }
+
+      // Canonical transactions continue to derive their amount from linked items
       try {
-        // Get all items to recalculate amount
         const { data: itemsData, error: itemsError } = await supabase
           .from('items')
-          .select('project_price, market_value')
+          .select('project_price, purchase_price, market_value')
           .eq('account_id', accountId)
           .in('item_id', updatedItemIds)
 
         if (itemsError) throw itemsError
 
         const totalAmount = (itemsData || [])
-          .map(item => item.project_price || item.market_value || '0.00')
+          .map(item => item.project_price || item.purchase_price || item.market_value || '0.00')
           .reduce((sum: number, price: string) => sum + parseFloat(price || '0'), 0)
           .toFixed(2)
-        // Prevent negative totals
         const safeAmount = parseFloat(totalAmount) < 0 ? '0.00' : totalAmount
 
         const updateData = {
@@ -2928,7 +3001,6 @@ export const unifiedItemsService = {
 
         console.log('🔄 Updated transaction after removal:', transactionId, 'new amount:', safeAmount)
 
-        // Log transaction update (catch errors to prevent cascading failures)
         try {
           await auditService.logTransactionStateChange(accountId, transactionId, 'updated', transactionData, updateData)
         } catch (auditError) {
@@ -2936,12 +3008,12 @@ export const unifiedItemsService = {
         }
       } catch (error) {
         console.error('❌ Failed to update transaction after removal:', transactionId, error)
-        // Don't throw - allow the allocation to continue
       }
     }
   },
 
-  // Helper: Add item to transaction (create if none exists)
+  // Helper: Add item to transaction (create if none exists).
+  // NOTE: transactions.amount is only recalculated for canonical transaction IDs.
   async addItemToTransaction(
     accountId: string,
     itemId: string,
@@ -2962,31 +3034,41 @@ export const unifiedItemsService = {
       .single()
 
     if (existingTransaction && !fetchError) {
-      // Transaction exists - add item and recalculate amount
+      // Transaction exists - add item and update associations
       try {
         const existingItemIds = existingTransaction.item_ids || []
         const updatedItemIds = [...new Set([...existingItemIds, itemId])] // Avoid duplicates
-
-        // Get all items to recalculate amount
-        const { data: itemsData, error: itemsError } = await supabase
-          .from('items')
-          .select('project_price, market_value')
-          .eq('account_id', accountId)
-          .in('item_id', updatedItemIds)
-
-        if (itemsError) throw itemsError
-
-        const totalAmount = (itemsData || [])
-          .map(item => item.project_price || item.market_value || '0.00')
-          .reduce((sum: number, price: string) => sum + parseFloat(price || '0'), 0)
-          .toFixed(2)
-        // Prevent negative totals
-        const safeAmount = parseFloat(totalAmount) < 0 ? '0.00' : totalAmount
-
-        const updateData = {
+        const shouldRecalculateAmount = isCanonicalTransactionId(transactionId)
+        type TransactionUpdatePayload = { item_ids: string[]; updated_at: string; amount?: string }
+        const baseUpdateData: TransactionUpdatePayload = {
           item_ids: updatedItemIds,
-          amount: safeAmount,
           updated_at: new Date().toISOString()
+        }
+        let updateData: TransactionUpdatePayload = baseUpdateData
+
+        if (shouldRecalculateAmount) {
+          const { data: itemsData, error: itemsError } = await supabase
+            .from('items')
+            .select('project_price, purchase_price, market_value')
+            .eq('account_id', accountId)
+            .in('item_id', updatedItemIds)
+
+          if (itemsError) throw itemsError
+
+          const totalAmount = (itemsData || [])
+            .map(item => item.project_price || item.purchase_price || item.market_value || '0.00')
+            .reduce((sum: number, price: string) => sum + parseFloat(price || '0'), 0)
+            .toFixed(2)
+          const safeAmount = parseFloat(totalAmount) < 0 ? '0.00' : totalAmount
+          updateData = {
+            ...baseUpdateData,
+            amount: safeAmount
+          }
+        } else {
+          console.info('ℹ️ Skipping amount recalculation for non-canonical transaction add', {
+            transactionId,
+            itemId
+          })
         }
 
         const { error: updateError } = await supabase
@@ -2997,7 +3079,11 @@ export const unifiedItemsService = {
 
         if (updateError) throw updateError
 
-        console.log('🔄 Added item to existing transaction:', transactionId, 'new amount:', safeAmount)
+        if (shouldRecalculateAmount) {
+          console.log('🔄 Added item to existing transaction:', transactionId, 'new amount:', updateData.amount)
+        } else {
+          console.log('🔗 Added item to non-canonical transaction without changing amount:', transactionId)
+        }
 
         // Log transaction update (catch errors to prevent cascading failures)
         try {
@@ -3123,7 +3209,8 @@ export const unifiedItemsService = {
     for (const itemData of itemsData) {
       const item = this._convertItemFromDb(itemData)
       const itemId = item.itemId
-      const finalAmount = allocationData.amount || itemData.project_price || itemData.market_value || '0.00'
+      const finalAmount =
+        allocationData.amount || itemData.project_price || itemData.purchase_price || itemData.market_value || '0.00'
       const currentTransactionId: string | null = itemData.transaction_id || null
 
       // Scenario A: Item currently in a Sale (Project X)
@@ -3244,7 +3331,7 @@ export const unifiedItemsService = {
       throw new Error('Item not found')
     }
 
-    const finalAmount = amount || item.projectPrice || item.marketValue || '0.00'
+    const finalAmount = amount || item.projectPrice || item.purchasePrice || item.marketValue || '0.00'
     const currentTransactionId: string | null = item.transactionId || null
 
     console.log('🔄 Starting return process:', {
@@ -3386,14 +3473,14 @@ export const unifiedItemsService = {
       // Get all items to recalculate amount
       const { data: itemsData, error: itemsError } = await supabase
         .from('items')
-        .select('project_price, market_value')
+        .select('project_price, purchase_price, market_value')
         .eq('account_id', accountId)
         .in('item_id', updatedItemIds)
 
       if (itemsError) throw itemsError
 
       const totalAmount = (itemsData || [])
-        .map(current => current.project_price || current.market_value || '0.00')
+        .map(current => current.project_price || current.purchase_price || current.market_value || '0.00')
         .reduce((sum: number, price: string) => sum + parseFloat(price || '0'), 0)
         .toFixed(2)
 
@@ -3871,7 +3958,12 @@ export const deallocationService = {
           console.log('🔁 Detected purchase-reversion: removing from INV_PURCHASE and returning to inventory')
 
           // Remove item from the existing purchase (will delete if empty)
-          await unifiedItemsService.removeItemFromTransaction(accountId, item.itemId, item.transactionId, item.projectPrice || item.marketValue || '0.00')
+          await unifiedItemsService.removeItemFromTransaction(
+            accountId,
+            item.itemId,
+            item.transactionId,
+            item.projectPrice || item.purchasePrice || item.marketValue || '0.00'
+          )
 
           // Update the item to reflect it's back in business inventory
           await unifiedItemsService.updateItem(accountId, item.itemId, {
@@ -3889,7 +3981,7 @@ export const deallocationService = {
               scenario: 'purchase_reversion',
               from_transaction: item.transactionId,
               to_status: 'inventory',
-              amount: item.projectPrice || item.marketValue || '0.00'
+              amount: item.projectPrice || item.purchasePrice || item.marketValue || '0.00'
             })
           } catch (auditError) {
             console.warn('⚠️ Failed to log deallocation completion for purchase-reversion:', auditError)
@@ -3952,7 +4044,7 @@ export const deallocationService = {
           action: 'deallocation_completed',
           from_project_id: item.projectId,
           to_transaction: transactionId,
-          amount: item.projectPrice || item.marketValue || '0.00'
+          amount: item.projectPrice || item.purchasePrice || item.marketValue || '0.00'
         })
       } catch (auditError) {
         console.warn('⚠️ Failed to log deallocation completion:', auditError)
@@ -4005,7 +4097,12 @@ export const deallocationService = {
         console.log('ℹ️ ensureSaleTransaction detected existing INV_PURCHASE for same project; performing purchase-reversion instead of creating INV_SALE')
 
         // Remove the item from the purchase and return to inventory
-        await unifiedItemsService.removeItemFromTransaction(accountId, item.itemId, item.transactionId, item.projectPrice || item.marketValue || '0.00')
+        await unifiedItemsService.removeItemFromTransaction(
+          accountId,
+          item.itemId,
+          item.transactionId,
+          item.projectPrice || item.purchasePrice || item.marketValue || '0.00'
+        )
         await unifiedItemsService.updateItem(accountId, item.itemId, {
           projectId: null,
           inventoryStatus: 'available',
@@ -4039,14 +4136,14 @@ export const deallocationService = {
       // Get all items to recalculate amount
       const { data: itemsData, error: itemsError } = await supabase
         .from('items')
-        .select('project_price, market_value')
+        .select('project_price, purchase_price, market_value')
         .eq('account_id', accountId)
         .in('item_id', updatedItemIds)
 
       if (itemsError) throw itemsError
 
       const totalAmount = (itemsData || [])
-        .map(item => item.project_price || item.market_value || '0.00')
+        .map(item => item.project_price || item.purchase_price || item.market_value || '0.00')
         .reduce((sum: number, price: string) => sum + parseFloat(price || '0'), 0)
         .toFixed(2)
 
@@ -4069,7 +4166,7 @@ export const deallocationService = {
       console.log('🔄 Updated INV_SALE transaction with', updatedItemIds.length, 'items, amount:', totalAmount)
     } else {
       // Calculate amount from item for new transaction
-      const calculatedAmount = item.projectPrice || item.marketValue || '0.00'
+      const calculatedAmount = item.projectPrice || item.purchasePrice || item.marketValue || '0.00'
 
       // New transaction - create Sale transaction (project moving item TO inventory)
       const now = new Date()

@@ -42,6 +42,9 @@
    ```1248:1367:src/services/inventoryService.ts```  
    ```1:2:supabase/migrations/20251231_enable_transactions_replica_identity_full.sql```  
    ```1:11:supabase/migrations/20251231_clear_orphaned_item_transactions.sql```
+5. **Resolved — Item deletions left phantom IDs in `transactions.item_ids`.** Added `remove_deleted_item_ref(...)` plus trigger `trg_items_after_delete_sync_item_ids` so any hard delete immediately strips the orphaned ID, recomputes the transaction amount, and updates `updated_at`. The migration’s DO block backfills existing gaps and the diagnostic query (`unnest(item_ids)` LEFT JOIN `items`) now returns zero rows.  
+   ```1:99:supabase/migrations/20251231_sync_transaction_item_ids_on_delete.sql```  
+   ```1:50:dev_docs/actively_implementing/REALTIME_SUBSCRIPTION_AUDIT.md```
 
 ## Findings (Latest)
 | # | Area | Status | Notes |
