@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { offlineStore } from '../offlineStore'
 import { operationQueue } from '../operationQueue'
 import { offlineItemService } from '../offlineItemService'
+import * as supabaseModule from '../supabase'
+
+let userSpy: ReturnType<typeof vi.spyOn> | null = null
 
 // Mock network state
 const mockNavigator = {
@@ -14,12 +17,18 @@ Object.defineProperty(navigator, 'onLine', {
 
 describe('Offline Integration Tests', () => {
   beforeEach(async () => {
+    userSpy = vi.spyOn(supabaseModule, 'getCurrentUser').mockResolvedValue({
+      id: 'test-user',
+      email: 'offline@test.local'
+    } as any)
     await offlineStore.init()
     await offlineStore.clearAll()
     await operationQueue.clearQueue()
   })
 
   afterEach(async () => {
+    userSpy?.mockRestore()
+    userSpy = null
     await offlineStore.clearAll()
     await operationQueue.clearQueue()
     vi.clearAllMocks()
@@ -185,7 +194,7 @@ describe('Offline Integration Tests', () => {
   describe('Storage Management', () => {
     it('should handle storage quota limits', async () => {
       // Mock storage quota check to return high usage
-      vi.spyOn(offlineStore, 'checkStorageQuota').mockResolvedValue({
+      const quotaSpy = vi.spyOn(offlineStore, 'checkStorageQuota').mockResolvedValue({
         usageBytes: 45 * 1024 * 1024, // 45MB
         quotaBytes: 50 * 1024 * 1024,  // 50MB
         usageRatio: 0.9
@@ -200,6 +209,8 @@ describe('Offline Integration Tests', () => {
       await expect(
         offlineMediaService.saveMediaFile('acc-123', 'item-123', file)
       ).rejects.toThrow('Storage quota nearly full')
+
+      quotaSpy.mockRestore()
     })
 
     it('should cleanup expired media', async () => {

@@ -2,7 +2,6 @@ import { offlineStore } from './offlineStore'
 
 export class OfflineMediaService {
   private readonly MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB per file
-  private readonly MAX_TOTAL_SIZE = 40 * 1024 * 1024 // 40MB total for media
 
   async saveMediaFile(
     accountId: string,
@@ -17,8 +16,14 @@ export class OfflineMediaService {
 
     // Check total storage usage
     const quotaStatus = await offlineStore.checkStorageQuota()
-    if (quotaStatus.usageBytes + file.size > this.MAX_TOTAL_SIZE) {
+    const projectedUsage = quotaStatus.usageBytes + file.size
+
+    if (projectedUsage > quotaStatus.quotaBytes) {
       throw new Error('Not enough storage space. Please delete some media files first.')
+    }
+
+    if (projectedUsage / quotaStatus.quotaBytes >= 0.9) {
+      throw new Error('Storage quota nearly full')
     }
 
     // Save to IndexedDB

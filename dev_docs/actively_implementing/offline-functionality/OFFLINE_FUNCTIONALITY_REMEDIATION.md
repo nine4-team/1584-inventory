@@ -31,10 +31,10 @@ Document the gap-closing work required to make Phases 1–3 production-ready for
 ### Workstreams & Tasks
 
 #### 1. Data Access Layer
-- [ ] Introduce an `offlineAwareQuery` helper that wraps React Query + IndexedDB (read-through, write-back).
-- [ ] Refactor item/transaction services to fetch from `offlineStore` when offline and hydrate caches on successful network fetches.
-- [ ] Extend `offlineStore` API (getAll, getById, upsert, delete) and stop resetting `version`/`last_synced_at` blindly.
-- [ ] Add migrations/versioning to `offlineStore` so schema changes can roll out safely.
+- [x] Introduce an `offlineAwareQuery` helper that wraps React Query + IndexedDB (read-through, write-back).
+- [x] Refactor item/transaction services to fetch from `offlineStore` when offline and hydrate caches on successful network fetches.
+- [x] Extend `offlineStore` API (getAll, getById, upsert, delete) and stop resetting `version`/`last_synced_at` blindly.
+- [x] Add migrations/versioning to `offlineStore` so schema changes can roll out safely.
 
 #### 2. Operation Queue & Sync
 - [ ] Move queue persistence from `localStorage` to IndexedDB (new `operations` store) with per-account partitioning.

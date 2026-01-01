@@ -1,7 +1,10 @@
+import type { ItemImage } from '@/types'
+
 interface DBItem {
   itemId: string
   accountId?: string
   projectId?: string | null
+  transactionId?: string | null
   name?: string
   description: string
   source: string
@@ -18,6 +21,7 @@ interface DBItem {
   bookmark: boolean
   dateCreated: string
   lastUpdated: string
+  images?: ItemImage[]
   taxRatePct?: number
   taxAmountPurchasePrice?: string
   taxAmountProjectPrice?: string
@@ -32,6 +36,7 @@ interface DBItem {
 
 interface DBTransaction {
   transactionId: string
+  accountId: string
   projectId?: string | null
   transactionDate: string
   source: string
@@ -52,6 +57,7 @@ interface DBTransaction {
   subtotal?: string
   needsReview?: boolean
   sumItemPurchasePrices?: string
+  itemIds?: string[]
   version: number
   last_synced_at?: string
 }
@@ -126,16 +132,34 @@ interface DBConflict {
 
 class OfflineStore {
   private db: IDBDatabase | null = null
+  private initPromise: Promise<void> | null = null
   private readonly dbName = 'ledger-offline'
   private readonly dbVersion = 2 // Increment when schema changes
 
   async init(): Promise<void> {
-    return new Promise((resolve, reject) => {
+    if (this.db) {
+      return
+    }
+
+    if (this.initPromise) {
+      return this.initPromise
+    }
+
+    if (typeof indexedDB === 'undefined') {
+      console.warn('IndexedDB is not available in this environment; offline cache disabled.')
+      return
+    }
+
+    this.initPromise = new Promise((resolve, reject) => {
       const request = indexedDB.open(this.dbName, this.dbVersion)
 
-      request.onerror = () => reject(request.error)
+      request.onerror = () => {
+        this.initPromise = null
+        reject(request.error)
+      }
       request.onsuccess = () => {
         this.db = request.result
+        this.initPromise = null
         resolve()
       }
 
@@ -148,6 +172,8 @@ class OfflineStore {
         this.runMigrations(db, oldVersion, upgradeTransaction)
       }
     })
+
+    return this.initPromise
   }
 
   private runMigrations(db: IDBDatabase, oldVersion: number, transaction: IDBTransaction | null): void {

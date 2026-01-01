@@ -1,7 +1,6 @@
 import { offlineStore, type DBItem } from './offlineStore'
 import { supabase } from './supabase'
 import { operationQueue } from './operationQueue'
-import { useOfflineAwareQuery } from '../hooks/useOfflineAwareQuery'
 import type { Item } from '../types'
 import type { Operation } from '../types/operations'
 

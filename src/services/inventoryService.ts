@@ -4,6 +4,7 @@ import { toDateOnlyString } from '@/utils/dateUtils'
 import { getTaxPresetById } from './taxPresetsService'
 import { CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { lineageService } from './lineageService'
+import { offlineStore, type DBItem, type DBTransaction } from './offlineStore'
 import type { Item, Project, FilterOptions, PaginationOptions, Transaction, TransactionItemFormData, TransactionCompleteness, CompletenessStatus, ItemImage } from '@/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
@@ -31,6 +32,224 @@ function syncProjectItemsRealtimeSnapshot(accountId: string, projectId: string, 
   if (!entry) return
   // Keep realtime cache aligned with server-truth so future events diff correctly.
   entry.data = [...nextItems]
+}
+
+const isBrowserOnline = () => {
+  if (typeof navigator === 'undefined') return true
+  return navigator.onLine
+}
+
+async function cacheItemsOffline(rows: any[]) {
+  if (!rows || rows.length === 0) return
+  try {
+    await offlineStore.init()
+    const dbItems: DBItem[] = rows.map(mapSupabaseItemToOfflineRecord)
+    await offlineStore.saveItems(dbItems)
+  } catch (error) {
+    console.warn('Failed to cache items offline:', error)
+  }
+}
+
+async function cacheTransactionsOffline(rows: any[]) {
+  if (!rows || rows.length === 0) return
+  try {
+    await offlineStore.init()
+    const dbTransactions: DBTransaction[] = rows.map(mapSupabaseTransactionToOfflineRecord)
+    await offlineStore.saveTransactions(dbTransactions)
+  } catch (error) {
+    console.warn('Failed to cache transactions offline:', error)
+  }
+}
+
+function mapSupabaseItemToOfflineRecord(row: any): DBItem {
+  const converted = convertTimestamps(row)
+  return {
+    itemId: converted.item_id || converted.id,
+    accountId: converted.account_id,
+    projectId: converted.project_id ?? null,
+    transactionId: converted.transaction_id ?? null,
+    name: converted.name || undefined,
+    description: converted.description || '',
+    source: converted.source || '',
+    sku: converted.sku || '',
+    price: converted.price || undefined,
+    purchasePrice: converted.purchase_price || undefined,
+    projectPrice: converted.project_price || undefined,
+    marketValue: converted.market_value || undefined,
+    paymentMethod: converted.payment_method || '',
+    disposition: converted.disposition || undefined,
+    notes: converted.notes || undefined,
+    space: converted.space || undefined,
+    qrKey: converted.qr_key || '',
+    bookmark: converted.bookmark ?? false,
+    dateCreated: converted.date_created || converted.created_at || new Date().toISOString(),
+    lastUpdated: converted.last_updated || converted.updated_at || new Date().toISOString(),
+    images: Array.isArray(converted.images) ? converted.images : [],
+    taxRatePct: converted.tax_rate_pct ? Number(converted.tax_rate_pct) : undefined,
+    taxAmountPurchasePrice: converted.tax_amount_purchase_price || undefined,
+    taxAmountProjectPrice: converted.tax_amount_project_price || undefined,
+    createdBy: converted.created_by || undefined,
+    inventoryStatus: converted.inventory_status || undefined,
+    businessInventoryLocation: converted.business_inventory_location || undefined,
+    originTransactionId: converted.origin_transaction_id ?? null,
+    latestTransactionId: converted.latest_transaction_id ?? null,
+    version: converted.version ?? 1,
+    last_synced_at: new Date().toISOString()
+  }
+}
+
+function mapOfflineItemToSupabaseShape(item: DBItem) {
+  return {
+    item_id: item.itemId,
+    account_id: item.accountId,
+    project_id: item.projectId ?? null,
+    transaction_id: item.transactionId ?? null,
+    name: item.name ?? '',
+    description: item.description ?? '',
+    source: item.source ?? '',
+    sku: item.sku ?? '',
+    price: item.price ?? null,
+    purchase_price: item.purchasePrice ?? null,
+    project_price: item.projectPrice ?? null,
+    market_value: item.marketValue ?? null,
+    payment_method: item.paymentMethod ?? '',
+    disposition: item.disposition ?? null,
+    notes: item.notes ?? null,
+    space: item.space ?? null,
+    qr_key: item.qrKey ?? '',
+    bookmark: item.bookmark ?? false,
+    date_created: item.dateCreated,
+    created_at: item.dateCreated,
+    last_updated: item.lastUpdated,
+    updated_at: item.lastUpdated,
+    images: item.images ?? [],
+    tax_rate_pct: item.taxRatePct ?? null,
+    tax_amount_purchase_price: item.taxAmountPurchasePrice ?? null,
+    tax_amount_project_price: item.taxAmountProjectPrice ?? null,
+    created_by: item.createdBy ?? null,
+    inventory_status: item.inventoryStatus ?? null,
+    business_inventory_location: item.businessInventoryLocation ?? null,
+    origin_transaction_id: item.originTransactionId ?? null,
+    latest_transaction_id: item.latestTransactionId ?? null,
+    version: item.version ?? 1
+  }
+}
+
+function mapSupabaseTransactionToOfflineRecord(row: any): DBTransaction {
+  const converted = convertTimestamps(row)
+  return {
+    transactionId: converted.transaction_id,
+    accountId: converted.account_id,
+    projectId: converted.project_id ?? null,
+    transactionDate: converted.transaction_date,
+    source: converted.source || '',
+    transactionType: converted.transaction_type || '',
+    paymentMethod: converted.payment_method || '',
+    amount: converted.amount || '0.00',
+    budgetCategory: converted.budget_category || undefined,
+    categoryId: converted.category_id || undefined,
+    notes: converted.notes || undefined,
+    receiptEmailed: converted.receipt_emailed ?? false,
+    createdAt: converted.created_at,
+    createdBy: converted.created_by || '',
+    status: converted.status || undefined,
+    reimbursementType: converted.reimbursement_type || undefined,
+    triggerEvent: converted.trigger_event || undefined,
+    taxRatePreset: converted.tax_rate_preset || undefined,
+    taxRatePct: converted.tax_rate_pct ? Number(converted.tax_rate_pct) : undefined,
+    subtotal: converted.subtotal || undefined,
+    needsReview: converted.needs_review ?? undefined,
+    sumItemPurchasePrices: converted.sum_item_purchase_prices !== undefined ? String(converted.sum_item_purchase_prices) : undefined,
+    itemIds: Array.isArray(converted.item_ids) ? converted.item_ids : [],
+    version: converted.version ?? 1,
+    last_synced_at: new Date().toISOString()
+  }
+}
+
+function mapOfflineTransactionToSupabaseShape(tx: DBTransaction) {
+  return {
+    transaction_id: tx.transactionId,
+    account_id: tx.accountId,
+    project_id: tx.projectId ?? null,
+    transaction_date: tx.transactionDate,
+    source: tx.source ?? '',
+    transaction_type: tx.transactionType ?? '',
+    payment_method: tx.paymentMethod ?? '',
+    amount: tx.amount ?? '0.00',
+    budget_category: tx.budgetCategory ?? null,
+    category_id: tx.categoryId ?? null,
+    notes: tx.notes ?? null,
+    receipt_emailed: tx.receiptEmailed ?? false,
+    created_at: tx.createdAt,
+    created_by: tx.createdBy ?? '',
+    status: tx.status ?? null,
+    reimbursement_type: tx.reimbursementType ?? null,
+    trigger_event: tx.triggerEvent ?? null,
+    tax_rate_preset: tx.taxRatePreset ?? null,
+    tax_rate_pct: tx.taxRatePct ?? null,
+    subtotal: tx.subtotal ?? null,
+    needs_review: tx.needsReview ?? null,
+    sum_item_purchase_prices: tx.sumItemPurchasePrices ?? null,
+    item_ids: tx.itemIds ?? [],
+    version: tx.version ?? 1
+  }
+}
+
+function applyItemFiltersOffline(items: Item[], filters?: FilterOptions) {
+  if (!filters) return items
+  let result = [...items]
+
+  if (filters.status) {
+    result = result.filter(item => item.disposition === filters.status)
+  }
+
+  if (filters.category) {
+    result = result.filter(item => (item.source || '').toLowerCase() === filters.category?.toLowerCase())
+  }
+
+  if (filters.priceRange) {
+    result = result.filter(item => {
+      const value = parseFloat(item.projectPrice || item.purchasePrice || '0')
+      return value >= filters.priceRange!.min && value <= filters.priceRange!.max
+    })
+  }
+
+  if (filters.searchQuery) {
+    const query = filters.searchQuery.toLowerCase()
+    result = result.filter(item => {
+      return (
+        (item.description || '').toLowerCase().includes(query) ||
+        (item.source || '').toLowerCase().includes(query) ||
+        (item.sku || '').toLowerCase().includes(query) ||
+        (item.paymentMethod || '').toLowerCase().includes(query)
+      )
+    })
+  }
+
+  return result
+}
+
+function applyPagination<T>(items: T[], pagination?: PaginationOptions) {
+  if (!pagination) return items
+  const page = Math.max(1, pagination.page)
+  const start = (page - 1) * pagination.limit
+  return items.slice(start, start + pagination.limit)
+}
+
+function sortItemsOffline(items: Item[]) {
+  return [...items].sort((a, b) => {
+    const aDate = new Date(a.dateCreated || a.lastUpdated || 0).getTime()
+    const bDate = new Date(b.dateCreated || b.lastUpdated || 0).getTime()
+    return bDate - aDate
+  })
+}
+
+function sortTransactionsOffline(transactions: Transaction[]) {
+  return [...transactions].sort((a, b) => {
+    const aDate = new Date(a.createdAt || a.transactionDate || 0).getTime()
+    const bDate = new Date(b.createdAt || b.transactionDate || 0).getTime()
+    return bDate - aDate
+  })
 }
 
 async function detachItemsFromTransaction(accountId: string, transactionId: string): Promise<string[]> {
@@ -620,90 +839,132 @@ export const transactionService = {
   },
   // Get transactions for a project (account-scoped)
   async getTransactions(accountId: string, projectId: string): Promise<Transaction[]> {
-    await ensureAuthenticatedForDatabase()
+    const online = isBrowserOnline()
+    if (online) {
+      try {
+        await ensureAuthenticatedForDatabase()
 
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('project_id', projectId)
-      .order('created_at', { ascending: false })
+        const { data, error } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('account_id', accountId)
+          .eq('project_id', projectId)
+          .order('created_at', { ascending: false })
 
-    if (error) throw error
+        if (error) throw error
+        void cacheTransactionsOffline(data || [])
 
-    const transactions = (data || []).map(tx => _convertTransactionFromDb(tx))
-    return await _enrichTransactionsWithProjectNames(accountId, transactions)
+        const transactions = (data || []).map(tx => _convertTransactionFromDb(tx))
+        return await _enrichTransactionsWithProjectNames(accountId, transactions)
+      } catch (error) {
+        console.warn('Failed to fetch project transactions from network, using offline cache:', error)
+      }
+    }
+
+    return await this._getTransactionsOffline(accountId, projectId)
   },
 
   // Get transactions for multiple projects (account-scoped)
   async getTransactionsForProjects(accountId: string, projectIds: string[], projects?: Project[]): Promise<Transaction[]> {
-    await ensureAuthenticatedForDatabase()
-
     if (projectIds.length === 0) {
       return []
     }
 
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('account_id', accountId)
-      .in('project_id', projectIds)
-      .order('created_at', { ascending: false })
+    const online = isBrowserOnline()
+    if (online) {
+      try {
+        await ensureAuthenticatedForDatabase()
 
-    if (error) throw error
+        const { data, error } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('account_id', accountId)
+          .in('project_id', projectIds)
+          .order('created_at', { ascending: false })
 
-    const transactions = (data || []).map(tx => _convertTransactionFromDb(tx))
-    return await _enrichTransactionsWithProjectNames(accountId, transactions, projects)
+        if (error) throw error
+        void cacheTransactionsOffline(data || [])
+
+        const transactions = (data || []).map(tx => _convertTransactionFromDb(tx))
+        return await _enrichTransactionsWithProjectNames(accountId, transactions, projects)
+      } catch (error) {
+        console.warn('Failed to fetch multi-project transactions, using offline cache:', error)
+      }
+    }
+
+    return await this._getTransactionsForProjectsOffline(accountId, projectIds, projects)
   },
 
   // Get single transaction (account-scoped)
   async getTransaction(accountId: string, _projectId: string, transactionId: string): Promise<Transaction | null> {
-    await ensureAuthenticatedForDatabase()
+    const online = isBrowserOnline()
+    if (online) {
+      try {
+        await ensureAuthenticatedForDatabase()
 
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('transaction_id', transactionId)
-      .single()
+        const { data, error } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('account_id', accountId)
+          .eq('transaction_id', transactionId)
+          .single()
 
-    if (error) {
-      if (error.code === 'PGRST116') {
-        return null
+        if (error) {
+          if (error.code === 'PGRST116') {
+            return null
+          }
+          throw error
+        }
+
+        if (!data) return null
+        void cacheTransactionsOffline([data])
+
+        const transaction = _convertTransactionFromDb(data)
+        const enriched = await _enrichTransactionsWithProjectNames(accountId, [transaction])
+        return enriched[0] || null
+      } catch (error) {
+        console.warn('Failed to fetch transaction from network, falling back to offline cache:', error)
       }
-      throw error
     }
 
-    if (!data) return null
-
-    const transaction = _convertTransactionFromDb(data)
-    const enriched = await _enrichTransactionsWithProjectNames(accountId, [transaction])
-    return enriched[0] || null
+    const offline = await this._getTransactionByIdOffline(accountId, transactionId)
+    return offline.transaction
   },
 
   // Get transaction by ID across all projects (for business inventory) - account-scoped
   async getTransactionById(accountId: string, transactionId: string): Promise<{ transaction: Transaction | null; projectId: string | null }> {
-    await ensureAuthenticatedForDatabase()
+    const online = isBrowserOnline()
+    if (online) {
+      try {
+        await ensureAuthenticatedForDatabase()
 
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('transaction_id', transactionId)
-      .single()
+        const { data, error } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('account_id', accountId)
+          .eq('transaction_id', transactionId)
+          .single()
 
-    if (error || !data) {
-      return { transaction: null, projectId: null }
+        if (error || !data) {
+          return { transaction: null, projectId: null }
+        }
+
+        void cacheTransactionsOffline([data])
+
+        const converted = convertTimestamps(data)
+        const transaction = _convertTransactionFromDb(data)
+        const enriched = await _enrichTransactionsWithProjectNames(accountId, [transaction])
+
+        return {
+          transaction: enriched[0] || transaction,
+          projectId: converted.project_id || null
+        }
+      } catch (error) {
+        console.warn('Failed to fetch transaction by ID, using offline cache:', error)
+      }
     }
 
-    const converted = convertTimestamps(data)
-    const transaction = _convertTransactionFromDb(data)
-    const enriched = await _enrichTransactionsWithProjectNames(accountId, [transaction])
-
-    return {
-      transaction: enriched[0] || transaction,
-      projectId: converted.project_id || null
-    }
+    return await this._getTransactionByIdOffline(accountId, transactionId)
   },
 
   // Calculate transaction completeness metrics
@@ -1044,6 +1305,62 @@ export const transactionService = {
     }, debounceMs)
 
     return p
+  },
+
+  _convertOfflineTransaction(dbTransaction: DBTransaction): Transaction {
+    return _convertTransactionFromDb(mapOfflineTransactionToSupabaseShape(dbTransaction))
+  },
+
+  async _getTransactionsOffline(accountId: string, projectId: string): Promise<Transaction[]> {
+    try {
+      await offlineStore.init()
+      const cached = await offlineStore.getTransactions(projectId)
+      const filtered = cached.filter(tx => tx.accountId === accountId)
+      const transactions = filtered.map(tx => this._convertOfflineTransaction(tx))
+      const sorted = sortTransactionsOffline(transactions)
+      return await _enrichTransactionsWithProjectNames(accountId, sorted)
+    } catch (error) {
+      console.warn('Failed to read offline transactions for project:', error)
+      return []
+    }
+  },
+
+  async _getTransactionsForProjectsOffline(accountId: string, projectIds: string[], projects?: Project[]): Promise<Transaction[]> {
+    try {
+      await offlineStore.init()
+      const aggregated: Transaction[] = []
+      for (const projectId of projectIds) {
+        const cached = await offlineStore.getTransactions(projectId)
+        cached
+          .filter(tx => tx.accountId === accountId)
+          .forEach(tx => aggregated.push(this._convertOfflineTransaction(tx)))
+      }
+      const sorted = sortTransactionsOffline(aggregated)
+      return await _enrichTransactionsWithProjectNames(accountId, sorted, projects)
+    } catch (error) {
+      console.warn('Failed to read offline transactions for projects:', error)
+      return []
+    }
+  },
+
+  async _getTransactionByIdOffline(accountId: string, transactionId: string): Promise<{ transaction: Transaction | null; projectId: string | null }> {
+    try {
+      await offlineStore.init()
+      const cached = await offlineStore.getTransactionById(transactionId)
+      if (!cached || cached.accountId !== accountId) {
+        return { transaction: null, projectId: null }
+      }
+
+      const transaction = this._convertOfflineTransaction(cached)
+      const enriched = await _enrichTransactionsWithProjectNames(accountId, [transaction])
+      return {
+        transaction: enriched[0] || transaction,
+        projectId: cached.projectId ?? null
+      }
+    } catch (error) {
+      console.warn('Failed to read offline transaction:', error)
+      return { transaction: null, projectId: null }
+    }
   },
 
   // Find suggested items to add to transaction (unassociated items with same vendor)
@@ -1782,6 +2099,96 @@ export const unifiedItemsService = {
     return dbItem
   },
 
+  _convertOfflineItem(dbItem: DBItem): Item {
+    return this._convertItemFromDb(mapOfflineItemToSupabaseShape(dbItem))
+  },
+
+  async _getProjectItemsOffline(
+    accountId: string,
+    projectId: string,
+    filters?: FilterOptions,
+    pagination?: PaginationOptions
+  ): Promise<Item[]> {
+    try {
+      await offlineStore.init()
+      const cached = await offlineStore.getItems(projectId)
+      const items = cached
+        .filter(item => !item.accountId || item.accountId === accountId)
+        .map(item => this._convertOfflineItem(item))
+      const filtered = applyItemFiltersOffline(items, filters)
+      const sorted = sortItemsOffline(filtered)
+      return applyPagination(sorted, pagination)
+    } catch (error) {
+      console.warn('Failed to read offline items for project:', error)
+      return []
+    }
+  },
+
+  async _getBusinessInventoryOffline(
+    accountId: string,
+    filters?: { status?: string; searchQuery?: string },
+    pagination?: PaginationOptions
+  ): Promise<Item[]> {
+    try {
+      await offlineStore.init()
+      const cached = await offlineStore.getAllItems()
+      let items = cached
+        .filter(item => !item.projectId)
+        .filter(item => !item.accountId || item.accountId === accountId)
+        .map(item => this._convertOfflineItem(item))
+
+      if (filters?.status) {
+        items = items.filter(item => item.inventoryStatus === filters.status)
+      }
+      if (filters?.searchQuery) {
+        const query = filters.searchQuery.toLowerCase()
+        items = items.filter(item =>
+          (item.description || '').toLowerCase().includes(query) ||
+          (item.source || '').toLowerCase().includes(query) ||
+          (item.sku || '').toLowerCase().includes(query) ||
+          (item.businessInventoryLocation || '').toLowerCase().includes(query)
+        )
+      }
+
+      const sorted = sortItemsOffline(items)
+      return applyPagination(sorted, pagination)
+    } catch (error) {
+      console.warn('Failed to read offline business inventory:', error)
+      return []
+    }
+  },
+
+  async _getTransactionItemsOffline(
+    accountId: string,
+    transactionId: string
+  ): Promise<Item[]> {
+    try {
+      await offlineStore.init()
+      const cached = await offlineStore.getAllItems()
+      const items = cached
+        .filter(item => item.transactionId === transactionId)
+        .filter(item => !item.accountId || item.accountId === accountId)
+        .map(item => this._convertOfflineItem(item))
+      return sortItemsOffline(items)
+    } catch (error) {
+      console.warn('Failed to read offline transaction items:', error)
+      return []
+    }
+  },
+
+  async _getItemByIdOffline(accountId: string, itemId: string): Promise<Item | null> {
+    try {
+      await offlineStore.init()
+      const cached = await offlineStore.getItemById(itemId)
+      if (!cached) return null
+      if (cached.accountId && cached.accountId !== accountId) return null
+      return this._convertOfflineItem(cached)
+    } catch (error) {
+      console.warn('Failed to read offline item:', error)
+      return null
+    }
+  },
+
   async bulkUpdateItemImages(
     accountId: string,
     updates: Array<{ itemId: string; images: ItemImage[] }>
@@ -1814,49 +2221,54 @@ export const unifiedItemsService = {
     filters?: FilterOptions,
     pagination?: PaginationOptions
   ): Promise<Item[]> {
-    await ensureAuthenticatedForDatabase()
+    const online = isBrowserOnline()
+    if (online) {
+      try {
+        await ensureAuthenticatedForDatabase()
 
-    let query = supabase
-      .from('items')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('project_id', projectId)
+        let query = supabase
+          .from('items')
+          .select('*')
+          .eq('account_id', accountId)
+          .eq('project_id', projectId)
 
-    // Apply filters
-    if (filters?.status) {
-      query = query.eq('disposition', filters.status)
+        if (filters?.status) {
+          query = query.eq('disposition', filters.status)
+        }
+
+        if (filters?.category) {
+          query = query.eq('source', filters.category)
+        }
+
+        if (filters?.priceRange) {
+          query = query.gte('project_price', filters.priceRange.min.toString())
+          query = query.lte('project_price', filters.priceRange.max.toString())
+        }
+
+        if (filters?.searchQuery) {
+          query = query.or(`description.ilike.%${filters.searchQuery}%,source.ilike.%${filters.searchQuery}%,sku.ilike.%${filters.searchQuery}%,payment_method.ilike.%${filters.searchQuery}%`)
+        }
+
+        query = query
+          .order('created_at', { ascending: false, nullsFirst: false })
+          .order('date_created', { ascending: false, nullsFirst: false })
+
+        if (pagination) {
+          const offset = pagination.page > 0 ? (pagination.page - 1) * pagination.limit : 0
+          query = query.range(offset, offset + pagination.limit - 1)
+        }
+
+        const { data, error } = await query
+        if (error) throw error
+
+        void cacheItemsOffline(data || [])
+        return (data || []).map(item => this._convertItemFromDb(item))
+      } catch (error) {
+        console.warn('Failed to fetch project items from network, falling back to offline cache:', error)
+      }
     }
 
-    if (filters?.category) {
-      query = query.eq('source', filters.category)
-    }
-
-    if (filters?.priceRange) {
-      query = query.gte('project_price', filters.priceRange.min.toString())
-      query = query.lte('project_price', filters.priceRange.max.toString())
-    }
-
-    // Apply search (using ilike for case-insensitive search)
-    if (filters?.searchQuery) {
-      query = query.or(`description.ilike.%${filters.searchQuery}%,source.ilike.%${filters.searchQuery}%,sku.ilike.%${filters.searchQuery}%,payment_method.ilike.%${filters.searchQuery}%`)
-    }
-
-    // Apply sorting that remains stable when an item is edited
-    query = query
-      .order('created_at', { ascending: false, nullsFirst: false })
-      .order('date_created', { ascending: false, nullsFirst: false })
-
-    // Apply pagination
-    if (pagination) {
-      const offset = pagination.page > 0 ? (pagination.page - 1) * pagination.limit : 0
-      query = query.range(offset, offset + pagination.limit - 1)
-    }
-
-    const { data, error } = await query
-
-    if (error) throw error
-
-    return (data || []).map(item => this._convertItemFromDb(item))
+    return await this._getProjectItemsOffline(accountId, projectId, filters, pagination)
   },
 
   // Subscribe to items for a project with real-time updates
@@ -1985,40 +2397,45 @@ export const unifiedItemsService = {
     filters?: { status?: string; searchQuery?: string },
     pagination?: PaginationOptions
   ): Promise<Item[]> {
-    await ensureAuthenticatedForDatabase()
+    const online = isBrowserOnline()
+    if (online) {
+      try {
+        await ensureAuthenticatedForDatabase()
 
-    let query = supabase
-      .from('items')
-      .select('*')
-      .eq('account_id', accountId)
-      .is('project_id', null)
+        let query = supabase
+          .from('items')
+          .select('*')
+          .eq('account_id', accountId)
+          .is('project_id', null)
 
-    // Apply filters
-    if (filters?.status) {
-      query = query.eq('inventory_status', filters.status)
+        if (filters?.status) {
+          query = query.eq('inventory_status', filters.status)
+        }
+
+        if (filters?.searchQuery) {
+          query = query.or(`description.ilike.%${filters.searchQuery}%,source.ilike.%${filters.searchQuery}%,sku.ilike.%${filters.searchQuery}%,business_inventory_location.ilike.%${filters.searchQuery}%`)
+        }
+
+        query = query
+          .order('created_at', { ascending: false, nullsFirst: false })
+          .order('date_created', { ascending: false, nullsFirst: false })
+
+        if (pagination) {
+          const offset = pagination.page > 0 ? (pagination.page - 1) * pagination.limit : 0
+          query = query.range(offset, offset + pagination.limit - 1)
+        }
+
+        const { data, error } = await query
+
+        if (error) throw error
+        void cacheItemsOffline(data || [])
+        return (data || []).map(item => this._convertItemFromDb(item))
+      } catch (error) {
+        console.warn('Failed to fetch business inventory from network, using offline cache:', error)
+      }
     }
 
-    // Apply search
-    if (filters?.searchQuery) {
-      query = query.or(`description.ilike.%${filters.searchQuery}%,source.ilike.%${filters.searchQuery}%,sku.ilike.%${filters.searchQuery}%,business_inventory_location.ilike.%${filters.searchQuery}%`)
-    }
-
-    // Apply sorting that remains stable when an item is edited
-    query = query
-      .order('created_at', { ascending: false, nullsFirst: false })
-      .order('date_created', { ascending: false, nullsFirst: false })
-
-    // Apply pagination
-    if (pagination) {
-      const offset = pagination.page > 0 ? (pagination.page - 1) * pagination.limit : 0
-      query = query.range(offset, offset + pagination.limit - 1)
-    }
-
-    const { data, error } = await query
-
-    if (error) throw error
-
-    return (data || []).map(item => this._convertItemFromDb(item))
+    return await this._getBusinessInventoryOffline(accountId, filters, pagination)
   },
 
   subscribeToBusinessInventory(
@@ -2381,18 +2798,26 @@ export const unifiedItemsService = {
 
   // Get items for a transaction (by transaction_id) (account-scoped)
   async getItemsForTransaction(accountId: string, _projectId: string, transactionId: string): Promise<Item[]> {
-    await ensureAuthenticatedForDatabase()
+    const online = isBrowserOnline()
+    if (online) {
+      try {
+        await ensureAuthenticatedForDatabase()
+        const { data, error } = await supabase
+          .from('items')
+          .select('*')
+          .eq('account_id', accountId)
+          .eq('transaction_id', transactionId)
+          .order('date_created', { ascending: true })
 
-    const { data, error } = await supabase
-      .from('items')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('transaction_id', transactionId)
-      .order('date_created', { ascending: true })
+        if (error) throw error
+        void cacheItemsOffline(data || [])
+        return (data || []).map(item => this._convertItemFromDb(item))
+      } catch (error) {
+        console.warn('Failed to fetch transaction items from network, using offline cache:', error)
+      }
+    }
 
-    if (error) throw error
-
-    return (data || []).map(item => this._convertItemFromDb(item))
+    return await this._getTransactionItemsOffline(accountId, transactionId)
   },
 
   // Allocate single item to project (follows ALLOCATION_TRANSACTION_LOGIC.md deterministic flows) (account-scoped)
@@ -3658,25 +4083,34 @@ export const unifiedItemsService = {
 
   // Helper function to get item by ID (account-scoped)
   async getItemById(accountId: string, itemId: string): Promise<Item | null> {
-    await ensureAuthenticatedForDatabase()
+    const online = isBrowserOnline()
+    if (online) {
+      try {
+        await ensureAuthenticatedForDatabase()
 
-    const { data, error } = await supabase
-      .from('items')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('item_id', itemId)
-      .single()
+        const { data, error } = await supabase
+          .from('items')
+          .select('*')
+          .eq('account_id', accountId)
+          .eq('item_id', itemId)
+          .single()
 
-    if (error) {
-      if (error.code === 'PGRST116') {
-        return null
+        if (error) {
+          if (error.code === 'PGRST116') {
+            return null
+          }
+          throw error
+        }
+
+        if (!data) return null
+        void cacheItemsOffline([data])
+        return this._convertItemFromDb(data)
+      } catch (error) {
+        console.warn('Failed to fetch item by ID from network, using offline cache:', error)
       }
-      throw error
     }
 
-    if (!data) return null
-
-    return this._convertItemFromDb(data)
+    return await this._getItemByIdOffline(accountId, itemId)
   },
 
   // Duplicate an existing item (unified collection version) (account-scoped)

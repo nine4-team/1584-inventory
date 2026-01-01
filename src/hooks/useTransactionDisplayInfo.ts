@@ -1,6 +1,9 @@
-import { useQuery, useQueryClient, QueryClient } from '@tanstack/react-query'
+import { useQueryClient, QueryClient } from '@tanstack/react-query'
 import { getTransactionDisplayInfo, getTransactionRoute } from '@/utils/transactionDisplayUtils'
 import { getGlobalQueryClient } from '@/utils/queryClient'
+import { useOfflineAwareQuery } from './useOfflineAwareQuery'
+import { offlineStore } from '@/services/offlineStore'
+import { projectTransactionDetail } from '@/utils/routes'
 
 // Utility function to invalidate transaction display info cache (can be called from services)
 export function invalidateTransactionDisplayInfo(accountId: string, transactionId: string) {
@@ -22,7 +25,7 @@ export function useTransactionDisplayInfo(
 
   const queryKey = ['transaction-display-info', accountId, transactionId]
 
-  const query = useQuery({
+  const query = useOfflineAwareQuery({
     queryKey,
     queryFn: async () => {
       if (!accountId || !transactionId) {
@@ -35,6 +38,33 @@ export function useTransactionDisplayInfo(
       ])
 
       return { displayInfo, route }
+    },
+    offlineFallback: async () => {
+      if (!accountId || !transactionId) {
+        return { displayInfo: null, route: null }
+      }
+
+      try {
+        await offlineStore.init()
+        const cached = await offlineStore.getTransactionById(transactionId)
+        if (!cached) {
+          return null
+        }
+
+        const displayInfo = buildDisplayInfoFromOffline(cached.source, transactionId, cached.amount)
+        const resolvedProjectId = projectId ?? cached.projectId ?? null
+        const route = resolvedProjectId
+          ? {
+              path: projectTransactionDetail(resolvedProjectId, transactionId),
+              projectId: resolvedProjectId
+            }
+          : { path: '/projects', projectId: null }
+
+        return { displayInfo, route }
+      } catch (error) {
+        console.warn('Failed to get offline transaction display info:', error)
+        return null
+      }
     },
     enabled: !!(accountId && transactionId),
     staleTime: 5 * 60 * 1000, // 5 minutes
@@ -58,4 +88,29 @@ export function useTransactionDisplayInfo(
     invalidate,
     invalidateAll,
   }
+}
+
+function buildDisplayInfoFromOffline(source: string, transactionId: string | null | undefined, amount: string | undefined | null) {
+  const title = formatTransactionTitle(transactionId, source, 20)
+  const formattedAmount = `$${parseFloat(amount || '0').toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })}`
+
+  return { title, amount: formattedAmount }
+}
+
+function formatTransactionTitle(transactionId: string | null | undefined, source: string, maxLength: number) {
+  if (transactionId?.startsWith('INV_SALE_')) {
+    return 'Company Inventory Sale'
+  }
+  if (transactionId?.startsWith('INV_PURCHASE_')) {
+    return 'Company Inventory Purchase'
+  }
+
+  let title = source || 'Transaction'
+  if (title.length > maxLength) {
+    title = `${title.substring(0, maxLength - 3)}...`
+  }
+  return title
 }

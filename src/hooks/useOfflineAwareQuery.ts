@@ -1,23 +1,59 @@
-import { useQuery, useQueryClient, UseQueryOptions } from '@tanstack/react-query'
+import { useEffect, useRef } from 'react'
+import { useQuery, useQueryClient, UseQueryOptions, QueryKey } from '@tanstack/react-query'
 import { useNetworkState } from './useNetworkState'
 import { offlineStore } from '../services/offlineStore'
 
-interface OfflineAwareQueryOptions<T> extends Omit<UseQueryOptions<T>, 'queryFn'> {
-  queryKey: any[]
-  queryFn: () => Promise<T>
-  offlineFallback?: () => Promise<T | null>
-  onSuccess?: (data: T) => Promise<void> | void
+interface OfflineAwareQueryOptions<TData, TError = unknown>
+  extends Omit<UseQueryOptions<TData, TError>, 'queryFn' | 'queryKey'> {
+  queryKey: QueryKey
+  queryFn: () => Promise<TData>
+  offlineFallback?: () => Promise<TData | null>
+  onSuccess?: (data: TData) => Promise<void> | void
 }
 
-export function useOfflineAwareQuery<T = unknown>({
+export function useOfflineAwareQuery<TData = unknown, TError = unknown>({
   queryKey,
   queryFn,
   offlineFallback,
   onSuccess,
   ...options
-}: OfflineAwareQueryOptions<T>) {
+}: OfflineAwareQueryOptions<TData, TError>) {
   const { isOnline } = useNetworkState()
   const queryClient = useQueryClient()
+  const hydratedKeyRef = useRef<string | null>(null)
+  const serializedKey = JSON.stringify(queryKey)
+
+  useEffect(() => {
+    hydratedKeyRef.current = null
+  }, [serializedKey])
+
+  useEffect(() => {
+    if (!offlineFallback) return
+    if (hydratedKeyRef.current === serializedKey && queryClient.getQueryData<TData>(queryKey)) {
+      return
+    }
+
+    let cancelled = false
+    hydratedKeyRef.current = serializedKey
+
+    const hydrate = async () => {
+      try {
+        const offlineData = await offlineFallback()
+        if (cancelled) return
+        if (offlineData !== null && offlineData !== undefined) {
+          queryClient.setQueryData(queryKey, offlineData)
+        }
+      } catch (error) {
+        console.warn('Failed to hydrate query from offline cache:', error)
+      }
+    }
+
+    hydrate()
+
+    return () => {
+      cancelled = true
+    }
+  }, [offlineFallback, queryClient, queryKey, serializedKey])
 
   return useQuery({
     queryKey,
@@ -40,6 +76,11 @@ export function useOfflineAwareQuery<T = unknown>({
 
       // Fall back to offline data
       if (offlineFallback) {
+        try {
+          await offlineStore.init()
+        } catch (error) {
+          console.warn('Failed to initialize offline store before fallback:', error)
+        }
         const offlineData = await offlineFallback()
         if (offlineData !== null) {
           return offlineData
@@ -57,11 +98,11 @@ export function useOfflineAwareQuery<T = unknown>({
 }
 
 // Helper hook for simple offline-aware queries with automatic caching
-export function useCachedQuery<T = unknown>(
-  queryKey: any[],
-  fetchFn: () => Promise<T>,
+export function useCachedQuery<TData = unknown, TError = unknown>(
+  queryKey: QueryKey,
+  fetchFn: () => Promise<TData>,
   cacheKey: string,
-  options?: Partial<UseQueryOptions<T>>
+  options?: Partial<UseQueryOptions<TData, TError>>
 ) {
   const { isOnline } = useNetworkState()
 
@@ -70,16 +111,18 @@ export function useCachedQuery<T = unknown>(
     queryFn: fetchFn,
     offlineFallback: async () => {
       try {
+        await offlineStore.init()
         // Try to get from IndexedDB cache
         const cached = await offlineStore.getCachedData(cacheKey)
-        return cached as T | null
+        return cached as TData | null
       } catch {
         return null
       }
     },
-    onSuccess: async (data: T) => {
+    onSuccess: async (data: TData) => {
       // Cache successful responses
       try {
+        await offlineStore.init()
         await offlineStore.setCachedData(cacheKey, data)
       } catch (error) {
         console.warn('Failed to cache data:', error)
