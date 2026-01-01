@@ -41,6 +41,9 @@ Document the gap-closing work required to make Phases 1–3 production-ready for
 4. **Regression coverage**
    - No automated test currently toggles `navigator.onLine = false` during item creation to assert queue writes + conflict surfacing.
    - Add Vitest/Cypress coverage that runs through Add→sync→conflict scenarios and validates IndexedDB persistence survives reloads.
+5. **Conflict persistence dedup**
+   - Every sync retry re-saved the same conflicts with a timestamp-based ID, so the IndexedDB store inflated to hundreds of entries while the queue only blocked on four real divergences.
+   - `offlineStore.saveConflict` now upserts per `(accountId, itemId, field, type)`, `conflictDetector` wipes the project snapshot before recalculating, **but QA still observes the conflict counter growing on Project `6bb65110-90bc-42ea-a5fa-1b7bfd5d7d70` even after hard refresh/retry**. Need another pass (likely logging inside `deleteAllConflictsForProject` + `saveConflict`) to verify IndexedDB cleanup and ensure the UI reflects only the latest detection results.
 
 ### Implementation Guardrails
 1. **Reuse existing primitives** – extend `offlineItemService`, `operationQueue`, `offlineStore`, `useNetworkState`, `RetrySyncButton`, and `offlineAwareQuery` rather than introducing component-specific hacks. `unifiedItemsService` becomes the single orchestrator that decides between online/offline paths.
@@ -59,8 +62,8 @@ Document the gap-closing work required to make Phases 1–3 production-ready for
 - [x] Refactor item/transaction services to fetch from `offlineStore` when offline and hydrate caches on successful network fetches.
 - [x] Extend `offlineStore` API (getAll, getById, upsert, delete) and stop resetting `version`/`last_synced_at` blindly.
 - [x] Add migrations/versioning to `offlineStore` so schema changes can roll out safely.
-- [ ] Route item create/update/delete flows (`AddItem`, `TransactionDetail` inline forms, business inventory screens) through `offlineItemService`/`operationQueue` instead of `unifiedItemsService` direct Supabase calls.
-- [ ] Add regression coverage that forces airplane mode while saving an item and verifies queue persistence + optimistic UI hydration.
+- [x] Route item create/update/delete flows (`AddItem`, `TransactionDetail` inline forms, business inventory screens) through `offlineItemService`/`operationQueue` via offline-aware `unifiedItemsService` orchestrator.
+- [x] Add regression coverage that forces airplane mode while saving an item and verifies queue persistence + optimistic UI hydration.
 
 #### 2. Operation Queue & Sync
 - [x] Move queue persistence from `localStorage` to IndexedDB (new `operations` store) with per-account partitioning. (`offlineStore` now exposes a v4 schema + compound `accountId_timestamp` index; `operationQueue` always hydrates/persists per-account snapshots.)

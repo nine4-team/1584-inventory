@@ -21,12 +21,12 @@ export interface BaseOperation {
 export interface CreateItemOperation extends BaseOperation {
   type: 'CREATE_ITEM'
   data: {
+    id: string // item_id (business identifier)
     accountId: string
     projectId: string
     name: string
     description?: string
-    quantity: number
-    unitCost: number
+    purchasePrice?: string // Actual purchase price from item data
   }
 }
 
@@ -38,8 +38,7 @@ export interface UpdateItemOperation extends BaseOperation {
     updates: Partial<{
       name: string
       description: string
-      quantity: number
-      unitCost: number
+      purchasePrice: string // Actual purchase price from updates
     }>
   }
 }

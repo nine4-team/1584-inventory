@@ -6,6 +6,7 @@ import { offlineMediaService } from '../offlineMediaService'
 import * as supabaseModule from '../supabase'
 import { conflictDetector } from '../conflictDetector'
 import { conflictResolver } from '../conflictResolver'
+import { unifiedItemsService } from '../inventoryService'
 
 let userSpy: ReturnType<typeof vi.spyOn> | null = null
 let getSessionSpy: ReturnType<typeof vi.spyOn> | null = null
@@ -162,9 +163,12 @@ describe('Offline Integration Tests', () => {
       const createOp = {
         type: 'CREATE_ITEM' as const,
         data: {
+          id: 'item-integration-test',
           accountId: TEST_ACCOUNT_ID,
           projectId: 'proj-123',
-          name: 'Original Item'
+          name: 'Original Item',
+          quantity: 1,
+          unitCost: 0
         }
       }
 
@@ -437,6 +441,133 @@ describe('Offline Integration Tests', () => {
       expect(cachedItems).toHaveLength(2)
       expect(cachedItems[0].name).toBe('Cached Item 1')
       expect(cachedItems[1].name).toBe('Cached Item 2')
+    })
+  })
+
+  describe('Offline Item Creation via unifiedItemsService', () => {
+    it('should queue item creation when offline and persist to IndexedDB', async () => {
+      // Start offline
+      mockNavigator.onLine = false
+
+      const itemData = {
+        projectId: 'proj-123',
+        description: 'Test item',
+        source: 'Test Source',
+        sku: 'TEST-001',
+        purchasePrice: '100.00',
+        projectPrice: '150.00',
+        paymentMethod: 'cash',
+        qrKey: 'QR-TEST-001',
+        bookmark: false,
+        disposition: 'purchased' as const
+      }
+
+      // Create item via unifiedItemsService (should delegate to offlineItemService)
+      const itemId = await unifiedItemsService.createItem(TEST_ACCOUNT_ID, itemData)
+
+      // Verify operation is queued
+      expect(operationQueue.getQueueLength()).toBe(1)
+      const pendingOps = operationQueue.getPendingOperations()
+      expect(pendingOps[0].type).toBe('CREATE_ITEM')
+      expect(pendingOps[0].accountId).toBe(TEST_ACCOUNT_ID)
+
+      // Verify optimistic item is stored in offlineStore
+      const cachedItems = await offlineStore.getAllItems()
+      const cachedItem = cachedItems.find(item => item.description === 'Test item')
+      expect(cachedItem).toBeDefined()
+      expect(cachedItem?.accountId).toBe(TEST_ACCOUNT_ID)
+      expect(cachedItem?.projectId).toBe('proj-123')
+
+      // Verify itemId is a temp ID (starts with 'temp-')
+      expect(itemId).toMatch(/^temp-/)
+    })
+
+    it('should persist queue across app reloads', async () => {
+      // Start offline
+      mockNavigator.onLine = false
+
+      const itemData = {
+        projectId: 'proj-123',
+        description: 'Persistent item',
+        source: 'Test Source',
+        sku: 'TEST-002',
+        purchasePrice: '200.00',
+        projectPrice: '250.00',
+        paymentMethod: 'cash',
+        qrKey: 'QR-TEST-002',
+        bookmark: false,
+        disposition: 'purchased' as const
+      }
+
+      // Create item offline
+      await unifiedItemsService.createItem(TEST_ACCOUNT_ID, itemData)
+      expect(operationQueue.getQueueLength()).toBe(1)
+
+      // Simulate app reload by re-initializing operationQueue
+      await operationQueue.init()
+
+      // Verify queue persisted
+      expect(operationQueue.getQueueLength()).toBe(1)
+      const pendingOps = operationQueue.getPendingOperations()
+      expect(pendingOps[0].type).toBe('CREATE_ITEM')
+      expect(pendingOps[0].data).toMatchObject({
+        accountId: TEST_ACCOUNT_ID,
+        projectId: 'proj-123'
+      })
+    })
+
+    it('should handle conflict detection during sync', async () => {
+      // Start offline
+      mockNavigator.onLine = false
+
+      const itemData = {
+        projectId: 'proj-123',
+        description: 'Conflict item',
+        source: 'Test Source',
+        sku: 'TEST-003',
+        purchasePrice: '300.00',
+        projectPrice: '350.00',
+        paymentMethod: 'cash',
+        qrKey: 'QR-TEST-003',
+        bookmark: false,
+        disposition: 'purchased' as const
+      }
+
+      // Create item offline
+      await unifiedItemsService.createItem(TEST_ACCOUNT_ID, itemData)
+      expect(operationQueue.getQueueLength()).toBe(1)
+
+      // Mock conflict detection
+      conflictSpy?.mockResolvedValueOnce([
+        {
+          itemId: 'temp-item-id',
+          localVersion: 1,
+          serverVersion: 2,
+          localData: { description: 'Conflict item' },
+          serverData: { description: 'Updated on server' },
+          conflicts: ['description']
+        }
+      ])
+
+      // Come online and attempt sync
+      mockNavigator.onLine = true
+
+      // Mock server to return conflict
+      const fromSpy = vi.spyOn(supabaseModule.supabase, 'from').mockImplementation(() => ({
+        insert: () => ({
+          select: () => ({
+            single: () => Promise.reject(new Error('Conflict detected'))
+          })
+        })
+      } as any))
+
+      // Process queue (should detect conflict and block)
+      await operationQueue.processQueue()
+
+      // Verify conflict was detected
+      expect(conflictSpy).toHaveBeenCalled()
+
+      fromSpy.mockRestore()
     })
   })
 })

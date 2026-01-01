@@ -18,6 +18,8 @@ import { getUserFriendlyErrorMessage, getErrorAction } from '@/utils/imageUtils'
 import { useToast } from '@/components/ui/ToastContext'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { DISPOSITION_OPTIONS, displayDispositionLabel } from '@/utils/dispositionUtils'
+import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
+import { useNetworkState } from '@/hooks/useNetworkState'
 
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, COMPANY_NAME } from '@/constants/company'
 import { projectItems } from '@/utils/routes'
@@ -61,6 +63,8 @@ export default function AddItem() {
   const { hasRole } = useAuth()
   const { currentAccountId } = useAccount()
   const { showError } = useToast()
+  const { showOfflineSaved } = useOfflineFeedback()
+  const { isOnline } = useNetworkState()
 
   const [projectName, setProjectName] = useState<string>('')
 
@@ -210,7 +214,16 @@ export default function AddItem() {
         showError('Account ID is required')
         return
       }
+      
+      // Check if we're offline before creating - if so, show offline feedback
+      const wasOffline = !isOnline
       await unifiedItemsService.createItem(currentAccountId, itemData)
+      
+      // Show offline feedback if operation was queued
+      if (wasOffline) {
+        showOfflineSaved(null)
+      }
+      
       navigateToReturnToOrFallback(navigate, location, fallbackPath)
     } catch (error) {
       console.error('Error creating item:', error)

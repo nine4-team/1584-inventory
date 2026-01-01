@@ -1,5 +1,5 @@
 import { Operation, CreateItemOperation, UpdateItemOperation, DeleteItemOperation } from '../types/operations'
-import { offlineStore, type DBOperation } from './offlineStore'
+import { offlineStore, type DBOperation, type DBItem } from './offlineStore'
 import { supabase, getCurrentUser } from './supabase'
 import { conflictDetector } from './conflictDetector'
 import { registerBackgroundSync, notifySyncComplete, notifySyncStart } from './serviceWorker'
@@ -70,7 +70,7 @@ class OperationQueue {
     this.emitQueueChange()
   }
 
-  async add(operation: OperationInput, metadata: OperationMetadataOverride = {}): Promise<void> {
+  async add(operation: OperationInput, metadata: OperationMetadataOverride = {}): Promise<string> {
     await this.init()
 
     if (!this.context) {
@@ -104,9 +104,10 @@ class OperationQueue {
 
     const resolvedTimestamp = metadata.timestamp ?? new Date().toISOString()
     const resolvedVersion = metadata.version ?? 1
+    const operationId = crypto.randomUUID()
     const fullOperation = {
       ...operation,
-      id: crypto.randomUUID(),
+      id: operationId,
       timestamp: resolvedTimestamp,
       retryCount: 0,
       accountId: resolvedAccountId,
@@ -127,6 +128,8 @@ class OperationQueue {
     if (navigator.onLine) {
       void this.processQueue()
     }
+
+    return operationId
   }
 
   private inferAccountId(operation: OperationInput): string | undefined {
@@ -436,23 +439,51 @@ class OperationQueue {
     const { data, accountId, updatedBy, version } = operation
 
     try {
-      // Create on server first
+      // Get the full item data from local store - it has all the user's actual data
+      // This prevents conflicts by ensuring server gets the same data as local store
+      const localItem = await offlineStore.getItemById(data.id)
+      
+      if (!localItem) {
+        console.error(`Cannot create item: local item ${data.id} not found in offline store`)
+        return false
+      }
+
+      // Create on server using the FULL item data from local store, not just operation data
+      // This ensures source, sku, paymentMethod, qrKey, etc. match what user entered
       const { data: serverItem, error } = await supabase
         .from('items')
         .insert({
+          item_id: data.id, // CRITICAL: item_id is required and must be provided
           account_id: accountId,
-          project_id: data.projectId,
-          name: data.name,
-          description: data.description,
-          // Add other required fields with defaults
-          source: 'manual',
-          sku: `TEMP-${Date.now()}`,
-          payment_method: 'cash',
-          qr_key: crypto.randomUUID(),
-          bookmark: false,
-          date_created: new Date().toISOString(),
-          last_updated: new Date().toISOString(),
-          created_by: updatedBy,
+          project_id: localItem.projectId ?? data.projectId,
+          transaction_id: localItem.transactionId ?? null,
+          previous_project_transaction_id: localItem.previousProjectTransactionId ?? null,
+          previous_project_id: localItem.previousProjectId ?? null,
+          name: localItem.name ?? data.name ?? null,
+          description: localItem.description ?? data.description ?? null,
+          source: localItem.source ?? null, // NO DEFAULTS - send null if missing
+          sku: localItem.sku ?? null, // NO DEFAULTS - send null if missing
+          payment_method: localItem.paymentMethod ?? null, // NO DEFAULTS - send null if missing
+          qr_key: localItem.qrKey ?? null, // NO DEFAULTS - send null if missing (should be set during creation)
+          bookmark: localItem.bookmark ?? false,
+          disposition: localItem.disposition ?? null,
+          notes: localItem.notes ?? undefined,
+          space: localItem.space ?? undefined,
+          purchase_price: localItem.purchasePrice ?? undefined,
+          project_price: localItem.projectPrice ?? undefined,
+          market_value: localItem.marketValue ?? undefined,
+          tax_rate_pct: localItem.taxRatePct ?? undefined,
+          tax_amount_purchase_price: localItem.taxAmountPurchasePrice ?? undefined,
+          tax_amount_project_price: localItem.taxAmountProjectPrice ?? undefined,
+          inventory_status: localItem.inventoryStatus ?? undefined,
+          business_inventory_location: localItem.businessInventoryLocation ?? undefined,
+          origin_transaction_id: localItem.originTransactionId ?? null,
+          latest_transaction_id: localItem.latestTransactionId ?? null,
+          images: localItem.images ?? [],
+          date_created: localItem.dateCreated || new Date().toISOString(),
+          created_at: localItem.createdAt || localItem.dateCreated || new Date().toISOString(),
+          last_updated: localItem.lastUpdated || new Date().toISOString(),
+          created_by: localItem.createdBy || updatedBy,
           updated_by: updatedBy,
           version: version
         })
@@ -461,23 +492,41 @@ class OperationQueue {
 
       if (error) throw error
 
-      // Cache in local store with camelCase fields so downstream logic has account metadata
+      // Update local store with server response (which should match what we sent)
+      // This ensures local and server are in sync
       const cachedAt = new Date().toISOString()
-      const dbItem = {
-        itemId: serverItem.id,
+      const dbItem: DBItem = {
+        itemId: serverItem.item_id || data.id,
         accountId,
-        projectId: data.projectId,
-        name: serverItem.name,
-        description: serverItem.description ?? '',
-        source: serverItem.source ?? 'manual',
-        sku: serverItem.sku ?? '',
-        paymentMethod: serverItem.payment_method ?? 'cash',
-        disposition: serverItem.disposition ?? null,
-        notes: serverItem.notes ?? undefined,
-        qrKey: serverItem.qr_key,
-        bookmark: serverItem.bookmark ?? false,
-        dateCreated: serverItem.date_created ?? cachedAt,
-        lastUpdated: serverItem.last_updated ?? cachedAt,
+        projectId: serverItem.project_id ?? localItem.projectId ?? null,
+        transactionId: serverItem.transaction_id ?? localItem.transactionId ?? null,
+        previousProjectTransactionId: serverItem.previous_project_transaction_id ?? localItem.previousProjectTransactionId ?? null,
+        previousProjectId: serverItem.previous_project_id ?? localItem.previousProjectId ?? null,
+        name: serverItem.name ?? localItem.name,
+        description: serverItem.description ?? localItem.description ?? '',
+        source: serverItem.source ?? localItem.source ?? null, // NO DEFAULTS
+        sku: serverItem.sku ?? localItem.sku ?? null, // NO DEFAULTS
+        paymentMethod: serverItem.payment_method ?? localItem.paymentMethod ?? null, // NO DEFAULTS
+        disposition: serverItem.disposition ?? localItem.disposition ?? null,
+        notes: serverItem.notes ?? localItem.notes ?? undefined,
+        space: serverItem.space ?? localItem.space ?? undefined,
+        qrKey: serverItem.qr_key ?? localItem.qrKey,
+        bookmark: serverItem.bookmark ?? localItem.bookmark ?? false,
+        purchasePrice: serverItem.purchase_price ?? localItem.purchasePrice ?? undefined,
+        projectPrice: serverItem.project_price ?? localItem.projectPrice ?? undefined,
+        marketValue: serverItem.market_value ?? localItem.marketValue ?? undefined,
+        taxRatePct: serverItem.tax_rate_pct ?? localItem.taxRatePct ?? undefined,
+        taxAmountPurchasePrice: serverItem.tax_amount_purchase_price ?? localItem.taxAmountPurchasePrice ?? undefined,
+        taxAmountProjectPrice: serverItem.tax_amount_project_price ?? localItem.taxAmountProjectPrice ?? undefined,
+        inventoryStatus: serverItem.inventory_status ?? localItem.inventoryStatus ?? undefined,
+        businessInventoryLocation: serverItem.business_inventory_location ?? localItem.businessInventoryLocation ?? undefined,
+        originTransactionId: serverItem.origin_transaction_id ?? localItem.originTransactionId ?? null,
+        latestTransactionId: serverItem.latest_transaction_id ?? localItem.latestTransactionId ?? null,
+        dateCreated: serverItem.date_created ?? localItem.dateCreated ?? cachedAt,
+        lastUpdated: serverItem.last_updated ?? localItem.lastUpdated ?? cachedAt,
+        createdAt: serverItem.created_at ?? localItem.createdAt ?? cachedAt,
+        images: serverItem.images ?? localItem.images ?? [],
+        createdBy: serverItem.created_by ?? localItem.createdBy ?? updatedBy,
         version: version,
         last_synced_at: cachedAt
       }
@@ -494,34 +543,107 @@ class OperationQueue {
     const { data, accountId, updatedBy, version } = operation
 
     try {
-      // Update server first
-      const { error } = await supabase
+      // Get the full item data from local store - it has all the user's actual data
+      // This prevents conflicts by ensuring server gets the same data as local store
+      const localItem = await offlineStore.getItemById(data.id)
+      
+      if (!localItem) {
+        console.error(`Cannot update item: local item ${data.id} not found in offline store`)
+        return false
+      }
+
+      // Merge the operation updates into the full local item
+      // The operation may only have simplified fields, but localItem has everything
+      const updatedLocalItem: DBItem = {
+        ...localItem,
+        // Apply any updates from the operation (though localItem should already have them)
+        ...(data.updates.name !== undefined && { name: data.updates.name }),
+        ...(data.updates.description !== undefined && { description: data.updates.description }),
+        lastUpdated: new Date().toISOString(),
+        version: version
+      }
+
+      // Update on server using the FULL item data from local store, not just operation updates
+      // This ensures source, sku, paymentMethod, qrKey, purchasePrice, projectPrice, etc. 
+      // all match what user actually entered
+      const { data: serverItem, error } = await supabase
         .from('items')
         .update({
-          ...data.updates,
+          // Send all fields from the updated local item, not just the 4 simplified fields
+          project_id: updatedLocalItem.projectId ?? null,
+          transaction_id: updatedLocalItem.transactionId ?? null,
+          previous_project_transaction_id: updatedLocalItem.previousProjectTransactionId ?? null,
+          previous_project_id: updatedLocalItem.previousProjectId ?? null,
+          name: updatedLocalItem.name ?? null,
+          description: updatedLocalItem.description ?? null,
+          source: updatedLocalItem.source ?? null, // NO DEFAULTS - send null if missing
+          sku: updatedLocalItem.sku ?? null, // NO DEFAULTS - send null if missing
+          payment_method: updatedLocalItem.paymentMethod ?? null, // NO DEFAULTS - send null if missing
+          qr_key: updatedLocalItem.qrKey ?? null, // NO DEFAULTS - send null if missing
+          bookmark: updatedLocalItem.bookmark ?? false,
+          disposition: updatedLocalItem.disposition ?? null,
+          notes: updatedLocalItem.notes ?? undefined,
+          space: updatedLocalItem.space ?? undefined,
+          purchase_price: updatedLocalItem.purchasePrice ?? undefined,
+          project_price: updatedLocalItem.projectPrice ?? undefined,
+          market_value: updatedLocalItem.marketValue ?? undefined,
+          tax_rate_pct: updatedLocalItem.taxRatePct ?? undefined,
+          tax_amount_purchase_price: updatedLocalItem.taxAmountPurchasePrice ?? undefined,
+          tax_amount_project_price: updatedLocalItem.taxAmountProjectPrice ?? undefined,
+          inventory_status: updatedLocalItem.inventoryStatus ?? undefined,
+          business_inventory_location: updatedLocalItem.businessInventoryLocation ?? undefined,
+          origin_transaction_id: updatedLocalItem.originTransactionId ?? null,
+          latest_transaction_id: updatedLocalItem.latestTransactionId ?? null,
+          images: updatedLocalItem.images ?? [],
+          last_updated: updatedLocalItem.lastUpdated || new Date().toISOString(),
           updated_by: updatedBy,
-          version: version,
-          last_updated: new Date().toISOString()
+          version: version
         })
         .eq('item_id', data.id)
+        .select()
+        .single()
 
       if (error) throw error
 
-      // Update local store
-      const existingItems = await offlineStore.getAllItems()
-      const itemToUpdate = existingItems.find(item => item.itemId === data.id)
-
-      if (itemToUpdate) {
-        const updatedItem = {
-          ...itemToUpdate,
-          ...data.updates,
-          lastUpdated: new Date().toISOString(),
-          version: version,
-          updated_by: updatedBy,
-          last_synced_at: new Date().toISOString()
-        }
-        await offlineStore.saveItems([updatedItem])
+      // Update local store with server response (which should match what we sent)
+      // This ensures local and server are in sync
+      const cachedAt = new Date().toISOString()
+      const dbItem: DBItem = {
+        itemId: serverItem.item_id || data.id,
+        accountId,
+        projectId: serverItem.project_id ?? updatedLocalItem.projectId ?? null,
+        transactionId: serverItem.transaction_id ?? updatedLocalItem.transactionId ?? null,
+        previousProjectTransactionId: serverItem.previous_project_transaction_id ?? updatedLocalItem.previousProjectTransactionId ?? null,
+        previousProjectId: serverItem.previous_project_id ?? updatedLocalItem.previousProjectId ?? null,
+        name: serverItem.name ?? updatedLocalItem.name,
+        description: serverItem.description ?? updatedLocalItem.description ?? '',
+        source: serverItem.source ?? updatedLocalItem.source ?? null, // NO DEFAULTS
+        sku: serverItem.sku ?? updatedLocalItem.sku ?? null, // NO DEFAULTS
+        paymentMethod: serverItem.payment_method ?? updatedLocalItem.paymentMethod ?? null, // NO DEFAULTS
+        disposition: serverItem.disposition ?? updatedLocalItem.disposition ?? null,
+        notes: serverItem.notes ?? updatedLocalItem.notes ?? undefined,
+        space: serverItem.space ?? updatedLocalItem.space ?? undefined,
+        qrKey: serverItem.qr_key ?? updatedLocalItem.qrKey,
+        bookmark: serverItem.bookmark ?? updatedLocalItem.bookmark ?? false,
+        purchasePrice: serverItem.purchase_price ?? updatedLocalItem.purchasePrice ?? undefined,
+        projectPrice: serverItem.project_price ?? updatedLocalItem.projectPrice ?? undefined,
+        marketValue: serverItem.market_value ?? updatedLocalItem.marketValue ?? undefined,
+        taxRatePct: serverItem.tax_rate_pct ?? updatedLocalItem.taxRatePct ?? undefined,
+        taxAmountPurchasePrice: serverItem.tax_amount_purchase_price ?? updatedLocalItem.taxAmountPurchasePrice ?? undefined,
+        taxAmountProjectPrice: serverItem.tax_amount_project_price ?? updatedLocalItem.taxAmountProjectPrice ?? undefined,
+        inventoryStatus: serverItem.inventory_status ?? updatedLocalItem.inventoryStatus ?? undefined,
+        businessInventoryLocation: serverItem.business_inventory_location ?? updatedLocalItem.businessInventoryLocation ?? undefined,
+        originTransactionId: serverItem.origin_transaction_id ?? updatedLocalItem.originTransactionId ?? null,
+        latestTransactionId: serverItem.latest_transaction_id ?? updatedLocalItem.latestTransactionId ?? null,
+        lastUpdated: serverItem.last_updated ?? updatedLocalItem.lastUpdated ?? cachedAt,
+        dateCreated: serverItem.date_created ?? updatedLocalItem.dateCreated ?? cachedAt,
+        createdAt: serverItem.created_at ?? updatedLocalItem.createdAt ?? cachedAt,
+        images: serverItem.images ?? updatedLocalItem.images ?? [],
+        createdBy: serverItem.created_by ?? updatedLocalItem.createdBy,
+        version: version,
+        last_synced_at: cachedAt
       }
+      await offlineStore.saveItems([dbItem])
 
       return true
     } catch (error) {

@@ -1,5 +1,5 @@
 import { ConflictItem, Resolution, ConflictResolution } from '../types/conflicts'
-import { offlineStore } from './offlineStore'
+import { offlineStore, type DBItem } from './offlineStore'
 import { supabase } from './supabase'
 
 export class ConflictResolver {
@@ -64,12 +64,17 @@ export class ConflictResolver {
         break
       case 'keep_server':
         finalData = conflict.server.data
-        // Update local store
-        await offlineStore.saveItems([{
-          ...this.serverToLocalItem(conflict.server.data),
-          version: conflict.server.version,
-          last_synced_at: new Date().toISOString()
-        }])
+        // Update local store to match server exactly
+        const serverItem = this.serverToLocalItem(conflict.server.data, conflict.id)
+        serverItem.version = conflict.server.version
+        serverItem.lastUpdated = (conflict.server.data as any).last_updated || (conflict.server.data as any).lastUpdated || new Date().toISOString()
+        serverItem.last_synced_at = new Date().toISOString()
+        await offlineStore.saveItems([serverItem])
+        
+        // Delete all conflicts for this item after resolution
+        if ((conflict.local.data as any).accountId) {
+          await offlineStore.deleteConflictsForItems((conflict.local.data as any).accountId, [conflict.id])
+        }
         return
       case 'merge':
         // Simple merge strategy (server wins, but keep local description if server lacks one)
@@ -94,22 +99,38 @@ export class ConflictResolver {
 
     // Update server with resolved data using canonical column names
     // Match by item_id (business identifier) since conflict.id is the item_id, not the UUID primary key
-    const { error } = await supabase
+    const { error, data: updatedItem } = await supabase
       .from('items')
       .update(dbData)
       .eq('item_id', conflict.id)
+      .select()
+      .single()
 
     if (error) {
       console.error('Failed to update item in Supabase:', error)
       throw error
     }
 
-    // Update local store
-    await offlineStore.saveItems([{
-      ...this.serverToLocalItem(finalData),
-      version: Math.max(conflict.local.version, conflict.server.version) + 1,
-      last_synced_at: new Date().toISOString()
-    }])
+    // Update local store with the resolved data, using server's version and timestamp
+    // This ensures local and server are in sync after resolution
+    const normalizedItem = this.buildLocalItem(finalData, conflict)
+    
+    // Use server's version and timestamp to prevent immediate re-detection
+    if (updatedItem) {
+      normalizedItem.version = (updatedItem.version as number) || Math.max(conflict.local.version, conflict.server.version) + 1
+      normalizedItem.lastUpdated = (updatedItem.last_updated || updatedItem.updated_at) as string || new Date().toISOString()
+    } else {
+      normalizedItem.version = Math.max(conflict.local.version, conflict.server.version) + 1
+      normalizedItem.lastUpdated = new Date().toISOString()
+    }
+    normalizedItem.last_synced_at = new Date().toISOString()
+
+    await offlineStore.saveItems([normalizedItem])
+    
+    // Delete all conflicts for this item after resolution
+    if ((conflict.local.data as any).accountId) {
+      await offlineStore.deleteConflictsForItems((conflict.local.data as any).accountId, [conflict.id])
+    }
   }
 
   private convertToDatabaseFormat(localData: Record<string, unknown>): Record<string, unknown> {
@@ -156,39 +177,120 @@ export class ConflictResolver {
     return dbData
   }
 
-  private serverToLocalItem(serverItem: Record<string, unknown>): Record<string, unknown> {
-    // Use item_id (business identifier) as itemId, fallback to id (UUID) if item_id missing
+  private serverToLocalItem(serverData: Record<string, unknown>, itemId: string): DBItem {
+    // Convert snake_case server fields to camelCase for local storage
+    // Use item_id (business identifier) as itemId, fallback to provided itemId if item_id missing
+    const serverItem = serverData as any
+    const now = new Date().toISOString()
+    
+    const resolvedItemId = (serverItem.item_id as string) || (serverItem.id as string) || itemId
+    if (!resolvedItemId) {
+      throw new Error(`Cannot convert server item to local format: missing itemId. Provided itemId: ${itemId}`)
+    }
+    
     return {
-      itemId: (serverItem.item_id as string) || (serverItem.id as string),
+      itemId: resolvedItemId,
       accountId: serverItem.account_id as string,
-      projectId: serverItem.project_id as string | null,
-      transactionId: serverItem.transaction_id as string | null,
-      name: serverItem.name as string,
-      description: serverItem.description as string,
-      source: serverItem.source as string,
-      sku: serverItem.sku as string,
-      price: serverItem.price as string,
-      purchasePrice: serverItem.purchase_price as string,
-      projectPrice: serverItem.project_price as string,
-      marketValue: serverItem.market_value as string,
-      paymentMethod: serverItem.payment_method as string,
-      disposition: serverItem.disposition as string | null,
-      notes: serverItem.notes as string,
-      space: serverItem.space as string,
-      qrKey: serverItem.qr_key as string,
-      bookmark: serverItem.bookmark as boolean,
-      dateCreated: serverItem.date_created as string,
-      lastUpdated: (serverItem.updated_at || serverItem.last_updated) as string,
-      taxRatePct: serverItem.tax_rate_pct as number,
-      taxAmountPurchasePrice: serverItem.tax_amount_purchase_price as string,
-      taxAmountProjectPrice: serverItem.tax_amount_project_price as string,
-      createdBy: serverItem.created_by as string,
-      inventoryStatus: serverItem.inventory_status as 'available' | 'allocated' | 'sold',
-      businessInventoryLocation: serverItem.business_inventory_location as string,
-      originTransactionId: serverItem.origin_transaction_id as string | null,
-      latestTransactionId: serverItem.latest_transaction_id as string | null,
+      projectId: serverItem.project_id as string | null ?? null,
+      transactionId: serverItem.transaction_id as string | null ?? null,
+      name: serverItem.name as string | undefined,
+      description: serverItem.description as string ?? '',
+      source: serverItem.source as string ?? '',
+      sku: serverItem.sku as string ?? '',
+      price: serverItem.price as string | undefined,
+      purchasePrice: serverItem.purchase_price as string | undefined,
+      projectPrice: serverItem.project_price as string | undefined,
+      marketValue: serverItem.market_value as string | undefined,
+      paymentMethod: serverItem.payment_method as string ?? '',
+      disposition: serverItem.disposition as string | null ?? null,
+      notes: serverItem.notes as string | undefined,
+      space: serverItem.space as string | undefined,
+      qrKey: serverItem.qr_key as string ?? '',
+      bookmark: serverItem.bookmark as boolean ?? false,
+      dateCreated: serverItem.date_created as string || now,
+      lastUpdated: (serverItem.last_updated || serverItem.updated_at) as string || now,
+      images: Array.isArray(serverItem.images) ? serverItem.images : [],
+      taxRatePct: serverItem.tax_rate_pct ? Number(serverItem.tax_rate_pct) : undefined,
+      taxAmountPurchasePrice: serverItem.tax_amount_purchase_price as string | undefined,
+      taxAmountProjectPrice: serverItem.tax_amount_project_price as string | undefined,
+      createdBy: serverItem.created_by as string | undefined,
+      inventoryStatus: serverItem.inventory_status as 'available' | 'allocated' | 'sold' | undefined,
+      businessInventoryLocation: serverItem.business_inventory_location as string | undefined,
+      originTransactionId: serverItem.origin_transaction_id as string | null ?? null,
+      latestTransactionId: serverItem.latest_transaction_id as string | null ?? null,
       version: (serverItem.version as number) || 1,
       last_synced_at: new Date().toISOString()
+    }
+  }
+
+  private buildLocalItem(resolvedData: Record<string, unknown>, conflict: ConflictItem): DBItem {
+    const localSource = conflict.local.data || {}
+    const serverSource = conflict.server.data || {}
+
+    // Helper to convert snake_case to camelCase key
+    const toSnakeCase = (camelCase: string): string => {
+      return camelCase.replace(/([A-Z])/g, '_$1').toLowerCase()
+    }
+
+    const pickValue = (key: string, fallback?: unknown): any => {
+      // Check camelCase first (local format)
+      if (resolvedData[key] !== undefined) return resolvedData[key]
+      if ((localSource as any)[key] !== undefined) return (localSource as any)[key]
+      if ((serverSource as any)[key] !== undefined) return (serverSource as any)[key]
+      
+      // Check snake_case (server format) - only for resolvedData and serverSource
+      const snakeKey = toSnakeCase(key)
+      if (resolvedData[snakeKey] !== undefined) return resolvedData[snakeKey]
+      if ((serverSource as any)[snakeKey] !== undefined) return (serverSource as any)[snakeKey]
+      
+      // Special case for itemId: also check 'id' field
+      if (key === 'itemId') {
+        if (resolvedData.id !== undefined) return resolvedData.id
+        if ((serverSource as any).id !== undefined) return (serverSource as any).id
+      }
+      
+      return fallback
+    }
+
+    const now = new Date().toISOString()
+
+    const itemId = (pickValue('itemId') as string) || conflict.id
+    if (!itemId) {
+      throw new Error(`Cannot build local item: missing itemId. Conflict ID: ${conflict.id}`)
+    }
+
+    return {
+      itemId,
+      accountId: pickValue('accountId'),
+      projectId: pickValue('projectId') ?? null,
+      transactionId: pickValue('transactionId') ?? null,
+      name: pickValue('name'),
+      description: pickValue('description') ?? '',
+      source: pickValue('source') ?? '',
+      sku: pickValue('sku') ?? '',
+      price: pickValue('price'),
+      purchasePrice: pickValue('purchasePrice'),
+      projectPrice: pickValue('projectPrice'),
+      marketValue: pickValue('marketValue'),
+      paymentMethod: pickValue('paymentMethod') ?? '',
+      disposition: pickValue('disposition') ?? null,
+      notes: pickValue('notes'),
+      space: pickValue('space'),
+      qrKey: pickValue('qrKey') ?? '',
+      bookmark: pickValue('bookmark') ?? false,
+      dateCreated: pickValue('dateCreated') ?? now,
+      lastUpdated: pickValue('lastUpdated') ?? now,
+      images: pickValue('images') ?? [],
+      taxRatePct: pickValue('taxRatePct'),
+      taxAmountPurchasePrice: pickValue('taxAmountPurchasePrice'),
+      taxAmountProjectPrice: pickValue('taxAmountProjectPrice'),
+      createdBy: pickValue('createdBy'),
+      inventoryStatus: pickValue('inventoryStatus'),
+      businessInventoryLocation: pickValue('businessInventoryLocation'),
+      originTransactionId: pickValue('originTransactionId') ?? null,
+      latestTransactionId: pickValue('latestTransactionId') ?? null,
+      version: (pickValue('version') as number) || conflict.local.version || conflict.server.version || 1,
+      last_synced_at: now
     }
   }
 }

@@ -10,6 +10,8 @@ import { normalizeDisposition, displayDispositionLabel, DISPOSITION_OPTIONS } fr
 import { useToast } from '@/components/ui/ToastContext'
 import { lineageService } from '@/services/lineageService'
 import { ImageUploadService } from '@/services/imageService'
+import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
+import { useNetworkState } from '@/hooks/useNetworkState'
 import { formatCurrency, formatDate } from '@/utils/dateUtils'
 import { COMPANY_INVENTORY, COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE } from '@/constants/company'
 import { useBookmark } from '@/hooks/useBookmark'
@@ -66,6 +68,8 @@ export default function BusinessInventory() {
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
   const [openDispositionMenu, setOpenDispositionMenu] = useState<string | null>(null)
   const { showSuccess, showError } = useToast()
+  const { showOfflineSaved } = useOfflineFeedback()
+  const { isOnline } = useNetworkState()
 
   // Batch allocation state
   const [projects, setProjects] = useState<Project[]>([])
@@ -123,13 +127,18 @@ export default function BusinessInventory() {
       }
 
       if (!currentAccountId) throw new Error('Account ID is required')
+      const wasOffline = !isOnline
       await unifiedItemsService.updateItem(currentAccountId, itemId, { disposition: newDisposition })
 
       if (newDisposition === 'inventory') {
         try {
           await integrationService.handleItemDeallocation(currentAccountId, itemId, item.projectId || '', newDisposition)
           setOpenDispositionMenu(null)
-          showSuccess && showSuccess('Item moved to inventory')
+          if (wasOffline) {
+            showOfflineSaved(null)
+          } else {
+            showSuccess && showSuccess('Item moved to inventory')
+          }
         } catch (deallocationError) {
           console.error('Failed to handle deallocation:', deallocationError)
           await unifiedItemsService.updateItem(currentAccountId, itemId, { disposition: item.disposition })
@@ -139,6 +148,9 @@ export default function BusinessInventory() {
       } else {
         setItems(prev => prev.map(i => i.itemId === itemId ? { ...i, disposition: newDisposition } : i))
         setOpenDispositionMenu(null)
+        if (wasOffline) {
+          showOfflineSaved(null)
+        }
       }
     } catch (error) {
       console.error('Failed to update disposition:', error)

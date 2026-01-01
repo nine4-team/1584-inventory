@@ -72,16 +72,12 @@ export function useConflictResolution(accountId?: string, projectId?: string) {
     try {
       await conflictResolver.applyResolution(currentConflict, resolution)
 
-      // Remove resolved conflict from IndexedDB
+      // Delete all conflicts for this item (applyResolution already does this, but also clean up UI state)
       if (accountId) {
-        const storedConflicts = await offlineStore.getConflicts(accountId, false)
-        const conflictToDelete = storedConflicts.find(c => c.itemId === currentConflict.id)
-        if (conflictToDelete) {
-          await offlineStore.deleteConflict(conflictToDelete.id)
-        }
+        await offlineStore.deleteConflictsForItems(accountId, [currentConflict.id])
       }
 
-      // Move to next conflict
+      // Move to next conflict - filter out ALL conflicts for this item
       const remainingConflicts = conflicts.filter(c => c.id !== currentConflict.id)
       setConflicts(remainingConflicts)
       setCurrentConflict(remainingConflicts.length > 0 ? remainingConflicts[0] : null)
@@ -97,12 +93,47 @@ export function useConflictResolution(accountId?: string, projectId?: string) {
     setCurrentConflict(remainingConflicts.length > 0 ? remainingConflicts[0] : null)
   }
 
+  const resolveAllConflicts = async (defaultResolution: Resolution = { strategy: 'keep_server' }): Promise<void> => {
+    if (!accountId || conflicts.length === 0) return
+
+    setIsResolving(true)
+    try {
+      // Get unique item IDs to avoid resolving the same item multiple times
+      const uniqueItemIds = Array.from(new Set(conflicts.map(c => c.id)))
+      
+      // Resolve each unique item conflict
+      for (const itemId of uniqueItemIds) {
+        // Find the first conflict for this item
+        const conflictForItem = conflicts.find(c => c.id === itemId)
+        if (!conflictForItem) continue
+
+        try {
+          // Use default resolution (keep_server) for all conflicts
+          await conflictResolver.applyResolution(conflictForItem, defaultResolution)
+          
+          // Delete all conflicts for this item
+          await offlineStore.deleteConflictsForItems(accountId, [itemId])
+        } catch (error) {
+          console.error(`Failed to resolve conflict for item ${itemId}:`, error)
+          // Continue with other conflicts even if one fails
+        }
+      }
+
+      // Clear all conflicts from state
+      setConflicts([])
+      setCurrentConflict(null)
+    } finally {
+      setIsResolving(false)
+    }
+  }
+
   return {
     conflicts,
     currentConflict,
     isResolving,
     detectConflicts,
     resolveCurrentConflict,
+    resolveAllConflicts,
     skipCurrentConflict,
     hasConflicts: conflicts.length > 0
   }

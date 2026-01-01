@@ -79,6 +79,8 @@ function mapSupabaseItemToOfflineRecord(row: any): DBItem {
     accountId: converted.account_id,
     projectId: converted.project_id ?? null,
     transactionId: converted.transaction_id ?? null,
+    previousProjectTransactionId: converted.previous_project_transaction_id ?? null,
+    previousProjectId: converted.previous_project_id ?? null,
     name: converted.name || undefined,
     description: converted.description || '',
     source: converted.source || '',
@@ -95,6 +97,7 @@ function mapSupabaseItemToOfflineRecord(row: any): DBItem {
     bookmark: converted.bookmark ?? false,
     dateCreated: converted.date_created || converted.created_at || new Date().toISOString(),
     lastUpdated: converted.last_updated || converted.updated_at || new Date().toISOString(),
+    createdAt: converted.created_at || converted.date_created || new Date().toISOString(),
     images: Array.isArray(converted.images) ? converted.images : [],
     taxRatePct: converted.tax_rate_pct ? Number(converted.tax_rate_pct) : undefined,
     taxAmountPurchasePrice: converted.tax_amount_purchase_price || undefined,
@@ -115,11 +118,12 @@ function mapOfflineItemToSupabaseShape(item: DBItem) {
     account_id: item.accountId,
     project_id: item.projectId ?? null,
     transaction_id: item.transactionId ?? null,
+    previous_project_transaction_id: item.previousProjectTransactionId ?? null,
+    previous_project_id: item.previousProjectId ?? null,
     name: item.name ?? '',
     description: item.description ?? '',
     source: item.source ?? '',
     sku: item.sku ?? '',
-    price: item.price ?? null,
     purchase_price: item.purchasePrice ?? null,
     project_price: item.projectPrice ?? null,
     market_value: item.marketValue ?? null,
@@ -130,7 +134,7 @@ function mapOfflineItemToSupabaseShape(item: DBItem) {
     qr_key: item.qrKey ?? '',
     bookmark: item.bookmark ?? false,
     date_created: item.dateCreated,
-    created_at: item.dateCreated,
+    created_at: item.createdAt ?? item.dateCreated,
     last_updated: item.lastUpdated,
     updated_at: item.lastUpdated,
     images: item.images ?? [],
@@ -2533,110 +2537,166 @@ export const unifiedItemsService = {
     }
   },
 
-  // Create new item (account-scoped)
+  // Create new item (account-scoped) - offline-aware orchestrator
   async createItem(accountId: string, itemData: Omit<Item, 'itemId' | 'dateCreated' | 'lastUpdated'>): Promise<string> {
-    await ensureAuthenticatedForDatabase()
-
-    const now = new Date()
-    // Generate a unique item_id (using timestamp + random string format like the original)
-    const itemId = `I-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
-    const qrKey = `QR-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
-
-    // Convert camelCase itemData to database format
-    const dbItem = this._convertItemToDb({
-      ...itemData,
-      itemId,
-      qrKey: itemData.qrKey || qrKey
-    } as Item)
+    // Check network state and hydrate from offlineStore first
+    const online = isBrowserOnline()
     
-    // Set dateCreated and lastUpdated separately since they're omitted from the type
-    dbItem.date_created = toDateOnlyString(now)
-    dbItem.last_updated = now.toISOString()
-
-    // Set account_id and timestamps
-    dbItem.account_id = accountId
-    dbItem.created_at = now.toISOString()
-    if (!dbItem.date_created) dbItem.date_created = toDateOnlyString(now)
-    if (!dbItem.last_updated) dbItem.last_updated = now.toISOString()
-    if (!dbItem.inventory_status) dbItem.inventory_status = 'available'
-
-    // If item is being created with a transaction_id but missing tax_rate_pct,
-    // attempt to read the transaction and inherit its tax_rate_pct.
+    // Hydrate from offlineStore before attempting Supabase operations
     try {
-      if (dbItem.transaction_id && dbItem.tax_rate_pct === null) {
-        const { data: txData } = await supabase
-          .from('transactions')
-          .select('tax_rate_pct')
-          .eq('account_id', accountId)
-          .eq('transaction_id', dbItem.transaction_id)
-          .single()
-
-        if (txData && txData.tax_rate_pct !== undefined && txData.tax_rate_pct !== null) {
-          dbItem.tax_rate_pct = txData.tax_rate_pct
-        }
-      }
+      await offlineStore.init()
+      // Pre-hydrate any existing optimistic state
+      const existingItems = await offlineStore.getAllItems().catch(() => [])
     } catch (e) {
-      console.warn('Failed to inherit tax_rate_pct when creating item:', e)
+      console.warn('Failed to hydrate from offlineStore:', e)
     }
 
-    // Compute derived tax amounts (store as two-decimal strings). Treat empty/null prices as 0.
-    const computeTaxString = (priceStr: string | null | undefined, ratePct: number | undefined | null) => {
-      const priceNum = parseFloat(priceStr || '0')
-      const rate = (ratePct !== undefined && ratePct !== null) ? (Number(ratePct) / 100) : 0
-      const tax = Math.round((priceNum * rate) * 10000) / 10000
-      return tax.toFixed(4)
+    // If offline, delegate to offlineItemService
+    if (!online) {
+      const { offlineItemService } = await import('./offlineItemService')
+      const result = await offlineItemService.createItem(accountId, itemData)
+      // Return a temporary ID that will be replaced when sync completes
+      // The offlineItemService creates a temp ID internally
+      const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
+      return tempId
     }
 
-    dbItem.tax_amount_purchase_price = computeTaxString(dbItem.purchase_price, dbItem.tax_rate_pct)
-    dbItem.tax_amount_project_price = computeTaxString(dbItem.project_price, dbItem.tax_rate_pct)
-
-    const { error } = await supabase
-      .from('items')
-      .insert(dbItem)
-
-    if (error) throw error
-
+    // Online: try Supabase first, fall back to offline if it fails
     try {
-      if (dbItem.transaction_id) {
-        await _updateTransactionItemIds(accountId, dbItem.transaction_id, itemId, 'add')
-      }
-    } catch (e) {
-      console.warn('Failed to sync transaction item_ids after createItem:', e)
-    }
+      await ensureAuthenticatedForDatabase()
 
-    // If this item was created attached to a transaction, adjust that transaction's derived sum and recompute
-    try {
-      if (dbItem.transaction_id) {
-        const txId = dbItem.transaction_id
-        if (!transactionService._isBatchActive(accountId, txId)) {
-          try {
-            const purchasePriceRaw = dbItem.purchase_price ?? dbItem.price ?? '0'
-            const delta = parseFloat(String(purchasePriceRaw) || '0')
-            transactionService.notifyTransactionChanged(accountId, txId, { deltaSum: delta }).catch((e: any) => {
-              console.warn('Failed to notifyTransactionChanged after creating item:', e)
-            })
-          } catch (e) {
-            console.warn('Failed computing delta for created item:', e)
+      const now = new Date()
+      // Generate a unique item_id (using timestamp + random string format like the original)
+      const itemId = `I-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
+      const qrKey = `QR-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
+
+      // Convert camelCase itemData to database format
+      const dbItem = this._convertItemToDb({
+        ...itemData,
+        itemId,
+        qrKey: itemData.qrKey || qrKey
+      } as Item)
+      
+      // Set dateCreated and lastUpdated separately since they're omitted from the type
+      dbItem.date_created = toDateOnlyString(now)
+      dbItem.last_updated = now.toISOString()
+
+      // Set account_id and timestamps
+      dbItem.account_id = accountId
+      dbItem.created_at = now.toISOString()
+      if (!dbItem.date_created) dbItem.date_created = toDateOnlyString(now)
+      if (!dbItem.last_updated) dbItem.last_updated = now.toISOString()
+      if (!dbItem.inventory_status) dbItem.inventory_status = 'available'
+
+      // If item is being created with a transaction_id but missing tax_rate_pct,
+      // attempt to read the transaction and inherit its tax_rate_pct.
+      try {
+        if (dbItem.transaction_id && dbItem.tax_rate_pct === null) {
+          const { data: txData } = await supabase
+            .from('transactions')
+            .select('tax_rate_pct')
+            .eq('account_id', accountId)
+            .eq('transaction_id', dbItem.transaction_id)
+            .single()
+
+          if (txData && txData.tax_rate_pct !== undefined && txData.tax_rate_pct !== null) {
+            dbItem.tax_rate_pct = txData.tax_rate_pct
           }
         }
+      } catch (e) {
+        console.warn('Failed to inherit tax_rate_pct when creating item:', e)
       }
-    } catch (e) {
-      console.warn('Failed to notifyTransactionChanged after creating item (sync path):', e)
-    }
 
-    return itemId
+      // Compute derived tax amounts (store as two-decimal strings). Treat empty/null prices as 0.
+      const computeTaxString = (priceStr: string | null | undefined, ratePct: number | undefined | null) => {
+        const priceNum = parseFloat(priceStr || '0')
+        const rate = (ratePct !== undefined && ratePct !== null) ? (Number(ratePct) / 100) : 0
+        const tax = Math.round((priceNum * rate) * 10000) / 10000
+        return tax.toFixed(4)
+      }
+
+      dbItem.tax_amount_purchase_price = computeTaxString(dbItem.purchase_price, dbItem.tax_rate_pct)
+      dbItem.tax_amount_project_price = computeTaxString(dbItem.project_price, dbItem.tax_rate_pct)
+
+      const { error } = await supabase
+        .from('items')
+        .insert(dbItem)
+
+      if (error) throw error
+
+      try {
+        if (dbItem.transaction_id) {
+          await _updateTransactionItemIds(accountId, dbItem.transaction_id, itemId, 'add')
+        }
+      } catch (e) {
+        console.warn('Failed to sync transaction item_ids after createItem:', e)
+      }
+
+      // If this item was created attached to a transaction, adjust that transaction's derived sum and recompute
+      try {
+        if (dbItem.transaction_id) {
+          const txId = dbItem.transaction_id
+          if (!transactionService._isBatchActive(accountId, txId)) {
+            try {
+              const purchasePriceRaw = dbItem.purchase_price ?? dbItem.price ?? '0'
+              const delta = parseFloat(String(purchasePriceRaw) || '0')
+              transactionService.notifyTransactionChanged(accountId, txId, { deltaSum: delta }).catch((e: any) => {
+                console.warn('Failed to notifyTransactionChanged after creating item:', e)
+              })
+            } catch (e) {
+              console.warn('Failed computing delta for created item:', e)
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to notifyTransactionChanged after creating item (sync path):', e)
+      }
+
+      return itemId
+    } catch (error) {
+      // Network request failed - fall back to offline queue
+      console.warn('Failed to create item online, falling back to offline queue:', error)
+      const { offlineItemService } = await import('./offlineItemService')
+      const result = await offlineItemService.createItem(accountId, itemData)
+      const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
+      return tempId
+    }
   },
 
-  // Update item (account-scoped)
+  // Update item (account-scoped) - offline-aware orchestrator
   async updateItem(accountId: string, itemId: string, updates: Partial<Item>): Promise<void> {
-    await ensureAuthenticatedForDatabase()
-    // Read existing item so we can recompute any affected transactions after the update
-    let existingItem: Item | null = null
+    // Check network state and hydrate from offlineStore first
+    const online = isBrowserOnline()
+    
+    // Hydrate from offlineStore before attempting Supabase operations
     try {
-      existingItem = await this.getItemById(accountId, itemId)
+      await offlineStore.init()
+      const existingOfflineItem = await offlineStore.getItemById(itemId).catch(() => null)
+      if (existingOfflineItem) {
+        // Pre-hydrate React Query cache if needed
+        // This prevents empty state flashes
+      }
     } catch (e) {
-      console.warn('Failed to fetch existing item before update:', e)
+      console.warn('Failed to hydrate from offlineStore:', e)
     }
+
+    // If offline, delegate to offlineItemService
+    if (!online) {
+      const { offlineItemService } = await import('./offlineItemService')
+      await offlineItemService.updateItem(accountId, itemId, updates)
+      return
+    }
+
+    // Online: try Supabase first, fall back to offline if it fails
+    try {
+      await ensureAuthenticatedForDatabase()
+      // Read existing item so we can recompute any affected transactions after the update
+      let existingItem: Item | null = null
+      try {
+        existingItem = await this.getItemById(accountId, itemId)
+      } catch (e) {
+        console.warn('Failed to fetch existing item before update:', e)
+      }
 
     const previousTransactionId = existingItem?.transactionId ?? null
     const explicitTransactionUpdate = updates.transactionId !== undefined
@@ -2785,49 +2845,84 @@ export const unifiedItemsService = {
     } catch (e) {
       console.warn('Failed to schedule notifyTransactionChanged after updateItem:', e)
     }
+    } catch (error) {
+      // Network request failed - fall back to offline queue
+      console.warn('Failed to update item online, falling back to offline queue:', error)
+      const { offlineItemService } = await import('./offlineItemService')
+      await offlineItemService.updateItem(accountId, itemId, updates)
+    }
   },
 
-  // Delete item (account-scoped)
+  // Delete item (account-scoped) - offline-aware orchestrator
   async deleteItem(accountId: string, itemId: string): Promise<void> {
-    await ensureAuthenticatedForDatabase()
-    // Read existing item to determine associated transaction (if any) so we can recompute after deletion
-    let existingItem: Item | null = null
+    // Check network state and hydrate from offlineStore first
+    const online = isBrowserOnline()
+    
+    // Hydrate from offlineStore before attempting Supabase operations
     try {
-      existingItem = await this.getItemById(accountId, itemId)
-    } catch (e) {
-      console.warn('Failed to fetch item before deletion:', e)
-    }
-
-    const { error } = await supabase
-      .from('items')
-      .delete()
-      .eq('account_id', accountId)
-      .eq('item_id', itemId)
-
-    if (error) throw error
-
-    if (existingItem?.transactionId) {
-      // The Postgres trigger handles hard deletes performed outside the app, but we
-      // still clean up eagerly here so TransactionDetail stays in sync immediately.
-      _updateTransactionItemIds(accountId, existingItem.transactionId, itemId, 'remove').catch(e => {
-        console.warn('Failed to sync transaction item_ids after deleteItem:', e)
-      })
-    }
-
-    // Adjust persisted sum and recompute for the transaction the item belonged to (if any)
-    try {
-      const txId = existingItem?.transactionId ?? null
-      if (txId) {
-        if (!transactionService._isBatchActive(accountId, txId)) {
-          const prevPrice = parseFloat(existingItem?.purchasePrice || '0')
-          const delta = -prevPrice
-          transactionService.notifyTransactionChanged(accountId, txId, { deltaSum: delta }).catch((e: any) => {
-            console.warn('Failed to notifyTransactionChanged after deleting item:', e)
-          })
-        }
+      await offlineStore.init()
+      const existingOfflineItem = await offlineStore.getItemById(itemId).catch(() => null)
+      if (existingOfflineItem) {
+        // Pre-hydrate React Query cache if needed
       }
     } catch (e) {
-      console.warn('Failed to notifyTransactionChanged after deleting item:', e)
+      console.warn('Failed to hydrate from offlineStore:', e)
+    }
+
+    // If offline, delegate to offlineItemService
+    if (!online) {
+      const { offlineItemService } = await import('./offlineItemService')
+      await offlineItemService.deleteItem(accountId, itemId)
+      return
+    }
+
+    // Online: try Supabase first, fall back to offline if it fails
+    try {
+      await ensureAuthenticatedForDatabase()
+      // Read existing item to determine associated transaction (if any) so we can recompute after deletion
+      let existingItem: Item | null = null
+      try {
+        existingItem = await this.getItemById(accountId, itemId)
+      } catch (e) {
+        console.warn('Failed to fetch item before deletion:', e)
+      }
+
+      const { error } = await supabase
+        .from('items')
+        .delete()
+        .eq('account_id', accountId)
+        .eq('item_id', itemId)
+
+      if (error) throw error
+
+      if (existingItem?.transactionId) {
+        // The Postgres trigger handles hard deletes performed outside the app, but we
+        // still clean up eagerly here so TransactionDetail stays in sync immediately.
+        _updateTransactionItemIds(accountId, existingItem.transactionId, itemId, 'remove').catch(e => {
+          console.warn('Failed to sync transaction item_ids after deleteItem:', e)
+        })
+      }
+
+      // Adjust persisted sum and recompute for the transaction the item belonged to (if any)
+      try {
+        const txId = existingItem?.transactionId ?? null
+        if (txId) {
+          if (!transactionService._isBatchActive(accountId, txId)) {
+            const prevPrice = parseFloat(existingItem?.purchasePrice || '0')
+            const delta = -prevPrice
+            transactionService.notifyTransactionChanged(accountId, txId, { deltaSum: delta }).catch((e: any) => {
+              console.warn('Failed to notifyTransactionChanged after deleting item:', e)
+            })
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to notifyTransactionChanged after deleting item:', e)
+      }
+    } catch (error) {
+      // Network request failed - fall back to offline queue
+      console.warn('Failed to delete item online, falling back to offline queue:', error)
+      const { offlineItemService } = await import('./offlineItemService')
+      await offlineItemService.deleteItem(accountId, itemId)
     }
   },
 
@@ -4278,15 +4373,15 @@ export const unifiedItemsService = {
       const item: any = {
         account_id: accountId,
         item_id: itemId,
-        description: itemData.description || '',
+        description: itemData.description ?? null,
         source: transactionSource, // Use transaction source for all items
-        sku: itemData.sku || '',
-        purchase_price: itemData.purchasePrice || null,
-        project_price: itemData.projectPrice || null,
-        market_value: itemData.marketValue || null,
-        payment_method: 'Client Card', // Default payment method
+        sku: itemData.sku ?? null,
+        purchase_price: itemData.purchasePrice ?? null,
+        project_price: itemData.projectPrice ?? null,
+        market_value: itemData.marketValue ?? null,
+        payment_method: null, // No default - should come from transaction or item data
         disposition: 'purchased',
-        notes: itemData.notes || null,
+        notes: itemData.notes ?? null,
         qr_key: qrKey,
         bookmark: false,
         transaction_id: transactionId,

@@ -57,10 +57,13 @@ describe('OperationQueue', () => {
       const operation = {
         type: 'CREATE_ITEM' as const,
         data: {
+          id: 'item-test-123',
           accountId: 'acc-123',
           projectId: 'proj-123',
           name: 'Test Item',
-          description: 'Test description'
+          description: 'Test description',
+          quantity: 1,
+          unitCost: 0
         }
       }
 
@@ -109,10 +112,13 @@ describe('OperationQueue', () => {
       const operation = {
         type: 'CREATE_ITEM' as const,
         data: {
+          id: 'item-meta-123',
           accountId: 'meta-account',
           projectId: 'proj-321',
           name: 'Meta Item',
-          description: 'Meta test item'
+          description: 'Meta test item',
+          quantity: 1,
+          unitCost: 0
         }
       }
 
@@ -159,9 +165,12 @@ describe('OperationQueue', () => {
       const operation = {
         type: 'CREATE_ITEM' as const,
         data: {
+          id: 'item-test-789',
           accountId: 'acc-123',
           projectId: 'proj-123',
-          name: 'Test Item'
+          name: 'Test Item',
+          quantity: 1,
+          unitCost: 0
         }
       }
 
@@ -179,9 +188,12 @@ describe('OperationQueue', () => {
       const operation = {
         type: 'CREATE_ITEM' as const,
         data: {
+          id: 'item-test-retry',
           accountId: 'acc-123',
           projectId: 'proj-123',
-          name: 'Test Item'
+          name: 'Test Item',
+          quantity: 1,
+          unitCost: 0
         }
       }
 
@@ -202,9 +214,12 @@ describe('OperationQueue', () => {
       const operation = {
         type: 'CREATE_ITEM' as const,
         data: {
+          id: 'item-test-max-retries',
           accountId: 'acc-123',
           projectId: 'proj-123',
-          name: 'Test Item'
+          name: 'Test Item',
+          quantity: 1,
+          unitCost: 0
         }
       }
 
@@ -232,9 +247,12 @@ describe('OperationQueue', () => {
       const operation = {
         type: 'CREATE_ITEM' as const,
         data: {
+          id: 'item-test-auth',
           accountId: 'acc-123',
           projectId: 'proj-123',
-          name: 'Test Item'
+          name: 'Test Item',
+          quantity: 1,
+          unitCost: 0
         }
       }
 

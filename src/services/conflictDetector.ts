@@ -56,10 +56,40 @@ export class ConflictDetector {
 
       if (error) throw error
 
+      // Clear any existing stored conflicts for this project so we only keep the latest snapshot
+      await offlineStore.deleteAllConflictsForProject(projectId)
+
+      // Ensure per-account cleanup still happens for legacy entries
+      const accountsForProject = new Set<string>()
+      for (const localItem of localItems) {
+        if (!localItem.accountId) continue
+        accountsForProject.add(localItem.accountId)
+      }
+      if (accountsForProject.size === 0 && serverItems) {
+        for (const serverItem of serverItems) {
+          if (serverItem.account_id) {
+            accountsForProject.add(serverItem.account_id as string)
+          }
+        }
+      }
+      for (const accountId of accountsForProject) {
+        await offlineStore.deleteConflictsForProject(accountId, projectId)
+      }
+
       // Compare each local item with server version
       // Note: Supabase uses `id` (UUID) as primary key, but `item_id` (TEXT) as the business identifier
       // Local cache uses `itemId` which maps to `item_id` from Supabase
       for (const localItem of localItems) {
+        // Skip items that were recently synced (within last 5 seconds) to prevent re-detection after resolution
+        if (localItem.last_synced_at) {
+          const syncTime = new Date(localItem.last_synced_at).getTime()
+          const now = Date.now()
+          if (now - syncTime < 5000) {
+            // Item was just synced/resolved, skip conflict detection
+            continue
+          }
+        }
+
         // Match by item_id (business identifier), not id (UUID primary key)
         const serverItem = serverItems.find(item => 
           (item.item_id === localItem.itemId) || (item.id === localItem.itemId)
@@ -75,7 +105,7 @@ export class ConflictDetector {
           conflicts.push(conflict)
           // Store conflict in IndexedDB for persistence
           if (localItem.accountId) {
-            await this.storeConflict(conflict, localItem.accountId)
+            await this.storeConflict(conflict, localItem.accountId, localItem.projectId ?? null)
           } else {
             console.warn('Skipping conflict persistence due to missing accountId', {
               itemId: localItem.itemId
@@ -90,12 +120,13 @@ export class ConflictDetector {
     return conflicts
   }
 
-  private async storeConflict(conflict: ConflictItem, accountId: string): Promise<void> {
+  private async storeConflict(conflict: ConflictItem, accountId: string, projectId: string | null): Promise<void> {
     try {
       // Store conflict metadata in IndexedDB so UX persists after refresh
       await offlineStore.saveConflict({
         itemId: conflict.id,
         accountId,
+        projectId,
         type: conflict.type,
         field: conflict.field || 'unknown',
         local: {
@@ -119,45 +150,78 @@ export class ConflictDetector {
     // Align column names: convert server snake_case to local camelCase for comparison
     const alignedServerItem = this.alignServerItemToLocal(serverItem)
 
-    // Check if versions differ significantly
-    const serverVersion = (alignedServerItem.version as number) || 1
-    if (localItem.version !== serverVersion) {
-      return {
-        id: localItem.itemId,
-        local: {
-          data: localItem,
-          timestamp: localItem.lastUpdated,
-          version: localItem.version
-        },
-        server: {
-          data: alignedServerItem,
-          timestamp: alignedServerItem.lastUpdated,
-          version: serverVersion
-        },
-        field: 'version',
-        type: 'version'
+    // Skip conflict detection if item was recently synced (within last 2 seconds)
+    // This prevents immediate re-detection after resolution
+    if (localItem.last_synced_at) {
+      const syncTime = new Date(localItem.last_synced_at).getTime()
+      const now = Date.now()
+      if (now - syncTime < 2000) {
+        // Item was just synced, skip conflict detection
+        return null
       }
     }
+
+    // Check if versions differ significantly
+    // Only flag as conflict if versions differ AND content actually differs
+    const serverVersion = (alignedServerItem.version as number) || 1
+    const versionDiffers = localItem.version !== serverVersion
 
     // Check timestamps (server is newer) - use last_updated from server
     const localTime = new Date(localItem.lastUpdated).getTime()
     const serverTime = new Date(alignedServerItem.lastUpdated).getTime()
+    const timeDiffers = serverTime > localTime + 10000 // 10 second buffer for clock skew and sync delays
 
-    if (serverTime > localTime + 5000) { // 5 second buffer for clock skew
-      return {
-        id: localItem.itemId,
-        local: {
-          data: localItem,
-          timestamp: localItem.lastUpdated,
-          version: localItem.version
-        },
-        server: {
-          data: alignedServerItem,
-          timestamp: alignedServerItem.lastUpdated,
-          version: serverVersion
-        },
-        field: 'timestamp',
-        type: 'timestamp'
+    // Only flag version/timestamp conflicts if content also differs
+    // This prevents false positives from sync timing issues
+    let contentDiffers = false
+    for (const field of MUTABLE_ITEM_FIELDS) {
+      if (READ_ONLY_ITEM_FIELDS.some(ro => ro.toLowerCase() === field.toLowerCase())) {
+        continue
+      }
+      const localValue = (localItem as Record<string, unknown>)[field]
+      const serverValue = (alignedServerItem as Record<string, unknown>)[field]
+      if (!this.valuesEqual(localValue, serverValue)) {
+        contentDiffers = true
+        break
+      }
+    }
+
+    // Only report version/timestamp conflicts if content actually differs
+    if ((versionDiffers || timeDiffers) && contentDiffers) {
+      if (versionDiffers) {
+        return {
+          id: localItem.itemId,
+          local: {
+            data: localItem,
+            timestamp: localItem.lastUpdated,
+            version: localItem.version
+          },
+          server: {
+            data: alignedServerItem,
+            timestamp: alignedServerItem.lastUpdated,
+            version: serverVersion
+          },
+          field: 'version',
+          type: 'version'
+        }
+      }
+      
+      if (timeDiffers) {
+        return {
+          id: localItem.itemId,
+          local: {
+            data: localItem,
+            timestamp: localItem.lastUpdated,
+            version: localItem.version
+          },
+          server: {
+            data: alignedServerItem,
+            timestamp: alignedServerItem.lastUpdated,
+            version: serverVersion
+          },
+          field: 'timestamp',
+          type: 'timestamp'
+        }
       }
     }
 

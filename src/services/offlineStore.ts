@@ -5,6 +5,8 @@ interface DBItem {
   accountId?: string
   projectId?: string | null
   transactionId?: string | null
+  previousProjectTransactionId?: string | null
+  previousProjectId?: string | null
   name?: string
   description: string
   source: string
@@ -21,6 +23,7 @@ interface DBItem {
   bookmark: boolean
   dateCreated: string
   lastUpdated: string
+  createdAt?: string
   images?: ItemImage[]
   taxRatePct?: number
   taxAmountPurchasePrice?: string
@@ -134,6 +137,7 @@ interface DBConflict {
   id: string
   itemId: string
   accountId: string
+  projectId?: string | null
   type: 'version' | 'timestamp' | 'content'
   field?: string
   local: {
@@ -325,6 +329,127 @@ class OfflineStore {
     }
   }
 
+  private getConflictKey(accountId: string, itemId: string, field?: string, type?: string): string {
+    const safeAccount = accountId || 'unknown-account'
+    const safeItem = itemId || 'unknown-item'
+    const safeField = field || 'unknown'
+    const safeType = type || 'content'
+    return `conflict:${safeAccount}:${safeItem}:${safeType}:${safeField}`
+  }
+
+  async deleteConflictsForItems(accountId: string, itemIds: string[]): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized')
+    if (!accountId || itemIds.length === 0) {
+      return
+    }
+
+    const itemSet = new Set(itemIds.filter(Boolean))
+    if (itemSet.size === 0) {
+      return
+    }
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction(['conflicts'], 'readwrite')
+      const store = transaction.objectStore('conflicts')
+      const accountIndex = store.index('accountId')
+      const request = accountIndex.openCursor(IDBKeyRange.only(accountId))
+
+      request.onerror = () => reject(request.error)
+      request.onsuccess = (event) => {
+        const cursor = (event.target as IDBRequest).result as IDBCursorWithValue | null
+        if (!cursor) {
+          return
+        }
+
+        const value = cursor.value as DBConflict
+        if (value.itemId && itemSet.has(value.itemId)) {
+          cursor.delete()
+        }
+
+        cursor.continue()
+      }
+
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+    })
+  }
+
+  async deleteConflictsForProject(accountId: string, projectId: string | null): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized')
+    if (!accountId) {
+      return
+    }
+
+    const normalizedProjectId = projectId ?? null
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction(['conflicts'], 'readwrite')
+      const store = transaction.objectStore('conflicts')
+      const accountIndex = store.index('accountId')
+      const request = accountIndex.openCursor(IDBKeyRange.only(accountId))
+
+      request.onerror = () => reject(request.error)
+      request.onsuccess = (event) => {
+        const cursor = (event.target as IDBRequest).result as IDBCursorWithValue | null
+        if (!cursor) {
+          return
+        }
+
+        const value = cursor.value as DBConflict
+        const storedProjectId = value.projectId ?? null
+        const matchesProject =
+          normalizedProjectId === null
+            ? storedProjectId === null || storedProjectId === undefined
+            : storedProjectId === normalizedProjectId
+
+        if (matchesProject) {
+          cursor.delete()
+        }
+
+        cursor.continue()
+      }
+
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+    })
+  }
+
+  async deleteAllConflictsForProject(projectId: string | null): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized')
+
+    const normalizedProjectId = projectId ?? null
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction(['conflicts'], 'readwrite')
+      const store = transaction.objectStore('conflicts')
+      const request = store.openCursor()
+
+      request.onerror = () => reject(request.error)
+      request.onsuccess = (event) => {
+        const cursor = (event.target as IDBRequest).result as IDBCursorWithValue | null
+        if (!cursor) {
+          return
+        }
+
+        const value = cursor.value as DBConflict
+        const storedProjectId = value.projectId ?? null
+        const matchesProject =
+          normalizedProjectId === null
+            ? storedProjectId === null || storedProjectId === undefined
+            : storedProjectId === normalizedProjectId
+
+        if (matchesProject) {
+          cursor.delete()
+        }
+
+        cursor.continue()
+      }
+
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+    })
+  }
+
   // Items CRUD
   async getItems(projectId: string): Promise<DBItem[]> {
     if (!this.db) throw new Error('Database not initialized')
@@ -345,6 +470,11 @@ class OfflineStore {
     const store = transaction.objectStore('items')
 
     for (const item of items) {
+      // Validate itemId is present and valid (required for IndexedDB keyPath)
+      if (!item.itemId || typeof item.itemId !== 'string' || item.itemId.trim() === '') {
+        throw new Error(`Cannot save item: missing or invalid itemId. Item: ${JSON.stringify(item, null, 2)}`)
+      }
+      
       // Ensure version exists and increment it
       if (!item.version) {
         item.version = 1
@@ -680,19 +810,54 @@ class OfflineStore {
   // Conflict methods
   async saveConflict(conflict: Omit<DBConflict, 'id' | 'createdAt'>): Promise<void> {
     if (!this.db) throw new Error('Database not initialized')
-    const dbConflict: DBConflict = {
-      ...conflict,
-      id: `conflict-${conflict.itemId}-${Date.now()}`,
-      createdAt: new Date().toISOString()
-    }
+
+    const conflictKey = this.getConflictKey(conflict.accountId, conflict.itemId, conflict.field, conflict.type)
+    const transaction = this.db.transaction(['conflicts'], 'readwrite')
+    const store = transaction.objectStore('conflicts')
+    const index = store.index('itemId')
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db!.transaction(['conflicts'], 'readwrite')
-      const store = transaction.objectStore('conflicts')
-      const request = store.put(dbConflict)
+      const getRequest = store.get(conflictKey)
 
-      request.onsuccess = () => resolve()
-      request.onerror = () => reject(request.error)
+      getRequest.onerror = () => reject(getRequest.error)
+      getRequest.onsuccess = () => {
+        const existing = getRequest.result as DBConflict | undefined
+        const dbConflict: DBConflict = {
+          ...existing,
+          ...conflict,
+          id: conflictKey,
+          createdAt: existing?.createdAt ?? new Date().toISOString(),
+          resolved: conflict.resolved ?? existing?.resolved ?? false,
+          resolution: conflict.resolution ?? existing?.resolution
+        }
+
+        const putRequest = store.put(dbConflict)
+        putRequest.onerror = () => reject(putRequest.error)
+
+        if (conflict.itemId) {
+          const cursorRequest = index.openCursor(IDBKeyRange.only(conflict.itemId))
+          cursorRequest.onerror = () => reject(cursorRequest.error)
+          cursorRequest.onsuccess = (event) => {
+            const cursor = (event.target as IDBRequest).result as IDBCursorWithValue | null
+            if (!cursor) return
+
+            const value = cursor.value as DBConflict
+            const sameAccount = value.accountId === conflict.accountId
+            const sameField = (value.field || 'unknown') === (dbConflict.field || 'unknown')
+            const sameType = value.type === dbConflict.type
+            const isDuplicate = value.id !== conflictKey && sameAccount && sameField && sameType && !value.resolved
+
+            if (isDuplicate) {
+              cursor.delete()
+            }
+
+            cursor.continue()
+          }
+        }
+      }
+
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
     })
   }
 

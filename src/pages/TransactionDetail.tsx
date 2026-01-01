@@ -18,6 +18,8 @@ import TransactionItemsList from '@/components/TransactionItemsList'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
+import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
+import { useNetworkState } from '@/hooks/useNetworkState'
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import TransactionAudit from '@/components/ui/TransactionAudit'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
@@ -872,13 +874,19 @@ export default function TransactionDetail() {
         disposition: normalizeDisposition(disposition)
       }
 
+      const wasOffline = !isOnline
       const itemId = await unifiedItemsService.createItem(currentAccountId, itemData)
       await uploadItemImages(itemId, item)
 
       await refreshTransactionItems()
       await refreshRealtimeAfterWrite()
       setIsAddingItem(false)
-      showSuccess('Item added successfully')
+      
+      if (wasOffline) {
+        showOfflineSaved(null)
+      } else {
+        showSuccess('Item added successfully')
+      }
     } catch (error) {
       console.error('Error adding item:', error)
       showError('Failed to add item. Please try again.')
@@ -901,12 +909,18 @@ export default function TransactionDetail() {
         taxAmountProjectPrice: item.taxAmountProjectPrice
       }
 
+      const wasOffline = !isOnline
       await unifiedItemsService.updateItem(currentAccountId, item.id, updateData)
       await uploadItemImages(item.id, item)
 
       await refreshTransactionItems()
       await refreshRealtimeAfterWrite()
-      showSuccess('Item updated successfully')
+      
+      if (wasOffline) {
+        showOfflineSaved(null)
+      } else {
+        showSuccess('Item updated successfully')
+      }
     } catch (error) {
       console.error('Error updating item:', error)
       showError('Failed to update item. Please try again.')
