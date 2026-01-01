@@ -306,6 +306,22 @@ class OperationQueue {
 
       const operation = this.queue[0] // Process FIFO
 
+      // Validate that the current user matches the operation's updatedBy
+      // This ensures offline-queued operations can only be processed by the user who created them
+      if (operation.updatedBy !== currentUser.id) {
+        console.warn(
+          `Operation ${operation.id} was queued by user ${operation.updatedBy} but current user is ${currentUser.id}. Skipping.`
+        )
+        // Remove the operation as it cannot be processed by this user
+        this.queue.shift()
+        await this.persistQueue()
+        this.emitQueueChange()
+        this.isProcessing = false
+        // Continue processing next operation
+        setTimeout(() => this.processQueue(), 100)
+        return
+      }
+
       const success = await this.executeOperation(operation)
 
       if (success) {

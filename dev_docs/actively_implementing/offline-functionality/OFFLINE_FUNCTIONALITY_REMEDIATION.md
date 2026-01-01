@@ -20,7 +20,7 @@ Document the gap-closing work required to make Phases 1–3 production-ready for
 | Operation queue & sync | 🟠 In progress | Queue scaffolding exists but metadata defaults and SW ownership unfinished. |
 | Conflict detection & UX | 🟢 Completed | Detector, modal, IndexedDB persistence, UX embedding, and resolver writeback implemented. |
 | Service worker & network state | 🟢 Completed | Ping endpoint with build timestamp, Background Sync registered, queue processing via SW delegation, essential data cached, network state hook fixed. |
-| Schema & auth dependencies | 🔴 Not started | No migrations for `version`/`updated_by` or RLS updates. |
+| Schema & auth dependencies | 🟢 Completed | Migration applied: version/updated_by columns added to projects, business_profiles, budget_categories; RLS policies updated; auth refresh and validation implemented in operationQueue. |
 | Media & large payload strategy | 🔴 Not started | Offline media service exists but unused in UI. |
 | Testing & tooling | 🔴 Not started | Only unit tests drafted; no integration coverage. |
 
@@ -59,9 +59,9 @@ Document the gap-closing work required to make Phases 1–3 production-ready for
 - [x] Fix `useNetworkState` state updates (Implemented: Uses refs to avoid stale closures, tracks `lastOnline` correctly, exposes `isRetrying` state) (avoid stale closures, track `lastOnline` correctly, expose “offline but retrying” states).
 
 #### 5. Schema & Auth Dependencies
-- [ ] Add `version` (integer) and `updated_by` columns to `items`, `transactions`, and any other mutable tables; backfill with defaults.
-- [ ] Update Supabase RLS policies to allow queued writes that specify account + matching `updated_by`.
-- [ ] Ensure auth/session refresh happens before processing queue; persist minimal auth metadata required for offline writes.
+- [x] Add `version` (integer) and `updated_by` columns to `items`, `transactions`, and any other mutable tables; backfill with defaults. (Implemented: Added version/updated_by to projects, business_profiles, budget_categories; items and transactions already had them)
+- [x] Update Supabase RLS policies to allow queued writes that specify account + matching `updated_by`. (Implemented: Updated RLS policies for items, transactions, projects, business_profiles, and budget_categories to allow writes when updated_by matches auth.uid())
+- [x] Ensure auth/session refresh happens before processing queue; persist minimal auth metadata required for offline writes. (Implemented: operationQueue refreshes session before processing; AuthContext/AccountContext persist userId/accountId to offlineContext; added validation that current user matches operation's updatedBy)
 
 #### 6. Media & Large Payload Strategy
 - [ ] Define how images/documents are handled offline (e.g., queue uploads with Blob storage in IndexedDB, or gate editing while offline).
