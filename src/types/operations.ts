@@ -21,6 +21,7 @@ export interface BaseOperation {
 export interface CreateItemOperation extends BaseOperation {
   type: 'CREATE_ITEM'
   data: {
+    accountId: string
     projectId: string
     name: string
     description?: string
@@ -33,6 +34,7 @@ export interface UpdateItemOperation extends BaseOperation {
   type: 'UPDATE_ITEM'
   data: {
     id: string
+    accountId?: string
     updates: Partial<{
       name: string
       description: string
@@ -46,6 +48,7 @@ export interface DeleteItemOperation extends BaseOperation {
   type: 'DELETE_ITEM'
   data: {
     id: string
+    accountId?: string
   }
 }
 

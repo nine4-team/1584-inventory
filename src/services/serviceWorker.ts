@@ -1,17 +1,91 @@
 // Service Worker utilities for offline functionality
 
+type SyncEventType = 'progress' | 'complete' | 'error'
+
+export interface SyncEventPayload {
+  source?: string
+  pendingOperations?: number | null
+  error?: string
+  timestamp?: number
+}
+
+const syncEventListeners: Record<SyncEventType, Set<(payload: SyncEventPayload) => void>> = {
+  progress: new Set(),
+  complete: new Set(),
+  error: new Set()
+}
+
+let syncEventsBound = false
+
+const emitSyncEvent = (type: SyncEventType, payload: SyncEventPayload = {}): void => {
+  const listeners = syncEventListeners[type]
+  if (!listeners || listeners.size === 0) {
+    return
+  }
+
+  const enrichedPayload = {
+    timestamp: Date.now(),
+    ...payload
+  }
+
+  listeners.forEach(listener => {
+    try {
+      listener(enrichedPayload)
+    } catch (error) {
+      console.warn('Sync event listener failed', error)
+    }
+  })
+}
+
+const handleServiceWorkerMessage = (event: MessageEvent): void => {
+  const { type, payload } = event.data || {}
+  switch (type) {
+    case 'SYNC_PROGRESS':
+      emitSyncEvent('progress', payload)
+      break
+    case 'SYNC_COMPLETE':
+      emitSyncEvent('complete', payload)
+      break
+    case 'SYNC_ERROR':
+      emitSyncEvent('error', payload)
+      break
+    default:
+      break
+  }
+}
+
+const ensureSyncEventListener = (): void => {
+  if (!('serviceWorker' in navigator) || syncEventsBound) {
+    return
+  }
+  navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage)
+  syncEventsBound = true
+}
+
+export const onSyncEvent = (type: SyncEventType, listener: (payload: SyncEventPayload) => void): (() => void) => {
+  ensureSyncEventListener()
+  syncEventListeners[type].add(listener)
+  return () => {
+    syncEventListeners[type].delete(listener)
+  }
+}
+
+export const offSyncEvent = (type: SyncEventType, listener: (payload: SyncEventPayload) => void): void => {
+  syncEventListeners[type].delete(listener)
+}
+
+export const onSyncComplete = (callback: () => void): (() => void) => {
+  return onSyncEvent('complete', () => callback())
+}
+
 export const registerBackgroundSync = async (): Promise<void> => {
   if ('serviceWorker' in navigator && 'sync' in window.ServiceWorkerRegistration.prototype) {
     try {
       const registration = await navigator.serviceWorker.ready
-
-      // Register background sync for operations
       await registration.sync.register('sync-operations')
       console.log('✅ Background sync registered for operations')
-
     } catch (error) {
       console.warn('❌ Background sync registration failed:', error)
-      // This is not critical - foreground sync will still work
     }
   } else {
     console.log('ℹ️ Background Sync not supported, will use foreground sync only')
@@ -22,14 +96,11 @@ export const unregisterBackgroundSync = async (): Promise<void> => {
   if ('serviceWorker' in navigator && 'sync' in window.ServiceWorkerRegistration.prototype) {
     try {
       const registration = await navigator.serviceWorker.ready
-
-      // Get all registered sync tags and unregister them
       const tags = await registration.sync.getTags()
       for (const tag of tags) {
         await registration.sync.unregister(tag)
         console.log('✅ Unregistered background sync:', tag)
       }
-
     } catch (error) {
       console.warn('❌ Background sync unregistration failed:', error)
     }
@@ -40,12 +111,7 @@ export const triggerManualSync = async (): Promise<void> => {
   if ('serviceWorker' in navigator) {
     try {
       const registration = await navigator.serviceWorker.ready
-
-      // Send message to service worker to trigger sync
-      registration.active?.postMessage({
-        type: 'TRIGGER_SYNC'
-      })
-
+      registration.active?.postMessage({ type: 'TRIGGER_SYNC' })
       console.log('📤 Manual sync triggered')
     } catch (error) {
       console.warn('❌ Manual sync trigger failed:', error)
@@ -53,26 +119,45 @@ export const triggerManualSync = async (): Promise<void> => {
   }
 }
 
-export const notifySyncComplete = (): void => {
+interface SyncNotificationPayload {
+  source?: string
+  pendingOperations?: number | null
+  error?: string
+}
+
+export const notifySyncStart = (payload: SyncNotificationPayload = {}): void => {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.controller?.postMessage({
-      type: 'SYNC_COMPLETE'
+      type: 'SYNC_START',
+      payload: {
+        source: payload.source ?? 'foreground',
+        pendingOperations: payload.pendingOperations ?? null
+      }
     })
   }
 }
 
-// Listen for sync completion messages from service worker
-export const onSyncComplete = (callback: () => void): (() => void) => {
-  const messageHandler = (event: MessageEvent) => {
-    if (event.data?.type === 'SYNC_COMPLETE') {
-      callback()
-    }
+export const notifySyncComplete = (payload: SyncNotificationPayload = {}): void => {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.controller?.postMessage({
+      type: 'SYNC_COMPLETE',
+      payload: {
+        source: payload.source ?? 'foreground',
+        pendingOperations: payload.pendingOperations ?? null
+      }
+    })
   }
+}
 
-  navigator.serviceWorker.addEventListener('message', messageHandler)
-
-  // Return cleanup function
-  return () => {
-    navigator.serviceWorker.removeEventListener('message', messageHandler)
+export const notifySyncError = (payload: SyncNotificationPayload = {}): void => {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.controller?.postMessage({
+      type: 'SYNC_ERROR',
+      payload: {
+        source: payload.source ?? 'foreground',
+        pendingOperations: payload.pendingOperations ?? null,
+        error: payload.error ?? 'Sync failed'
+      }
+    })
   }
 }

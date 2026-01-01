@@ -37,12 +37,12 @@ Document the gap-closing work required to make Phases 1–3 production-ready for
 - [x] Add migrations/versioning to `offlineStore` so schema changes can roll out safely.
 
 #### 2. Operation Queue & Sync
-- [ ] Move queue persistence from `localStorage` to IndexedDB (new `operations` store) with per-account partitioning.
-- [ ] Ensure queued operations include `account_id`, `updated_by`, and current version/timestamp metadata.
-- [ ] Persist account + user context locally (Auth + Account providers and IndexedDB) so operations always have real metadata; remove placeholder `'default-account'` usage.
-- [ ] Implement foreground retry loop with exponential backoff; add Background Sync registration when supported, with graceful fallback.
-- [ ] Emit service worker `SYNC_COMPLETE` messages and wire `SyncStatus` to display accurate progress/errors.
-- [ ] Provide manual “Retry sync” triggers anywhere data can be edited offline.
+- [x] Move queue persistence from `localStorage` to IndexedDB (new `operations` store) with per-account partitioning. (`offlineStore` now exposes a v4 schema + compound `accountId_timestamp` index; `operationQueue` always hydrates/persists per-account snapshots.)
+- [x] Ensure queued operations include `account_id`, `updated_by`, and current version/timestamp metadata.
+- [x] Persist account + user context locally (Auth + Account providers and IndexedDB) so operations always have real metadata; remove placeholder `'default-account'` usage. (`AccountContext` hydrates from `offlineContext`, and both Auth/Account providers write through to IndexedDB for offline restores.)
+- [x] Implement foreground retry loop with exponential backoff; add Background Sync registration when supported, with graceful fallback. (New `syncScheduler` subscribes to queue changes, retries with capped exponential backoff, and registers Background Sync when pending work remains.)
+- [x] Emit service worker `SYNC_COMPLETE` messages and wire `SyncStatus` to display accurate progress/errors. (`SyncStatus` now listens to SW events + queue snapshots, showing source-aware banners; service worker helpers propagate progress/complete/error payloads.)
+- [x] Provide manual “Retry sync” triggers anywhere data can be edited offline (project, transaction, and business inventory forms now wired).
 
 #### 3. Conflict Detection & UX
 - [ ] Align column names (`item_id`, snake_case fields) between Supabase payloads and local cache.

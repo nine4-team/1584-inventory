@@ -16,6 +16,7 @@ import { UserRole } from '../types'
 import { Shield } from 'lucide-react'
 import { getUserFriendlyErrorMessage, getErrorAction } from '@/utils/imageUtils'
 import { useToast } from '@/components/ui/ToastContext'
+import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { DISPOSITION_OPTIONS, displayDispositionLabel } from '@/utils/dispositionUtils'
 
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, COMPANY_NAME } from '@/constants/company'
@@ -361,6 +362,7 @@ export default function AddItem() {
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back
           </ContextBackLink>
+          <RetrySyncButton size="sm" variant="secondary" />
         </div>
 
       </div>

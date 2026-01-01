@@ -79,24 +79,34 @@ export class OfflineItemService {
     return cached.map(this.convertDbItemToItem)
   }
 
-  async createItem(itemData: {
+  async createItem(accountId: string, itemData: {
     projectId: string
     name: string
     description?: string
     quantity: number
     unitCost: number
   }): Promise<void> {
-    const operation: Omit<Operation, 'id' | 'timestamp' | 'retryCount'> = {
+    await offlineStore.init().catch(() => {})
+    const timestamp = new Date().toISOString()
+    const operation: Omit<Operation, 'id' | 'timestamp' | 'retryCount' | 'accountId' | 'updatedBy' | 'version'> = {
       type: 'CREATE_ITEM',
-      data: itemData
+      data: {
+        ...itemData,
+        accountId
+      }
     }
 
-    await operationQueue.add(operation)
+    await operationQueue.add(operation, {
+      accountId,
+      version: 1,
+      timestamp
+    })
 
     // Optimistically update local store
     const tempId = `temp-${Date.now()}`
     const tempItem: DBItem = {
       itemId: tempId,
+      accountId,
       projectId: itemData.projectId,
       name: itemData.name,
       description: itemData.description || '',
@@ -105,8 +115,8 @@ export class OfflineItemService {
       paymentMethod: 'cash',
       qrKey: crypto.randomUUID(),
       bookmark: false,
-      dateCreated: new Date().toISOString(),
-      lastUpdated: new Date().toISOString(),
+      dateCreated: timestamp,
+      lastUpdated: timestamp,
       version: 1
     }
 
@@ -118,29 +128,35 @@ export class OfflineItemService {
     }
   }
 
-  async updateItem(itemId: string, updates: Partial<{
+  async updateItem(accountId: string, itemId: string, updates: Partial<{
     name: string
     description: string
     quantity: number
     unitCost: number
   }>): Promise<void> {
-    const operation: Omit<Operation, 'id' | 'timestamp' | 'retryCount'> = {
+    await offlineStore.init().catch(() => {})
+    const allItems = await offlineStore.getAllItems().catch(() => []) as DBItem[]
+    const itemToUpdate = allItems.find(item => item.itemId === itemId) || null
+    const nextVersion = (itemToUpdate?.version ?? 0) + 1
+    const timestamp = new Date().toISOString()
+
+    const operation: Omit<Operation, 'id' | 'timestamp' | 'retryCount' | 'accountId' | 'updatedBy' | 'version'> = {
       type: 'UPDATE_ITEM',
-      data: { id: itemId, updates }
+      data: { id: itemId, accountId, updates }
     }
 
-    await operationQueue.add(operation)
-
-    // Update local store optimistically
-    const existingItems = await offlineStore.getItems('') // Get all items for now
-    const itemToUpdate = existingItems.find(item => item.itemId === itemId)
+    await operationQueue.add(operation, {
+      accountId,
+      version: nextVersion,
+      timestamp
+    })
 
     if (itemToUpdate) {
       const optimisticItem = {
         ...itemToUpdate,
         ...updates,
-        lastUpdated: new Date().toISOString(),
-        version: itemToUpdate.version + 1
+        lastUpdated: timestamp,
+        version: nextVersion
       }
       await offlineStore.saveItems([optimisticItem])
     }
@@ -151,13 +167,21 @@ export class OfflineItemService {
     }
   }
 
-  async deleteItem(itemId: string): Promise<void> {
-    const operation: Omit<Operation, 'id' | 'timestamp' | 'retryCount'> = {
+  async deleteItem(accountId: string, itemId: string): Promise<void> {
+    await offlineStore.init().catch(() => {})
+    const existingItem = await offlineStore.getItemById(itemId).catch(() => null as DBItem | null)
+    const timestamp = new Date().toISOString()
+
+    const operation: Omit<Operation, 'id' | 'timestamp' | 'retryCount' | 'accountId' | 'updatedBy' | 'version'> = {
       type: 'DELETE_ITEM',
-      data: { id: itemId }
+      data: { id: itemId, accountId }
     }
 
-    await operationQueue.add(operation)
+    await operationQueue.add(operation, {
+      accountId,
+      version: existingItem?.version ?? 1,
+      timestamp
+    })
 
     // Note: Optimistic deletion from local store would be complex
     // since we need to track deletions. For now, we'll let the

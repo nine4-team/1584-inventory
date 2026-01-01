@@ -90,6 +90,13 @@ interface DBOperation {
   data: Record<string, unknown>
 }
 
+interface DBContextRecord {
+  id: string
+  userId: string
+  accountId: string
+  updatedAt: string
+}
+
 interface DBCacheEntry {
   key: string
   data: unknown
@@ -134,7 +141,7 @@ class OfflineStore {
   private db: IDBDatabase | null = null
   private initPromise: Promise<void> | null = null
   private readonly dbName = 'ledger-offline'
-  private readonly dbVersion = 2 // Increment when schema changes
+  private readonly dbVersion = 4 // Increment when schema changes
 
   async init(): Promise<void> {
     if (this.db) {
@@ -245,6 +252,27 @@ class OfflineStore {
           }
         } catch (error) {
           console.warn('Failed to add accountId index to items store during migration:', error)
+        }
+      }
+    }
+
+    // Migration 3: Context store for auth/account metadata
+    if (oldVersion < 3) {
+      if (!db.objectStoreNames.contains('context')) {
+        db.createObjectStore('context', { keyPath: 'id' })
+      }
+    }
+
+    // Migration 4: Ensure operations are indexed for per-account ordering
+    if (oldVersion < 4) {
+      if (db.objectStoreNames.contains('operations') && transaction) {
+        try {
+          const operationsStore = transaction.objectStore('operations')
+          if (!operationsStore.indexNames.contains('accountId_timestamp')) {
+            operationsStore.createIndex('accountId_timestamp', ['accountId', 'timestamp'], { unique: false })
+          }
+        } catch (error) {
+          console.warn('Failed to add accountId_timestamp index to operations store during migration:', error)
         }
       }
     }
@@ -361,15 +389,47 @@ class OfflineStore {
       const transaction = this.db!.transaction(['operations'], 'readonly')
       const store = transaction.objectStore('operations')
 
-      let request: IDBRequest
       if (accountId) {
+        const useCompoundIndex = store.indexNames.contains('accountId_timestamp')
+        if (useCompoundIndex) {
+          const index = store.index('accountId_timestamp')
+          const lowerBound: [string, string] = [accountId, '']
+          const upperBound: [string, string] = [accountId, '\uffff']
+          const range = IDBKeyRange.bound(lowerBound, upperBound)
+          const results: DBOperation[] = []
+          const cursorRequest = index.openCursor(range)
+          cursorRequest.onsuccess = (event) => {
+            const cursor = (event.target as IDBRequest<IDBCursorWithValue | null>).result
+            if (cursor) {
+              results.push(cursor.value as DBOperation)
+              cursor.continue()
+            } else {
+              resolve(results)
+            }
+          }
+          cursorRequest.onerror = () => reject(cursorRequest.error)
+          return
+        }
+
         const index = store.index('accountId')
-        request = index.getAll(accountId)
-      } else {
-        request = store.getAll()
+        const request = index.getAll(accountId)
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+        return
       }
 
-      request.onsuccess = () => resolve(request.result)
+      const request = store.getAll()
+      request.onsuccess = () => {
+        const records = request.result ?? []
+        // Ensure deterministic ordering for mixed-account reads
+        records.sort((a, b) => {
+          if (a.accountId === b.accountId) {
+            return a.timestamp.localeCompare(b.timestamp)
+          }
+          return (a.accountId ?? '').localeCompare(b.accountId ?? '')
+        })
+        resolve(records)
+      }
       request.onerror = () => reject(request.error)
     })
   }
@@ -387,6 +447,20 @@ class OfflineStore {
       transaction.oncomplete = () => resolve()
       transaction.onerror = () => reject(transaction.error)
     })
+  }
+
+  async replaceOperationsForAccount(accountId: string, operations: DBOperation[]): Promise<void> {
+    if (!accountId) {
+      throw new Error('replaceOperationsForAccount requires an accountId')
+    }
+
+    await this.clearOperations(accountId)
+
+    if (operations.length === 0) {
+      return
+    }
+
+    await this.saveOperations(operations)
   }
 
   async deleteOperation(operationId: string): Promise<void> {
@@ -426,6 +500,50 @@ class OfflineStore {
     return new Promise((resolve, reject) => {
       transaction.oncomplete = () => resolve()
       transaction.onerror = () => reject(transaction.error)
+    })
+  }
+
+  // Context persistence
+  async getContext(): Promise<DBContextRecord | null> {
+    if (!this.db) throw new Error('Database not initialized')
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction(['context'], 'readonly')
+      const store = transaction.objectStore('context')
+      const request = store.get('active-context')
+
+      request.onsuccess = () => {
+        resolve(request.result || null)
+      }
+      request.onerror = () => reject(request.error)
+    })
+  }
+
+  async saveContext(context: Omit<DBContextRecord, 'id'>): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized')
+    const record: DBContextRecord = {
+      id: 'active-context',
+      ...context
+    }
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction(['context'], 'readwrite')
+      const store = transaction.objectStore('context')
+      const request = store.put(record)
+
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+    })
+  }
+
+  async clearContext(): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized')
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction(['context'], 'readwrite')
+      const store = transaction.objectStore('context')
+      const request = store.delete('active-context')
+
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
     })
   }
 
@@ -872,4 +990,4 @@ class OfflineStore {
 }
 
 export const offlineStore = new OfflineStore()
-export type { DBItem, DBTransaction, DBProject }
+export type { DBItem, DBTransaction, DBProject, DBOperation, DBContextRecord }

@@ -12,15 +12,43 @@ vi.mock('../supabase', () => ({
   },
   getCurrentUser: vi.fn().mockResolvedValue({ id: 'test-user' })
 }))
-vi.mock('../conflictDetector')
+vi.mock('../conflictDetector', () => ({
+  conflictDetector: {
+    detectConflicts: vi.fn().mockResolvedValue([])
+  }
+}))
 
 describe('OperationQueue', () => {
+  const mockedOfflineStore = vi.mocked(offlineStore)
+  let storedOperations: any[] = []
+
   beforeEach(async () => {
+    vi.useFakeTimers()
+    let onlineState = false
+    Object.defineProperty(navigator, 'onLine', {
+      configurable: true,
+      get: () => onlineState,
+      set: (value) => {
+        onlineState = value
+      }
+    })
+    storedOperations = []
+    mockedOfflineStore.getOperations.mockImplementation(async () => storedOperations)
+    mockedOfflineStore.saveOperations.mockImplementation(async (ops) => {
+      storedOperations = ops
+    })
+    mockedOfflineStore.clearOperations.mockImplementation(async () => {
+      storedOperations = []
+    })
+
+    ;(navigator as any).onLine = false
+
     // Clear queue before each test
     await operationQueue.clearQueue()
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     vi.clearAllMocks()
   })
 
@@ -29,6 +57,7 @@ describe('OperationQueue', () => {
       const operation = {
         type: 'CREATE_ITEM' as const,
         data: {
+          accountId: 'acc-123',
           projectId: 'proj-123',
           name: 'Test Item',
           description: 'Test description'
@@ -75,16 +104,38 @@ describe('OperationQueue', () => {
       await operationQueue.clearQueue()
       expect(operationQueue.getQueueLength()).toBe(0)
     })
+    it('should respect metadata overrides when provided', async () => {
+      const metadataTimestamp = '2025-01-01T00:00:00.000Z'
+      const operation = {
+        type: 'CREATE_ITEM' as const,
+        data: {
+          accountId: 'meta-account',
+          projectId: 'proj-321',
+          name: 'Meta Item',
+          description: 'Meta test item'
+        }
+      }
+
+      await operationQueue.add(operation, {
+        accountId: 'meta-account',
+        version: 5,
+        timestamp: metadataTimestamp
+      })
+
+      const pending = operationQueue.getPendingOperations()
+      expect(pending[0].accountId).toBe('meta-account')
+      expect(pending[0].version).toBe(5)
+      expect(pending[0].timestamp).toBe(metadataTimestamp)
+    })
   })
 
   describe('Operation processing', () => {
     it('should process operations when online', async () => {
       // Mock navigator.onLine
-      Object.defineProperty(navigator, 'onLine', { value: true, writable: true })
-
       const operation = {
         type: 'CREATE_ITEM' as const,
         data: {
+          accountId: 'acc-123',
           projectId: 'proj-123',
           name: 'Test Item'
         }
@@ -96,17 +147,19 @@ describe('OperationQueue', () => {
       const mockExecute = vi.fn().mockResolvedValue(true)
       vi.spyOn(operationQueue as any, 'executeOperation').mockImplementation(mockExecute)
 
+      ;(navigator as any).onLine = true
       await operationQueue.processQueue()
 
       expect(mockExecute).toHaveBeenCalled()
     })
 
     it('should not process when offline', async () => {
-      Object.defineProperty(navigator, 'onLine', { value: false, writable: true })
+      ;(navigator as any).onLine = false
 
       const operation = {
         type: 'CREATE_ITEM' as const,
         data: {
+          accountId: 'acc-123',
           projectId: 'proj-123',
           name: 'Test Item'
         }
@@ -123,11 +176,10 @@ describe('OperationQueue', () => {
     })
 
     it('should retry failed operations with backoff', async () => {
-      Object.defineProperty(navigator, 'onLine', { value: true, writable: true })
-
       const operation = {
         type: 'CREATE_ITEM' as const,
         data: {
+          accountId: 'acc-123',
           projectId: 'proj-123',
           name: 'Test Item'
         }
@@ -138,6 +190,7 @@ describe('OperationQueue', () => {
       // Mock failed execution
       vi.spyOn(operationQueue as any, 'executeOperation').mockResolvedValue(false)
 
+      ;(navigator as any).onLine = true
       await operationQueue.processQueue()
 
       const pending = operationQueue.getPendingOperations()
@@ -146,11 +199,10 @@ describe('OperationQueue', () => {
     })
 
     it('should give up after max retries', async () => {
-      Object.defineProperty(navigator, 'onLine', { value: true, writable: true })
-
       const operation = {
         type: 'CREATE_ITEM' as const,
         data: {
+          accountId: 'acc-123',
           projectId: 'proj-123',
           name: 'Test Item'
         }
@@ -158,13 +210,13 @@ describe('OperationQueue', () => {
 
       await operationQueue.add(operation)
 
-      // Set retry count to max
-      const pending = operationQueue.getPendingOperations()
-      pending[0].retryCount = 5
+      // Set retry count to max on internal queue
+      ;(operationQueue as any).queue[0].retryCount = 5
 
       // Mock failed execution
       vi.spyOn(operationQueue as any, 'executeOperation').mockResolvedValue(false)
 
+      ;(navigator as any).onLine = true
       await operationQueue.processQueue()
 
       // Operation should be removed after max retries
@@ -180,6 +232,7 @@ describe('OperationQueue', () => {
       const operation = {
         type: 'CREATE_ITEM' as const,
         data: {
+          accountId: 'acc-123',
           projectId: 'proj-123',
           name: 'Test Item'
         }

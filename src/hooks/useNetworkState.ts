@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../services/supabase'
+import { reportNetworkStatus } from '../services/syncScheduler'
 
 interface NetworkState {
   isOnline: boolean
@@ -87,6 +88,8 @@ export function useNetworkState(): NetworkState {
         lastOnline: lastOnlineTime,
         connectionType
       })
+
+      reportNetworkStatus(actualOnline)
     }
 
     // Initial check

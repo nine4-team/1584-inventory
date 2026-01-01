@@ -24,15 +24,54 @@ workbox.routing.registerRoute(
 
 const MAX_CLIENT_RETRIES = 3
 const RETRY_BASE_DELAY_MS = 2000
+const SYNC_SOURCE_BACKGROUND = 'background-sync'
+const SYNC_SOURCE_MANUAL = 'manual'
+const SYNC_SOURCE_FOREGROUND = 'foreground'
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+function broadcastSyncMessage(type, payload = {}) {
+  self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
+    clients.forEach(client => {
+      client.postMessage({
+        type,
+        payload: {
+          timestamp: Date.now(),
+          ...payload
+        }
+      })
+    })
+  })
+}
 
 // Background Sync for offline operations
 self.addEventListener('sync', event => {
   console.log('Background sync triggered:', event.tag)
 
   if (event.tag === 'sync-operations') {
-    event.waitUntil(processOperationQueue())
+    broadcastSyncMessage('SYNC_PROGRESS', { source: SYNC_SOURCE_BACKGROUND })
+    event.waitUntil(
+      processOperationQueue()
+        .then(result => {
+          if (result.success) {
+            broadcastSyncMessage('SYNC_COMPLETE', {
+              source: SYNC_SOURCE_BACKGROUND,
+              pendingOperations: result.pendingOperations
+            })
+          } else {
+            broadcastSyncMessage('SYNC_ERROR', {
+              source: SYNC_SOURCE_BACKGROUND,
+              error: result.error || 'Unknown sync failure'
+            })
+          }
+        })
+        .catch(error => {
+          broadcastSyncMessage('SYNC_ERROR', {
+            source: SYNC_SOURCE_BACKGROUND,
+            error: error?.message || 'Background sync failed'
+          })
+        })
+    )
   }
 })
 
@@ -45,7 +84,10 @@ async function processOperationQueue(attempt = 0) {
 
     if (clients.length === 0) {
       console.log('No active clients found to process the operation queue')
-      return
+      return {
+        success: false,
+        error: 'No active clients'
+      }
     }
 
     const results = await Promise.all(
@@ -57,7 +99,11 @@ async function processOperationQueue(attempt = 0) {
           messageChannel.port1.onmessage = event => {
             if (event.data?.type === 'PROCESS_OPERATION_QUEUE_RESULT') {
               resolved = true
-              resolve(event.data.success)
+              resolve({
+                success: event.data.success,
+                pendingOperations: event.data.pendingOperations ?? null,
+                error: event.data.error
+              })
             }
           }
 
@@ -79,7 +125,8 @@ async function processOperationQueue(attempt = 0) {
       })
     )
 
-    const anyClientProcessed = results.some(Boolean)
+    const successfulClients = results.filter(result => result?.success)
+    const anyClientProcessed = successfulClients.length > 0
 
     if (!anyClientProcessed) {
       console.warn('No clients responded to PROCESS_OPERATION_QUEUE', { attempt })
@@ -97,12 +144,28 @@ async function processOperationQueue(attempt = 0) {
       } catch (err) {
         console.warn('Failed to re-register background sync after missing clients', err)
       }
+
+      return {
+        success: false,
+        error: 'No clients acknowledged the sync request'
+      }
     } else {
       console.log('Background sync request dispatched to clients')
+      const pendingCounts = successfulClients
+        .map(result => result.pendingOperations)
+        .filter(value => typeof value === 'number')
+      const pendingOperations = pendingCounts.length > 0 ? Math.min(...pendingCounts) : null
+      return {
+        success: true,
+        pendingOperations
+      }
     }
   } catch (error) {
     console.error('Background sync failed:', error)
-    throw error // Re-throw to mark sync as failed
+    return {
+      success: false,
+      error: error?.message || 'Background sync failed'
+    }
   }
 }
 
@@ -113,18 +176,43 @@ self.addEventListener('message', event => {
   }
 
   if (event.data && event.data.type === 'TRIGGER_SYNC') {
-    event.waitUntil(processOperationQueue())
+    broadcastSyncMessage('SYNC_PROGRESS', { source: SYNC_SOURCE_MANUAL })
+    event.waitUntil(
+      processOperationQueue().then(result => {
+        if (result.success) {
+          broadcastSyncMessage('SYNC_COMPLETE', {
+            source: SYNC_SOURCE_MANUAL,
+            pendingOperations: result.pendingOperations
+          })
+        } else {
+          broadcastSyncMessage('SYNC_ERROR', {
+            source: SYNC_SOURCE_MANUAL,
+            error: result.error || 'Manual sync failed'
+          })
+        }
+      })
+    )
+  }
+
+  if (event.data && event.data.type === 'SYNC_START') {
+    broadcastSyncMessage('SYNC_PROGRESS', {
+      source: event.data.payload?.source || SYNC_SOURCE_FOREGROUND,
+      pendingOperations: event.data.payload?.pendingOperations ?? null
+    })
   }
 
   if (event.data && event.data.type === 'SYNC_COMPLETE') {
-    // Notify clients that sync is complete
-    self.clients.matchAll().then(clients => {
-      clients.forEach(client => {
-        client.postMessage({
-          type: 'SYNC_COMPLETE',
-          timestamp: Date.now()
-        })
-      })
+    broadcastSyncMessage('SYNC_COMPLETE', {
+      source: event.data.payload?.source || SYNC_SOURCE_FOREGROUND,
+      pendingOperations: event.data.payload?.pendingOperations ?? null
+    })
+  }
+
+  if (event.data && event.data.type === 'SYNC_ERROR') {
+    broadcastSyncMessage('SYNC_ERROR', {
+      source: event.data.payload?.source || SYNC_SOURCE_FOREGROUND,
+      error: event.data.payload?.error || 'Unknown foreground sync error',
+      pendingOperations: event.data.payload?.pendingOperations ?? null
     })
   }
 })

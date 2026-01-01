@@ -3,8 +3,12 @@ import { offlineStore } from '../offlineStore'
 import { operationQueue } from '../operationQueue'
 import { offlineItemService } from '../offlineItemService'
 import * as supabaseModule from '../supabase'
+import { conflictDetector } from '../conflictDetector'
 
 let userSpy: ReturnType<typeof vi.spyOn> | null = null
+let getSessionSpy: ReturnType<typeof vi.spyOn> | null = null
+let refreshSessionSpy: ReturnType<typeof vi.spyOn> | null = null
+let conflictSpy: ReturnType<typeof vi.spyOn> | null = null
 
 // Mock network state
 const mockNavigator = {
@@ -12,8 +16,11 @@ const mockNavigator = {
 }
 Object.defineProperty(navigator, 'onLine', {
   get: () => mockNavigator.onLine,
-  set: (value) => { mockNavigator.onLine = value }
+  set: (value) => { mockNavigator.onLine = value },
+  configurable: true
 })
+
+const TEST_ACCOUNT_ID = 'acc-123'
 
 describe('Offline Integration Tests', () => {
   beforeEach(async () => {
@@ -21,6 +28,25 @@ describe('Offline Integration Tests', () => {
       id: 'test-user',
       email: 'offline@test.local'
     } as any)
+    getSessionSpy = vi.spyOn(supabaseModule.supabase.auth, 'getSession').mockResolvedValue({
+      data: {
+        session: {
+          access_token: 'test-token',
+          expires_at: Math.floor(Date.now() / 1000) + 600
+        }
+      },
+      error: null
+    } as any)
+    refreshSessionSpy = vi.spyOn(supabaseModule.supabase.auth, 'refreshSession').mockResolvedValue({
+      data: {
+        session: {
+          access_token: 'test-token',
+          expires_at: Math.floor(Date.now() / 1000) + 600
+        }
+      },
+      error: null
+    } as any)
+    conflictSpy = vi.spyOn(conflictDetector, 'detectConflicts').mockResolvedValue([])
     await offlineStore.init()
     await offlineStore.clearAll()
     await operationQueue.clearQueue()
@@ -29,6 +55,12 @@ describe('Offline Integration Tests', () => {
   afterEach(async () => {
     userSpy?.mockRestore()
     userSpy = null
+    getSessionSpy?.mockRestore()
+    getSessionSpy = null
+    refreshSessionSpy?.mockRestore()
+    refreshSessionSpy = null
+    conflictSpy?.mockRestore()
+    conflictSpy = null
     await offlineStore.clearAll()
     await operationQueue.clearQueue()
     vi.clearAllMocks()
@@ -40,7 +72,7 @@ describe('Offline Integration Tests', () => {
       mockNavigator.onLine = false
 
       // Create item offline
-      await offlineItemService.createItem({
+      await offlineItemService.createItem(TEST_ACCOUNT_ID, {
         projectId: 'proj-123',
         name: 'Offline Item',
         description: 'Created while offline'
@@ -53,21 +85,19 @@ describe('Offline Integration Tests', () => {
       mockNavigator.onLine = true
 
       // Mock successful server sync
-      vi.spyOn(await import('../supabase'), 'supabase').mockImplementation(() => ({
-        from: () => ({
-          insert: () => ({
-            select: () => ({
-              single: () => Promise.resolve({
-                data: {
-                  id: 'server-item-123',
-                  account_id: 'acc-123',
-                  project_id: 'proj-123',
-                  name: 'Offline Item',
-                  description: 'Created while offline',
-                  version: 1
-                },
-                error: null
-              })
+      const fromSpy = vi.spyOn(supabaseModule.supabase, 'from').mockImplementation(() => ({
+        insert: () => ({
+          select: () => ({
+            single: () => Promise.resolve({
+              data: {
+                id: 'server-item-123',
+                account_id: TEST_ACCOUNT_ID,
+                project_id: 'proj-123',
+                name: 'Offline Item',
+                description: 'Created while offline',
+                version: 1
+              },
+              error: null
             })
           })
         })
@@ -75,6 +105,7 @@ describe('Offline Integration Tests', () => {
 
       // Process queue
       await operationQueue.processQueue()
+      fromSpy.mockRestore()
 
       // Verify operation was processed
       expect(operationQueue.getQueueLength()).toBe(0)
@@ -86,29 +117,28 @@ describe('Offline Integration Tests', () => {
     })
 
     it('should handle sync failures gracefully', async () => {
-      mockNavigator.onLine = true
+      mockNavigator.onLine = false
 
       // Create item
-      await offlineItemService.createItem({
+      await offlineItemService.createItem(TEST_ACCOUNT_ID, {
         projectId: 'proj-123',
         name: 'Failing Item'
       })
 
       // Mock server failure
-      vi.spyOn(await import('../supabase'), 'supabase').mockImplementation(() => ({
-        from: () => ({
-          insert: () => ({
-            select: () => ({
-              single: () => Promise.resolve({
-                data: null,
-                error: { message: 'Network error' }
-              })
+      const fromSpy = vi.spyOn(supabaseModule.supabase, 'from').mockImplementation(() => ({
+        insert: () => ({
+          select: () => ({
+            single: () => Promise.resolve({
+              data: null,
+              error: { message: 'Network error' }
             })
           })
         })
       } as any))
 
       // Process queue
+      mockNavigator.onLine = true
       await operationQueue.processQueue()
 
       // Verify operation is still queued for retry
@@ -117,17 +147,20 @@ describe('Offline Integration Tests', () => {
       const pending = operationQueue.getPendingOperations()
       expect(pending[0].retryCount).toBe(1)
       expect(pending[0].lastError).toBe('Sync failed')
+
+      fromSpy.mockRestore()
     })
   })
 
   describe('Data Consistency', () => {
     it('should maintain data consistency during offline operations', async () => {
-      mockNavigator.onLine = true
+      mockNavigator.onLine = false
 
       // Create initial item
       const createOp = {
         type: 'CREATE_ITEM' as const,
         data: {
+          accountId: TEST_ACCOUNT_ID,
           projectId: 'proj-123',
           name: 'Original Item'
         }
@@ -135,26 +168,26 @@ describe('Offline Integration Tests', () => {
 
       await operationQueue.add(createOp)
 
-      // Mock server response
-      vi.spyOn(await import('../supabase'), 'supabase').mockImplementation(() => ({
-        from: () => ({
-          insert: () => ({
-            select: () => ({
-              single: () => Promise.resolve({
-                data: {
-                  id: 'item-123',
-                  account_id: 'acc-123',
-                  project_id: 'proj-123',
-                  name: 'Original Item',
-                  version: 1
-                },
-                error: null
-              })
+      // Mock server response for initial create
+      const fromSpy = vi.spyOn(supabaseModule.supabase, 'from')
+      fromSpy.mockImplementationOnce(() => ({
+        insert: () => ({
+          select: () => ({
+            single: () => Promise.resolve({
+              data: {
+                id: 'item-123',
+                account_id: TEST_ACCOUNT_ID,
+                project_id: 'proj-123',
+                name: 'Original Item',
+                version: 1
+              },
+              error: null
             })
           })
         })
       } as any))
 
+      mockNavigator.onLine = true
       await operationQueue.processQueue()
 
       // Update the item
@@ -162,32 +195,38 @@ describe('Offline Integration Tests', () => {
         type: 'UPDATE_ITEM' as const,
         data: {
           id: 'item-123',
+          accountId: TEST_ACCOUNT_ID,
           updates: { name: 'Updated Item' }
         }
       }
 
-      await operationQueue.add(updateOp)
+      mockNavigator.onLine = false
+      await operationQueue.add(updateOp, {
+        accountId: TEST_ACCOUNT_ID,
+        version: 2,
+        timestamp: new Date().toISOString()
+      })
 
       // Mock update response
-      const mockSupabase = vi.spyOn(await import('../supabase'), 'supabase')
-      mockSupabase.mockImplementation(() => ({
-        from: () => ({
-          update: () => ({
-            eq: () => Promise.resolve({
-              data: null,
-              error: null
-            })
+      fromSpy.mockImplementationOnce(() => ({
+        update: () => ({
+          eq: () => Promise.resolve({
+            data: null,
+            error: null
           })
         })
       } as any))
 
+      mockNavigator.onLine = true
       await operationQueue.processQueue()
 
       // Verify local store reflects the update
-      const items = await offlineStore.getItems('proj-123')
+      const items = await offlineStore.getAllItems()
       expect(items).toHaveLength(1)
       expect(items[0].name).toBe('Updated Item')
       expect(items[0].version).toBe(2)
+
+      fromSpy.mockRestore()
     })
   })
 

@@ -10,6 +10,7 @@ import { unifiedItemsService } from '@/services/inventoryService'
 import { ImageUploadService, UploadProgress } from '@/services/imageService'
 import ImageUpload from '@/components/ui/ImageUpload'
 import TransactionItemsList from '@/components/TransactionItemsList'
+import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { useAuth } from '../contexts/AuthContext'
 import { useAccount } from '../contexts/AccountContext'
 import { Shield } from 'lucide-react'
@@ -528,6 +529,7 @@ export default function AddTransaction() {
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back
           </ContextBackLink>
+          <RetrySyncButton size="sm" variant="secondary" />
         </div>
 
       </div>

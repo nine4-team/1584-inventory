@@ -18,6 +18,7 @@ import { getTaxPresets } from '@/services/taxPresetsService'
 import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import CategorySelect from '@/components/CategorySelect'
 import TransactionItemsList from '@/components/TransactionItemsList'
+import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { projectTransactionDetail, projectTransactions } from '@/utils/routes'
 import { getReturnToFromLocation, navigateToReturnToOrFallback } from '@/utils/navigationReturnTo'
 
@@ -595,6 +596,7 @@ export default function EditTransaction() {
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back
           </button>
+          <RetrySyncButton size="sm" variant="secondary" />
         </div>
 
       </div>

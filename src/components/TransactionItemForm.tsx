@@ -4,6 +4,7 @@ import { TransactionItemFormData, TransactionItemValidationErrors, ItemImage } f
 import { ImageUploadService } from '@/services/imageService'
 import ImagePreview from './ui/ImagePreview'
 import { useToast } from '@/components/ui/ToastContext'
+import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 
 interface TransactionItemFormProps {
   item?: TransactionItemFormData
@@ -179,13 +180,16 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
         <h3 className="text-lg font-medium text-gray-900">
           {isEditing ? 'Edit Item' : 'Add Item'}
         </h3>
-        <button
-          onClick={onCancel}
-          className="text-gray-400 hover:text-gray-600"
-          type="button"
-        >
-          <X className="h-5 w-5" />
-        </button>
+        <div className="flex items-center gap-3">
+          <RetrySyncButton size="sm" variant="secondary" showPendingCount={false} />
+          <button
+            onClick={onCancel}
+            className="text-gray-400 hover:text-gray-600"
+            type="button"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
       </div>
 
       <div className="space-y-4">

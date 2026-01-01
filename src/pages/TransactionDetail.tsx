@@ -20,6 +20,7 @@ import { useAccount } from '@/contexts/AccountContext'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import TransactionAudit from '@/components/ui/TransactionAudit'
+import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { projectTransactionEdit, projectTransactions } from '@/utils/routes'
 import { splitItemsByMovement, type DisplayTransactionItem } from '@/utils/transactionMovement'
 
@@ -228,13 +229,15 @@ export default function TransactionDetail() {
       return '/projects'
     }
 
-    const resolvedProjectId = projectId ?? transaction?.projectId
+    const normalizedTransactionProjectId =
+      transaction?.projectId && transaction.projectId !== 'null' ? transaction.projectId : undefined
+    const resolvedProjectId = projectId ?? normalizedTransactionProjectId
+
     if (resolvedProjectId) {
       return projectTransactionEdit(resolvedProjectId, transactionId)
     }
 
-    const inventoryProjectId = transaction?.projectId ?? 'null'
-    return `/business-inventory/transaction/${inventoryProjectId}/${transactionId}/edit`
+    return `/business-inventory/transaction/null/${transactionId}/edit`
   }, [projectId, transaction?.projectId, transactionId])
 
   // Refresh transaction items
@@ -983,7 +986,7 @@ export default function TransactionDetail() {
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back
           </ContextBackLink>
-          <div className="flex space-x-3">
+          <div className="flex items-center space-x-3">
             <ContextLink
               to={buildContextUrl(editTransactionUrl)}
               className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
@@ -991,6 +994,7 @@ export default function TransactionDetail() {
             >
               <Edit className="h-4 w-4" />
             </ContextLink>
+            <RetrySyncButton size="sm" variant="secondary" />
           </div>
         </div>
       </div>

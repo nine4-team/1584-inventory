@@ -11,6 +11,7 @@ import { NetworkStatus } from './components/NetworkStatus'
 import { SyncStatus } from './components/SyncStatus'
 import { offlineStore } from './services/offlineStore'
 import { operationQueue } from './services/operationQueue'
+import { initSyncScheduler } from './services/syncScheduler'
 
 const withRouteSuspense = (element: ReactNode, fallback?: ReactNode) => (
   <Suspense fallback={fallback ?? <LoadingSpinner />}>{element}</Suspense>
@@ -26,6 +27,8 @@ function App() {
 
         await operationQueue.init()
         console.log('Operation queue initialized')
+
+        await initSyncScheduler()
       } catch (error) {
         console.error('Failed to initialize offline services:', error)
       }

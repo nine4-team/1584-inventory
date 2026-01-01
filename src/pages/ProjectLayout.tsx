@@ -27,6 +27,7 @@ import ProjectForm from '@/components/ProjectForm'
 import BudgetProgress from '@/components/ui/BudgetProgress'
 import { useToast } from '@/components/ui/ToastContext'
 import { Button } from '@/components/ui/Button'
+import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import {
@@ -288,6 +289,7 @@ export default function ProjectLayout() {
               <Trash2 className="h-4 w-4 mr-2" />
               Delete
             </button>
+            <RetrySyncButton size="sm" variant="secondary" />
           </div>
         </div>
 

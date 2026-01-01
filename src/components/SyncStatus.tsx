@@ -1,16 +1,28 @@
 import { useState, useEffect, useMemo } from 'react'
 import { RefreshCw, CheckCircle, AlertCircle } from 'lucide-react'
 import { operationQueue } from '../services/operationQueue'
-import { onSyncComplete, triggerManualSync } from '../services/serviceWorker'
+import { onSyncEvent, type SyncEventPayload } from '../services/serviceWorker'
 import { useRealtimeConnectionStatus } from '@/hooks/useRealtimeConnectionStatus'
 import { useProjectRealtimeOverview } from '@/contexts/ProjectRealtimeContext'
+import { subscribeToSyncScheduler, getSyncSchedulerSnapshot, type SyncSchedulerSnapshot } from '@/services/syncScheduler'
+import { RetrySyncButton } from './ui/RetrySyncButton'
+
+const syncSourceLabels: Record<string, string> = {
+  'background-sync': 'Background',
+  manual: 'Manual',
+  foreground: 'Foreground'
+}
 
 export function SyncStatus() {
   const [queueLength, setQueueLength] = useState(0)
-  const [isSyncing, setIsSyncing] = useState(false)
-  const [lastSyncError, setLastSyncError] = useState<string | null>(null)
-  const { hasActiveRealtimeChannels, isRealtimeConnected, realtimeStatus, lastDisconnectedAt } =
-    useRealtimeConnectionStatus()
+  const [backgroundSyncActive, setBackgroundSyncActive] = useState(false)
+  const [backgroundSyncError, setBackgroundSyncError] = useState<string | null>(null)
+  const [lastSyncSource, setLastSyncSource] = useState<string | null>(null)
+  const [pendingFromWorker, setPendingFromWorker] = useState<number | null>(null)
+  const [schedulerSnapshot, setSchedulerSnapshot] = useState<SyncSchedulerSnapshot>(() =>
+    getSyncSchedulerSnapshot()
+  )
+  const { realtimeStatus, lastDisconnectedAt } = useRealtimeConnectionStatus()
   const { snapshots } = useProjectRealtimeOverview()
   const now = Date.now()
 
@@ -49,80 +61,117 @@ export function SyncStatus() {
   }, [projectsNeedingAttention, realtimeStatus, lastDisconnectedAt])
 
   useEffect(() => {
-    const updateStatus = () => {
-      setQueueLength(operationQueue.getQueueLength())
-    }
-
-    // Update immediately
-    updateStatus()
-
-    // Check periodically for queue status
-    const interval = setInterval(updateStatus, 2000)
-
-    // Listen for sync complete messages from service worker
-    const cleanup = onSyncComplete(() => {
-      setIsSyncing(false)
-      setLastSyncError(null)
-      updateStatus()
+    const unsubscribeQueue = operationQueue.subscribe(snapshot => {
+      setQueueLength(snapshot.length)
     })
 
+    const unsubscribeScheduler = subscribeToSyncScheduler(snapshot => {
+      setSchedulerSnapshot(snapshot)
+    })
+
+    const handleProgress = (payload: SyncEventPayload) => {
+      if (payload.source === 'background-sync') {
+        setBackgroundSyncActive(true)
+        setBackgroundSyncError(null)
+      }
+      setLastSyncSource(payload.source ?? null)
+      setPendingFromWorker(
+        typeof payload.pendingOperations === 'number' ? payload.pendingOperations : null
+      )
+    }
+
+    const handleComplete = (payload: SyncEventPayload) => {
+      if (payload.source === 'background-sync') {
+        setBackgroundSyncActive(false)
+        setBackgroundSyncError(null)
+      }
+      setQueueLength(operationQueue.getQueueLength())
+      setLastSyncSource(payload.source ?? null)
+      setPendingFromWorker(
+        typeof payload.pendingOperations === 'number' ? payload.pendingOperations : null
+      )
+    }
+
+    const handleError = (payload: SyncEventPayload) => {
+      if (payload.source === 'background-sync') {
+        setBackgroundSyncActive(false)
+        setBackgroundSyncError(payload.error || 'Background sync failed')
+      }
+      setLastSyncSource(payload.source ?? null)
+      setPendingFromWorker(
+        typeof payload.pendingOperations === 'number' ? payload.pendingOperations : null
+      )
+    }
+
+    const offProgress = onSyncEvent('progress', handleProgress)
+    const offComplete = onSyncEvent('complete', handleComplete)
+    const offError = onSyncEvent('error', handleError)
+
     return () => {
-      clearInterval(interval)
-      cleanup()
+      unsubscribeScheduler()
+      offProgress()
+      offComplete()
+      offError()
+      unsubscribeQueue()
     }
   }, [])
 
-  const handleManualSync = async () => {
-    setIsSyncing(true)
-    setLastSyncError(null)
+  const schedulerError = schedulerSnapshot.lastError || null
+  const combinedError = backgroundSyncError || schedulerError
+  const isForegroundSyncing = schedulerSnapshot.isRunning
+  const isRetryScheduled =
+    schedulerSnapshot.nextRunAt !== null && schedulerSnapshot.nextRunAt > Date.now()
 
-    try {
-      await triggerManualSync()
-      // Also trigger foreground processing as backup
-      await operationQueue.processQueue()
-      setIsSyncing(false)
-    } catch (error) {
-      setIsSyncing(false)
-      setLastSyncError('Manual sync failed')
+  useEffect(() => {
+    if (queueLength === 0) {
+      setPendingFromWorker(null)
     }
-  }
+  }, [queueLength])
 
-  if (queueLength === 0 && !isSyncing && !lastSyncError) {
+  const effectivePendingCount =
+    typeof pendingFromWorker === 'number' ? pendingFromWorker : queueLength
+
+  const shouldShowBanner =
+    effectivePendingCount > 0 || isForegroundSyncing || backgroundSyncActive || Boolean(combinedError)
+
+  if (!shouldShowBanner) {
     return null // Nothing to show
   }
 
-  type StatusVariant = 'error' | 'syncing' | 'queue' | 'success'
-  let statusVariant: StatusVariant = 'success'
+  type StatusVariant = 'error' | 'syncing' | 'queue' | 'waiting'
+  let statusVariant: StatusVariant = 'queue'
 
-  if (lastSyncError) {
+  if (combinedError) {
     statusVariant = 'error'
-  } else if (isSyncing) {
+  } else if (isForegroundSyncing || backgroundSyncActive) {
     statusVariant = 'syncing'
-  } else if (queueLength > 0) {
-    statusVariant = 'queue'
+  } else if (queueLength > 0 && isRetryScheduled) {
+    statusVariant = 'waiting'
   }
 
   const variantClasses: Record<StatusVariant, string> = {
     error: 'bg-red-50 text-red-800 border border-red-200',
     syncing: 'bg-blue-50 text-blue-800 border border-blue-200',
     queue: 'bg-yellow-50 text-yellow-800 border border-yellow-200',
-    success: 'bg-green-50 text-green-800 border border-green-200',
+    waiting: 'bg-amber-50 text-amber-800 border border-amber-200'
   }
 
   const statusMessage = (() => {
     switch (statusVariant) {
       case 'error':
-        return `Sync error: ${lastSyncError}`
-      case 'realtime':
-        return realtimeStatus === 'connecting'
-          ? 'Connecting to Supabase realtime...'
-          : 'Live updates paused — reconnecting to Supabase'
+        return `Sync error: ${combinedError}`
       case 'syncing':
-        return 'Syncing changes...'
+        return backgroundSyncActive ? 'Background sync running…' : 'Syncing changes…'
       case 'queue':
-        return `${queueLength} change${queueLength === 1 ? '' : 's'} pending`
+        return `${effectivePendingCount} change${effectivePendingCount === 1 ? '' : 's'} pending`
+      case 'waiting': {
+        const seconds = schedulerSnapshot.nextRunAt
+          ? Math.max(0, Math.ceil((schedulerSnapshot.nextRunAt - Date.now()) / 1000))
+          : 0
+        return `${effectivePendingCount} change${effectivePendingCount === 1 ? '' : 's'} pending — retrying in ${seconds}s`
+      }
       default:
-        return 'All changes synced'
+        return 'Sync status unavailable'
     }
   })()
 
@@ -134,6 +183,8 @@ export function SyncStatus() {
         return <RefreshCw className="w-4 h-4 animate-spin" />
       case 'queue':
         return <RefreshCw className="w-4 h-4" />
+      case 'waiting':
+        return <RefreshCw className="w-4 h-4 text-amber-600" />
       default:
         return <CheckCircle className="w-4 h-4" />
     }
@@ -145,15 +196,14 @@ export function SyncStatus() {
         <div className="flex items-center gap-2">
           {statusIcon}
 
-          <span>{statusMessage}</span>
+          <span>
+            {lastSyncSource && statusVariant !== 'queue'
+              ? `[${syncSourceLabels[lastSyncSource] ?? lastSyncSource}] ${statusMessage}`
+              : statusMessage}
+          </span>
 
-          {statusVariant === 'queue' && !isSyncing && (
-            <button
-              onClick={handleManualSync}
-              className="ml-2 px-2 py-1 text-xs bg-white rounded border hover:bg-gray-50"
-            >
-              Sync now
-            </button>
+          {effectivePendingCount > 0 && statusVariant !== 'syncing' && (
+            <RetrySyncButton className="ml-2" size="sm" showPendingCount />
           )}
         </div>
       </div>

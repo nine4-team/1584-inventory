@@ -67,7 +67,13 @@ export class ConflictDetector {
         if (conflict) {
           conflicts.push(conflict)
           // Store conflict in IndexedDB for persistence
-          await this.storeConflict(conflict, localItem.accountId || 'default-account')
+          if (localItem.accountId) {
+            await this.storeConflict(conflict, localItem.accountId)
+          } else {
+            console.warn('Skipping conflict persistence due to missing accountId', {
+              itemId: localItem.itemId
+            })
+          }
         }
       }
     } catch (error) {

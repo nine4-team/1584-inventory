@@ -7,6 +7,7 @@ import {
   createOrUpdateUserDocument,
   supabase
 } from '../services/supabase'
+import { updateOfflineContext } from '../services/offlineContext'
 import { User, UserRole } from '../types'
 
 interface AuthContextType {
@@ -92,6 +93,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setTimedOutWithoutAuth(false)
     }
   }, [supabaseUser, user, timedOutWithoutAuth])
+
+  useEffect(() => {
+    const userId = supabaseUser?.id ?? null
+    updateOfflineContext({ userId }).catch(error => {
+      console.warn('[AuthContext] Failed to persist offline user context', error)
+    })
+  }, [supabaseUser])
 
   useEffect(() => {
     const instanceId = instanceIdRef.current

@@ -11,6 +11,7 @@ import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import { useAccount } from '@/contexts/AccountContext'
 import { useAuth } from '@/contexts/AuthContext'
 import CategorySelect from '@/components/CategorySelect'
+import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 
 export default function AddBusinessInventoryTransaction() {
   const navigate = useStackedNavigate()
@@ -233,6 +234,7 @@ export default function AddBusinessInventoryTransaction() {
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back
           </ContextBackLink>
+          <RetrySyncButton size="sm" variant="secondary" />
         </div>
       </div>
 

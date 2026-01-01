@@ -6,6 +6,7 @@ import { transactionService, unifiedItemsService } from '@/services/inventorySer
 import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import { Transaction } from '@/types'
 import { Combobox } from '@/components/ui/Combobox'
+import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { useAuth } from '../contexts/AuthContext'
 import { useAccount } from '../contexts/AccountContext'
 import { UserRole } from '../types'
@@ -323,6 +324,7 @@ export default function EditItem() {
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back
           </ContextBackLink>
+          <RetrySyncButton size="sm" variant="secondary" />
         </div>
       </div>
 

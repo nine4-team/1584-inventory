@@ -1,20 +1,171 @@
 import { Operation, CreateItemOperation, UpdateItemOperation, DeleteItemOperation } from '../types/operations'
-import { offlineStore } from './offlineStore'
+import { offlineStore, type DBOperation } from './offlineStore'
 import { supabase, getCurrentUser } from './supabase'
 import { conflictDetector } from './conflictDetector'
-import { registerBackgroundSync, notifySyncComplete } from './serviceWorker'
+import { registerBackgroundSync, notifySyncComplete, notifySyncStart } from './serviceWorker'
+import { initOfflineContext, getOfflineContext, subscribeToOfflineContext, type OfflineContextValue } from './offlineContext'
+
+type OperationInput = Omit<Operation, 'id' | 'timestamp' | 'retryCount' | 'accountId' | 'updatedBy' | 'version'>
+
+interface OperationMetadataOverride {
+  accountId?: string
+  version?: number
+  timestamp?: string
+}
+
+export interface OperationQueueSnapshot {
+  accountId: string | null
+  length: number
+  operations: Operation[]
+}
+
+type QueueListener = (snapshot: OperationQueueSnapshot) => void
 
 class OperationQueue {
   private queue: Operation[] = []
   private isProcessing = false
+  private context: OfflineContextValue | null = null
+  private unsubscribeContext: (() => void) | null = null
+  private initialized = false
+  private initPromise: Promise<void> | null = null
+  private legacyImports = new Set<string>()
+  private queueListeners = new Set<QueueListener>()
 
   async init(): Promise<void> {
-    // Load queued operations from IndexedDB
+    if (this.initialized) {
+      return
+    }
+
+    if (!this.initPromise) {
+      this.initPromise = this.bootstrap()
+    }
+
     try {
-      const operations = await offlineStore.getOperations()
+      await this.initPromise
+    } finally {
+      this.initPromise = null
+    }
+  }
+
+  private async bootstrap(): Promise<void> {
+    try {
+      await offlineStore.init()
+    } catch (error) {
+      console.error('Failed to initialize offline store for operation queue:', error)
+    }
+
+    await initOfflineContext()
+    this.context = getOfflineContext()
+    await this.loadQueueForCurrentContext()
+
+    if (!this.unsubscribeContext) {
+      this.unsubscribeContext = subscribeToOfflineContext(context => {
+        this.handleContextChange(context).catch(error => {
+          console.error('Failed to handle offline context change for operation queue:', error)
+        })
+      })
+    }
+
+    this.initialized = true
+    this.emitQueueChange()
+  }
+
+  async add(operation: OperationInput, metadata: OperationMetadataOverride = {}): Promise<void> {
+    await this.init()
+
+    if (!this.context) {
+      this.context = getOfflineContext()
+    }
+
+    const [currentUser, contextSnapshot] = await Promise.all([
+      getCurrentUser().catch(() => null),
+      Promise.resolve(this.context)
+    ])
+
+    const resolvedAccountId =
+      metadata.accountId ?? this.inferAccountId(operation) ?? contextSnapshot?.accountId
+
+    if (!resolvedAccountId) {
+      throw new Error('Cannot queue operation until account context is available')
+    }
+
+    if (contextSnapshot?.accountId && contextSnapshot.accountId !== resolvedAccountId) {
+      throw new Error('Attempted to queue operation for a different account than the active context')
+    }
+
+    if (this.queue.length > 0 && this.queue[0].accountId !== resolvedAccountId) {
+      throw new Error('Operation queue already contains changes for a different account')
+    }
+
+    const resolvedUpdatedBy = currentUser?.id ?? contextSnapshot?.userId
+    if (!resolvedUpdatedBy) {
+      throw new Error('User must be authenticated to queue operations')
+    }
+
+    const resolvedTimestamp = metadata.timestamp ?? new Date().toISOString()
+    const resolvedVersion = metadata.version ?? 1
+    const fullOperation = {
+      ...operation,
+      id: crypto.randomUUID(),
+      timestamp: resolvedTimestamp,
+      retryCount: 0,
+      accountId: resolvedAccountId,
+      updatedBy: resolvedUpdatedBy,
+      version: resolvedVersion
+    } as Operation
+
+    this.queue.push(fullOperation)
+    await this.persistQueue()
+    this.emitQueueChange()
+
+    try {
+      await registerBackgroundSync()
+    } catch (error) {
+      console.warn('Background sync registration failed:', error)
+    }
+
+    if (navigator.onLine) {
+      void this.processQueue()
+    }
+  }
+
+  private inferAccountId(operation: OperationInput): string | undefined {
+    if ('data' in operation) {
+      switch (operation.type) {
+        case 'CREATE_ITEM':
+          return (operation as CreateItemOperation).data.accountId
+        case 'UPDATE_ITEM':
+          return (operation as UpdateItemOperation).data.accountId
+        case 'DELETE_ITEM':
+          return (operation as DeleteItemOperation).data.accountId
+        default:
+          return undefined
+      }
+    }
+    return undefined
+  }
+
+  private async handleContextChange(nextContext: OfflineContextValue | null): Promise<void> {
+    if (this.context?.accountId && this.context.accountId !== nextContext?.accountId) {
+      await this.persistQueue()
+    }
+
+    this.context = nextContext
+    await this.loadQueueForCurrentContext()
+  }
+
+  private async loadQueueForCurrentContext(): Promise<void> {
+    if (!this.context?.accountId) {
+      this.queue = []
+      return
+    }
+
+    try {
+      await this.importLegacyQueueIfNeeded(this.context)
+      const operations = await offlineStore.getOperations(this.context.accountId)
       this.queue = operations.map(op => ({
         id: op.id,
-        type: op.type as any,
+        type: op.type as Operation['type'],
         timestamp: op.timestamp,
         retryCount: op.retryCount,
         lastError: op.lastError,
@@ -23,55 +174,99 @@ class OperationQueue {
         version: op.version,
         data: op.data
       } as Operation))
+      this.emitQueueChange()
     } catch (error) {
       console.error('Failed to load operation queue:', error)
       this.queue = []
+      this.emitQueueChange()
     }
   }
 
-  async add(operation: Omit<Operation, 'id' | 'timestamp' | 'retryCount' | 'accountId' | 'updatedBy' | 'version'>): Promise<void> {
-    // Get current user and account info
-    const currentUser = await getCurrentUser()
-    if (!currentUser) {
-      throw new Error('User must be authenticated to queue operations')
+  private async importLegacyQueueIfNeeded(context: OfflineContextValue): Promise<void> {
+    if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+      return
     }
 
-    // For now, we'll assume account ID comes from the operation data or user context
-    // This will need to be updated when we have proper account context
-    const accountId = operation.type.includes('ITEM')
-      ? (operation as any).data.accountId || 'default-account'
-      : 'default-account'
+    if (this.legacyImports.has(context.accountId)) {
+      return
+    }
 
-    const fullOperation = {
-      ...operation,
-      id: crypto.randomUUID(),
-      timestamp: new Date().toISOString(),
-      retryCount: 0,
-      accountId,
-      updatedBy: currentUser.id,
-      version: 1 // Initial version
-    } as Operation
+    const legacyKey = 'operation-queue'
+    const raw = window.localStorage.getItem(legacyKey)
 
-    this.queue.push(fullOperation)
-    await this.persistQueue()
+    if (!raw) {
+      this.legacyImports.add(context.accountId)
+      return
+    }
 
-    // Register Background Sync for reliability
     try {
-      await registerBackgroundSync()
+      const parsed = JSON.parse(raw)
+      if (!Array.isArray(parsed)) {
+        window.localStorage.removeItem(legacyKey)
+        return
+      }
+
+      const normalized = parsed
+        .map(entry => this.normalizeLegacyOperation(entry, context))
+        .filter((op): op is DBOperation => Boolean(op))
+
+      if (normalized.length === 0) {
+        window.localStorage.removeItem(legacyKey)
+        return
+      }
+
+      const existing = await offlineStore.getOperations(context.accountId)
+      const existingIds = new Set(existing.map(op => op.id))
+      const merged = [
+        ...normalized.filter(op => !existingIds.has(op.id)),
+        ...existing
+      ]
+
+      await offlineStore.replaceOperationsForAccount(context.accountId, merged)
+      window.localStorage.removeItem(legacyKey)
     } catch (error) {
-      console.warn('Background sync registration failed:', error)
+      console.warn('Failed to migrate legacy operation queue from localStorage:', error)
+    } finally {
+      this.legacyImports.add(context.accountId)
+    }
+  }
+
+  private normalizeLegacyOperation(entry: any, context: OfflineContextValue): DBOperation | null {
+    if (!entry || typeof entry !== 'object' || !entry.type) {
+      return null
     }
 
-    // Try to process immediately if online
-    if (navigator.onLine) {
-      this.processQueue()
+    const accountId = entry.accountId ?? context.accountId
+    const updatedBy = entry.updatedBy ?? context.userId
+
+    if (!accountId || !updatedBy) {
+      return null
+    }
+
+    return {
+      id: entry.id ?? crypto.randomUUID(),
+      type: entry.type,
+      timestamp: entry.timestamp ?? new Date().toISOString(),
+      retryCount: entry.retryCount ?? 0,
+      lastError: entry.lastError,
+      accountId,
+      updatedBy,
+      version: entry.version ?? 1,
+      data: entry.data ?? {}
     }
   }
 
   async processQueue(): Promise<void> {
+    await this.init()
+
     if (this.isProcessing || this.queue.length === 0 || !navigator.onLine) {
       return
     }
+
+    notifySyncStart({
+      source: 'foreground',
+      pendingOperations: this.queue.length
+    })
 
     this.isProcessing = true
 
@@ -116,10 +311,11 @@ class OperationQueue {
       if (success) {
         this.queue.shift() // Remove completed operation
         await this.persistQueue()
+        this.emitQueueChange()
 
         // Notify sync completion if queue is now empty
         if (this.queue.length === 0) {
-          notifySyncComplete()
+          notifySyncComplete({ pendingOperations: 0 })
         }
 
         // Process next operation
@@ -149,6 +345,7 @@ class OperationQueue {
           console.error('Operation failed permanently:', operation)
           this.queue.shift()
           await this.persistQueue()
+          this.emitQueueChange()
         } else {
           // Schedule retry
           const delay = Math.min(1000 * Math.pow(2, operation.retryCount), 30000)
@@ -156,6 +353,7 @@ class OperationQueue {
         }
 
         await this.persistQueue()
+        this.emitQueueChange()
       }
     } catch (error) {
       console.error('Error processing queue:', error)
@@ -242,12 +440,25 @@ class OperationQueue {
 
       if (error) throw error
 
-      // Cache in local store
+      // Cache in local store with camelCase fields so downstream logic has account metadata
+      const cachedAt = new Date().toISOString()
       const dbItem = {
-        ...serverItem,
         itemId: serverItem.id,
+        accountId,
+        projectId: data.projectId,
+        name: serverItem.name,
+        description: serverItem.description ?? '',
+        source: serverItem.source ?? 'manual',
+        sku: serverItem.sku ?? '',
+        paymentMethod: serverItem.payment_method ?? 'cash',
+        disposition: serverItem.disposition ?? null,
+        notes: serverItem.notes ?? undefined,
+        qrKey: serverItem.qr_key,
+        bookmark: serverItem.bookmark ?? false,
+        dateCreated: serverItem.date_created ?? cachedAt,
+        lastUpdated: serverItem.last_updated ?? cachedAt,
         version: version,
-        last_synced_at: new Date().toISOString()
+        last_synced_at: cachedAt
       }
       await offlineStore.saveItems([dbItem])
 
@@ -276,7 +487,7 @@ class OperationQueue {
       if (error) throw error
 
       // Update local store
-      const existingItems = await offlineStore.getItems('') // Get all items for now
+      const existingItems = await offlineStore.getAllItems()
       const itemToUpdate = existingItems.find(item => item.itemId === data.id)
 
       if (itemToUpdate) {
@@ -321,8 +532,19 @@ class OperationQueue {
   }
 
   private async persistQueue(): Promise<void> {
+    const activeAccountId = this.getActiveAccountId()
+    if (!activeAccountId) {
+      return
+    }
+
+    const mixedAccounts = this.queue.some(op => op.accountId !== activeAccountId)
+    if (mixedAccounts) {
+      console.error('Operation queue contains multiple account IDs. Skipping persistence to avoid corruption.')
+      return
+    }
+
     try {
-      const operations = this.queue.map(op => ({
+      const operations: DBOperation[] = this.queue.map(op => ({
         id: op.id,
         type: op.type,
         timestamp: op.timestamp,
@@ -333,7 +555,7 @@ class OperationQueue {
         version: op.version,
         data: (op as any).data || {}
       }))
-      await offlineStore.saveOperations(operations)
+      await offlineStore.replaceOperationsForAccount(activeAccountId, operations)
     } catch (error) {
       console.error('Failed to persist operation queue:', error)
     }
@@ -341,6 +563,14 @@ class OperationQueue {
 
   getQueueLength(): number {
     return this.queue.length
+  }
+
+  getSnapshot(): OperationQueueSnapshot {
+    return {
+      accountId: this.getActiveAccountId(),
+      length: this.queue.length,
+      operations: [...this.queue]
+    }
   }
 
   getPendingOperations(): Operation[] {
@@ -357,13 +587,48 @@ class OperationQueue {
     } as Operation))
   }
 
-  async clearQueue(): Promise<void> {
+  async clearQueue(accountId?: string): Promise<void> {
+    await this.init()
+    const previousAccountId = this.queue[0]?.accountId ?? this.context?.accountId
     this.queue = []
+    const targetAccountId = accountId ?? previousAccountId
+
     try {
-      await offlineStore.clearOperations()
+      if (targetAccountId) {
+        await offlineStore.clearOperations(targetAccountId)
+      } else {
+        await offlineStore.clearOperations()
+      }
     } catch (error) {
       console.error('Failed to clear operations from store:', error)
     }
+    this.emitQueueChange()
+  }
+
+  subscribe(listener: QueueListener): () => void {
+    this.queueListeners.add(listener)
+    listener(this.getSnapshot())
+    return () => {
+      this.queueListeners.delete(listener)
+    }
+  }
+
+  private emitQueueChange(): void {
+    if (this.queueListeners.size === 0) {
+      return
+    }
+    const snapshot = this.getSnapshot()
+    this.queueListeners.forEach(listener => {
+      try {
+        listener(snapshot)
+      } catch (error) {
+        console.warn('Operation queue listener failed', error)
+      }
+    })
+  }
+
+  private getActiveAccountId(): string | null {
+    return this.queue[0]?.accountId ?? this.context?.accountId ?? null
   }
 }
 
@@ -378,7 +643,8 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
         .then(() => {
           responsePort?.postMessage({
             type: 'PROCESS_OPERATION_QUEUE_RESULT',
-            success: true
+            success: true,
+            pendingOperations: operationQueue.getQueueLength()
           })
         })
         .catch(error => {
@@ -386,7 +652,8 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
           responsePort?.postMessage({
             type: 'PROCESS_OPERATION_QUEUE_RESULT',
             success: false,
-            error: error?.message
+            error: error?.message,
+            pendingOperations: operationQueue.getQueueLength()
           })
         })
     }

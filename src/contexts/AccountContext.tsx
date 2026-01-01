@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, ReactNode, useMemo } fr
 import { useAuth } from './AuthContext'
 import { accountService } from '../services/accountService'
 import { Account } from '../types'
+import { updateOfflineContext, initOfflineContext, getOfflineContext, subscribeToOfflineContext } from '../services/offlineContext'
 
 interface AccountContextType {
   currentAccountId: string | null
@@ -22,12 +23,39 @@ export function AccountProvider({ children }: AccountProviderProps) {
   const [currentAccountId, setCurrentAccountId] = useState<string | null>(null)
   const [currentAccount, setCurrentAccount] = useState<Account | null>(null)
   const [loading, setLoading] = useState(true)
+  const [offlineFallbackAccountId, setOfflineFallbackAccountId] = useState<string | null>(null)
 
   // Check if user is system owner
   const isOwner = user?.role === 'owner' || false
   
   // Check if user is account admin (admin role OR system owner)
   const isAdmin = isOwner || user?.role === 'admin' || false
+
+  useEffect(() => {
+    let isMounted = true
+
+    const hydrateOfflineContext = async () => {
+      try {
+        await initOfflineContext()
+        if (!isMounted) return
+        setOfflineFallbackAccountId(getOfflineContext()?.accountId ?? null)
+      } catch (error) {
+        console.warn('[AccountContext] Failed to hydrate offline context', error)
+      }
+    }
+
+    hydrateOfflineContext()
+
+    const unsubscribe = subscribeToOfflineContext(context => {
+      if (!isMounted) return
+      setOfflineFallbackAccountId(context?.accountId ?? null)
+    })
+
+    return () => {
+      isMounted = false
+      unsubscribe()
+    }
+  }, [])
 
   useEffect(() => {
     let isMounted = true
@@ -41,13 +69,24 @@ export function AccountProvider({ children }: AccountProviderProps) {
         return
       }
 
-          if (!user) {
+      if (!user) {
         if (isMounted) {
-            setCurrentAccountId(null)
-            setCurrentAccount(null)
-            setLoading(false)
+          setCurrentAccountId(null)
+          setCurrentAccount(null)
+          setLoading(false)
         }
         return
+      }
+
+      const applyOfflineFallback = (): boolean => {
+        if (!offlineFallbackAccountId) {
+          return false
+        }
+        if (isMounted) {
+          setCurrentAccountId(prev => prev ?? offlineFallbackAccountId)
+          setCurrentAccount(prev => (prev?.id === offlineFallbackAccountId ? prev : null))
+        }
+        return true
       }
 
       // If we have a user and auth is ready, we start the loading process.
@@ -89,7 +128,7 @@ export function AccountProvider({ children }: AccountProviderProps) {
           if (finalAccount) {
             setCurrentAccountId(finalAccount.id)
             setCurrentAccount(finalAccount)
-          } else {
+          } else if (!applyOfflineFallback()) {
             setCurrentAccountId(null)
             setCurrentAccount(null)
           }
@@ -97,8 +136,10 @@ export function AccountProvider({ children }: AccountProviderProps) {
       } catch (error) {
         console.error('Error loading account:', error)
         if (isMounted) {
-          setCurrentAccountId(null)
-          setCurrentAccount(null)
+          if (!applyOfflineFallback()) {
+            setCurrentAccountId(null)
+            setCurrentAccount(null)
+          }
         }
       } finally {
         clearTimeout(loadingTimeout)
@@ -113,7 +154,13 @@ export function AccountProvider({ children }: AccountProviderProps) {
     return () => {
       isMounted = false
     }
-  }, [user, authLoading, userLoading, isOwner])
+  }, [user, authLoading, userLoading, isOwner, offlineFallbackAccountId])
+
+  useEffect(() => {
+    updateOfflineContext({ accountId: currentAccountId }).catch(error => {
+      console.warn('[AccountContext] Failed to persist offline account context', error)
+    })
+  }, [currentAccountId])
 
   const value: AccountContextType = useMemo(() => ({
     currentAccountId,
