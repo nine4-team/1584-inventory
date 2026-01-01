@@ -23,6 +23,7 @@ import TransactionAudit from '@/components/ui/TransactionAudit'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { projectTransactionEdit, projectTransactions } from '@/utils/routes'
 import { splitItemsByMovement, type DisplayTransactionItem } from '@/utils/transactionMovement'
+import { ConflictResolutionView } from '@/components/ConflictResolutionView'
 
 
 // Get canonical transaction title for display
@@ -998,6 +999,19 @@ export default function TransactionDetail() {
           </div>
         </div>
       </div>
+
+      {/* Conflict Resolution */}
+      {currentAccountId && projectId && (
+        <ConflictResolutionView
+          accountId={currentAccountId}
+          projectId={projectId}
+          onConflictsResolved={() => {
+            // Refresh transaction and items after conflicts are resolved
+            refreshRealtimeAfterWrite()
+            refreshTransactionItems()
+          }}
+        />
+      )}
 
       {/* Transaction Details */}
       <div className="bg-white shadow rounded-lg">

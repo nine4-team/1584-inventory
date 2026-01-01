@@ -93,12 +93,16 @@ export class ConflictResolver {
     const dbData = this.convertToDatabaseFormat(finalData)
 
     // Update server with resolved data using canonical column names
+    // Match by item_id (business identifier) since conflict.id is the item_id, not the UUID primary key
     const { error } = await supabase
       .from('items')
       .update(dbData)
-      .eq('id', conflict.id)
+      .eq('item_id', conflict.id)
 
-    if (error) throw error
+    if (error) {
+      console.error('Failed to update item in Supabase:', error)
+      throw error
+    }
 
     // Update local store
     await offlineStore.saveItems([{
@@ -109,45 +113,56 @@ export class ConflictResolver {
   }
 
   private convertToDatabaseFormat(localData: Record<string, unknown>): Record<string, unknown> {
-    return {
-      // Canonical column names (snake_case)
-      account_id: localData.accountId,
-      project_id: localData.projectId,
-      transaction_id: localData.transactionId,
-      item_id: localData.itemId,
-      name: localData.name,
-      description: localData.description,
-      source: localData.source,
-      sku: localData.sku,
-      price: localData.price,
-      purchase_price: localData.purchasePrice,
-      project_price: localData.projectPrice,
-      market_value: localData.marketValue,
-      payment_method: localData.paymentMethod,
-      disposition: localData.disposition,
-      notes: localData.notes,
-      space: localData.space,
-      qr_key: localData.qrKey,
-      tax_rate_pct: localData.taxRatePct,
-      tax_amount_purchase_price: localData.taxAmountPurchasePrice,
-      tax_amount_project_price: localData.taxAmountProjectPrice,
-      bookmark: localData.bookmark,
-      inventory_status: localData.inventoryStatus,
-      business_inventory_location: localData.businessInventoryLocation,
-      origin_transaction_id: localData.originTransactionId,
-      latest_transaction_id: localData.latestTransactionId,
-      // Version and metadata
-      version: localData.version,
-      updated_by: localData.updatedBy || localData.createdBy,
-      last_updated: new Date().toISOString()
+    // Convert camelCase to snake_case for Supabase canonical column names
+    // Only include fields that are actually present and mutable
+    const dbData: Record<string, unknown> = {}
+
+    // Map camelCase fields to snake_case canonical column names
+    if (localData.accountId !== undefined) dbData.account_id = localData.accountId
+    if (localData.projectId !== undefined) dbData.project_id = localData.projectId
+    if (localData.transactionId !== undefined) dbData.transaction_id = localData.transactionId
+    if (localData.itemId !== undefined) dbData.item_id = localData.itemId
+    if (localData.name !== undefined) dbData.name = localData.name
+    if (localData.description !== undefined) dbData.description = localData.description
+    if (localData.source !== undefined) dbData.source = localData.source
+    if (localData.sku !== undefined) dbData.sku = localData.sku
+    if (localData.price !== undefined) dbData.price = localData.price
+    if (localData.purchasePrice !== undefined) dbData.purchase_price = localData.purchasePrice
+    if (localData.projectPrice !== undefined) dbData.project_price = localData.projectPrice
+    if (localData.marketValue !== undefined) dbData.market_value = localData.marketValue
+    if (localData.paymentMethod !== undefined) dbData.payment_method = localData.paymentMethod
+    if (localData.disposition !== undefined) dbData.disposition = localData.disposition
+    if (localData.notes !== undefined) dbData.notes = localData.notes
+    if (localData.space !== undefined) dbData.space = localData.space
+    if (localData.qrKey !== undefined) dbData.qr_key = localData.qrKey
+    if (localData.taxRatePct !== undefined) dbData.tax_rate_pct = localData.taxRatePct
+    if (localData.taxAmountPurchasePrice !== undefined) dbData.tax_amount_purchase_price = localData.taxAmountPurchasePrice
+    if (localData.taxAmountProjectPrice !== undefined) dbData.tax_amount_project_price = localData.taxAmountProjectPrice
+    if (localData.bookmark !== undefined) dbData.bookmark = localData.bookmark
+    if (localData.inventoryStatus !== undefined) dbData.inventory_status = localData.inventoryStatus
+    if (localData.businessInventoryLocation !== undefined) dbData.business_inventory_location = localData.businessInventoryLocation
+    if (localData.originTransactionId !== undefined) dbData.origin_transaction_id = localData.originTransactionId
+    if (localData.latestTransactionId !== undefined) dbData.latest_transaction_id = localData.latestTransactionId
+
+    // Version and metadata - always update these on resolution
+    if (localData.version !== undefined) dbData.version = localData.version
+    if (localData.updatedBy !== undefined) {
+      dbData.updated_by = localData.updatedBy
+    } else if (localData.createdBy !== undefined) {
+      dbData.updated_by = localData.createdBy
     }
+    dbData.last_updated = new Date().toISOString()
+
+    return dbData
   }
 
   private serverToLocalItem(serverItem: Record<string, unknown>): Record<string, unknown> {
+    // Use item_id (business identifier) as itemId, fallback to id (UUID) if item_id missing
     return {
-      itemId: serverItem.id as string,
+      itemId: (serverItem.item_id as string) || (serverItem.id as string),
       accountId: serverItem.account_id as string,
       projectId: serverItem.project_id as string | null,
+      transactionId: serverItem.transaction_id as string | null,
       name: serverItem.name as string,
       description: serverItem.description as string,
       source: serverItem.source as string,

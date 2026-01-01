@@ -21,6 +21,7 @@ import BulkItemControls from '@/components/ui/BulkItemControls'
 import { useTransactionDisplayInfo } from '@/hooks/useTransactionDisplayInfo'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
+import { ConflictResolutionView } from '@/components/ConflictResolutionView'
 
 interface InventoryListProps {
   projectId: string
@@ -784,8 +785,20 @@ export default function InventoryList({ projectId, projectName, items: propItems
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </div>
-        </div>
       </div>
+    </div>
+
+      {/* Conflict Resolution */}
+      {currentAccountId && (
+        <ConflictResolutionView
+          accountId={currentAccountId}
+          projectId={projectId}
+          onConflictsResolved={() => {
+            // Refresh items after conflicts are resolved
+            refreshRealtimeAfterWrite()
+          }}
+        />
+      )}
 
       {/* Loading State */}
       {isLoading && (

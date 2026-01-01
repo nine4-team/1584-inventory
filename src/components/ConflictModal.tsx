@@ -22,20 +22,27 @@ export function ConflictModal({ conflict, onResolve, onCancel }: ConflictModalPr
   }
 
   const renderFieldComparison = (field: string) => {
+    // Both local and server data should be in camelCase after alignment in conflictDetector
     const localValue = conflict.local.data[field]
     const serverValue = conflict.server.data[field]
 
+    // Format field name for display (convert camelCase to readable format)
+    const fieldDisplayName = field
+      .replace(/([A-Z])/g, ' $1')
+      .replace(/^./, str => str.toUpperCase())
+      .trim()
+
     return (
       <div className="mb-4">
-        <label className="block text-sm font-medium mb-2">{field}</label>
+        <label className="block text-sm font-medium mb-2">{fieldDisplayName}</label>
         <div className="grid grid-cols-2 gap-4">
           <div className="p-3 bg-red-50 rounded border">
             <div className="text-xs text-red-600 mb-1">Your local change</div>
-            <div className="font-mono text-sm">{String(localValue)}</div>
+            <div className="font-mono text-sm break-words">{String(localValue ?? '(empty)')}</div>
           </div>
           <div className="p-3 bg-blue-50 rounded border">
             <div className="text-xs text-blue-600 mb-1">Server version</div>
-            <div className="font-mono text-sm">{String(serverValue)}</div>
+            <div className="font-mono text-sm break-words">{String(serverValue ?? '(empty)')}</div>
           </div>
         </div>
       </div>

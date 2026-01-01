@@ -25,11 +25,19 @@ export function ConflictResolutionView({ accountId, projectId, onConflictsResolv
     resolveCurrentConflict,
     skipCurrentConflict,
     hasConflicts
-  } = useConflictResolution()
+  } = useConflictResolution(accountId, projectId)
 
   useEffect(() => {
     loadStoredConflicts()
   }, [accountId])
+
+  // Also load stored conflicts when useConflictResolution loads them
+  useEffect(() => {
+    if (detectedConflicts.length > 0) {
+      // Merge detected conflicts with stored ones
+      loadStoredConflicts()
+    }
+  }, [detectedConflicts.length])
 
   const loadStoredConflicts = async () => {
     try {

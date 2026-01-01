@@ -322,14 +322,17 @@ class OperationQueue {
         setTimeout(() => this.processQueue(), 100)
       } else {
         // Check for conflicts before retrying
+        // Conflicts are detected and stored in IndexedDB by conflictDetector.detectConflicts
+        // The UI (ConflictResolutionView) will load and display them
         const projectId = this.getProjectIdFromOperation(operation)
         if (projectId) {
           const conflicts = await conflictDetector.detectConflicts(projectId)
           if (conflicts.length > 0) {
             console.warn('Conflicts detected during sync, marking operation as blocked:', conflicts)
-            operation.lastError = 'Conflicts detected - manual resolution required'
+            operation.lastError = `Conflicts detected (${conflicts.length} item(s)) - please resolve conflicts in the UI`
             operation.retryCount = 5 // Mark as permanently failed due to conflicts
             await this.persistQueue()
+            this.emitQueueChange() // Notify UI that queue state changed
             // Don't process next operation - let UI handle conflict resolution
             this.isProcessing = false
             return
@@ -365,14 +368,16 @@ class OperationQueue {
 
   private async executeOperation(operation: Operation): Promise<boolean> {
     try {
-      // Check for conflicts before executing (Phase 3: Conflict Resolution)
+      // Check for conflicts before executing
+      // Conflicts are detected and stored in IndexedDB by conflictDetector.detectConflicts
+      // The UI (ConflictResolutionView) will load and display them
       const projectId = this.getProjectIdFromOperation(operation)
       if (projectId) {
         const conflicts = await conflictDetector.detectConflicts(projectId)
         if (conflicts.length > 0) {
-          // For now, log conflicts and skip execution
-          // In Phase 4, we'll integrate with UI for resolution
-          console.warn('Conflicts detected, skipping operation:', conflicts)
+          console.warn('Conflicts detected, blocking operation execution:', conflicts)
+          // Conflicts are already stored in IndexedDB by conflictDetector
+          // UI will surface them via ConflictResolutionView
           return false
         }
       }
