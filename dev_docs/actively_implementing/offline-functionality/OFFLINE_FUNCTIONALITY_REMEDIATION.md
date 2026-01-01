@@ -16,7 +16,7 @@ Document the gap-closing work required to make Phases 1–3 production-ready for
 ### Implementation Status (Rolling)
 | Workstream | Status | Evidence / Next Action |
 | --- | --- | --- |
-| Data access layer | 🔴 Not started | UI still calls Supabase directly; no IndexedDB hydration. |
+| Data access layer | 🟠 In progress | `offlineStore`, `offlineAwareQuery`, and queue plumbing ship; AddItem/TransactionDetail/BusinessInventory forms still hit Supabase directly and skip IndexedDB hydration paths. |
 | Operation queue & sync | 🟠 In progress | Queue scaffolding exists but metadata defaults and SW ownership unfinished. |
 | Conflict detection & UX | 🟢 Completed | Detector, modal, IndexedDB persistence, UX embedding, and resolver writeback implemented. |
 | Service worker & network state | 🟢 Completed | Ping endpoint with build timestamp, Background Sync registered, queue processing via SW delegation, essential data cached, network state hook fixed. |
@@ -28,6 +28,30 @@ Document the gap-closing work required to make Phases 1–3 production-ready for
 
 ---
 
+### Remaining Offline Gaps (Must-Fix)
+1. **UI flows still bypass offline services**
+   - `AddItem`, `TransactionDetail` inline item CRUD, and business inventory forms call `unifiedItemsService` directly, so airplane-mode saves fail immediately.
+   - `unifiedItemsService.create/update/delete` must become thin orchestrators that detect connectivity, delegate to `offlineItemService`/`operationQueue`, and hydrate from `offlineStore` before touching Supabase.
+2. **Optimistic hydration parity**
+   - Project/transaction/item queries hydrate from IndexedDB, but detail pages still refetch on mount and briefly show empty states offline.
+   - Need shared helpers that prime React Query caches from `offlineStore` synchronously so UI never flashes “No data” when reopening offline.
+3. **Offline UX feedback + retries**
+   - `RetrySyncButton` exists, yet most forms never show success banners when queued (they only render errors from Supabase).
+   - Each offline-aware mutation should emit a toast/inline banner explaining “Saved offline · will sync automatically,” plus actionable retry links tied to queue IDs.
+4. **Regression coverage**
+   - No automated test currently toggles `navigator.onLine = false` during item creation to assert queue writes + conflict surfacing.
+   - Add Vitest/Cypress coverage that runs through Add→sync→conflict scenarios and validates IndexedDB persistence survives reloads.
+
+### Implementation Guardrails
+1. **Reuse existing primitives** – extend `offlineItemService`, `operationQueue`, `offlineStore`, `useNetworkState`, `RetrySyncButton`, and `offlineAwareQuery` rather than introducing component-specific hacks. `unifiedItemsService` becomes the single orchestrator that decides between online/offline paths.
+2. **Document flow per surface** – every PR should include (or link) a short diagram/description for the touched UI (`AddItem`, Transaction detail, business inventory) showing: `Form → unifiedItemsService → offlineItemService → operationQueue → service worker → Supabase`, plus the IndexedDB hydration path (`offlineStore → React Query cache`). Keep it in this doc or link to design notes.
+3. **Shared hydration helpers** – never read IndexedDB directly inside components. Always hydrate via the shared `offlineAwareQuery` so cache priming, stale-state detection, and write-back logic stay uniform.
+4. **Centralized UX messaging** – use a single helper/toast/banner copy (“Saved offline · will sync automatically”) and expose retry actions that call `RetrySyncButton`/queue APIs. Avoid one-off verbiage.
+5. **QA + tests as acceptance** – updates must reference the relevant rows in `OFFLINE_QA_MATRIX.md` and add/extend tests (`offline-integration.test.ts` or Cypress) that force offline saves, verify queue entries, reload the app, and confirm sync/conflict flows. PR reviewers reject changes that skip this evidence.
+6. **Cross-cutting review** – at least one reviewer familiar with the offline stack should sign off; use this doc as the checklist during review to keep behavior consistent across features.
+
+---
+
 ### Workstreams & Tasks
 
 #### 1. Data Access Layer
@@ -35,6 +59,8 @@ Document the gap-closing work required to make Phases 1–3 production-ready for
 - [x] Refactor item/transaction services to fetch from `offlineStore` when offline and hydrate caches on successful network fetches.
 - [x] Extend `offlineStore` API (getAll, getById, upsert, delete) and stop resetting `version`/`last_synced_at` blindly.
 - [x] Add migrations/versioning to `offlineStore` so schema changes can roll out safely.
+- [ ] Route item create/update/delete flows (`AddItem`, `TransactionDetail` inline forms, business inventory screens) through `offlineItemService`/`operationQueue` instead of `unifiedItemsService` direct Supabase calls.
+- [ ] Add regression coverage that forces airplane mode while saving an item and verifies queue persistence + optimistic UI hydration.
 
 #### 2. Operation Queue & Sync
 - [x] Move queue persistence from `localStorage` to IndexedDB (new `operations` store) with per-account partitioning. (`offlineStore` now exposes a v4 schema + compound `accountId_timestamp` index; `operationQueue` always hydrates/persists per-account snapshots.)
