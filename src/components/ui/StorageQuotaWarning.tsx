@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { AlertTriangle, X } from 'lucide-react'
 import { offlineMediaService } from '@/services/offlineMediaService'
+import { offlineStore } from '@/services/offlineStore'
 
 interface StorageQuotaWarningProps {
   className?: string
@@ -18,9 +19,16 @@ export function StorageQuotaWarning({ className = '' }: StorageQuotaWarningProps
   useEffect(() => {
     const checkStorage = async () => {
       try {
+        // Wait for offline store to be initialized before checking storage
+        await offlineStore.waitForInit()
         const status = await offlineMediaService.getStorageStatus()
         setStorageStatus(status)
       } catch (error) {
+        // Silently fail if database is not available (e.g., in environments without IndexedDB)
+        if (error instanceof Error && error.message === 'Database not initialized') {
+          // Store might not be initialized yet, skip silently
+          return
+        }
         console.error('Failed to check storage quota:', error)
       }
     }

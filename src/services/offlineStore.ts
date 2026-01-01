@@ -197,6 +197,28 @@ class OfflineStore {
     return this.initPromise
   }
 
+  /**
+   * Wait for the database to be initialized if it's not already.
+   * Returns immediately if already initialized.
+   */
+  async waitForInit(): Promise<void> {
+    if (this.db) {
+      return
+    }
+    if (this.initPromise) {
+      return this.initPromise
+    }
+    // If not initialized and no promise exists, try to initialize
+    return this.init()
+  }
+
+  /**
+   * Check if the database is initialized
+   */
+  isInitialized(): boolean {
+    return this.db !== null
+  }
+
   private runMigrations(db: IDBDatabase, oldVersion: number, transaction: IDBTransaction | null): void {
     console.log(`Running IndexedDB migrations from version ${oldVersion} to ${this.dbVersion}`)
 

@@ -40,7 +40,7 @@ export function Combobox({
 }: ComboboxProps) {
   const [query, setQuery] = useState('')
 
-  const selectedOption = options.find(option => option.id === value)
+  const selectedOption = value ? options.find(option => option.id === value) : null
 
   const filteredOptions = query === ''
     ? options
