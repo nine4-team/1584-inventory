@@ -9,9 +9,11 @@ import { ProjectRealtimeProvider } from './contexts/ProjectRealtimeContext'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import { NetworkStatus } from './components/NetworkStatus'
 import { SyncStatus } from './components/SyncStatus'
+import { StorageQuotaWarning } from './components/ui/StorageQuotaWarning'
 import { offlineStore } from './services/offlineStore'
 import { operationQueue } from './services/operationQueue'
 import { initSyncScheduler } from './services/syncScheduler'
+import { offlineMediaService } from './services/offlineMediaService'
 
 const withRouteSuspense = (element: ReactNode, fallback?: ReactNode) => (
   <Suspense fallback={fallback ?? <LoadingSpinner />}>{element}</Suspense>
@@ -29,6 +31,16 @@ function App() {
         console.log('Operation queue initialized')
 
         await initSyncScheduler()
+
+        // Cleanup expired media files on app start
+        try {
+          const cleanedCount = await offlineMediaService.cleanupExpiredMedia()
+          if (cleanedCount > 0) {
+            console.log(`Cleaned up ${cleanedCount} expired media files`)
+          }
+        } catch (error) {
+          console.error('Failed to cleanup expired media:', error)
+        }
       } catch (error) {
         console.error('Failed to initialize offline services:', error)
       }
@@ -44,6 +56,9 @@ function App() {
           <ToastProvider>
             <NetworkStatus />
             <SyncStatus />
+            <div className="fixed top-16 left-0 right-0 z-40 px-4 pt-2">
+              <StorageQuotaWarning />
+            </div>
             <Routes>
             <Route path="/auth/callback" element={withRouteSuspense(<AuthCallback />)} />
             <Route path="/invite/:token" element={withRouteSuspense(<InviteAccept />)} />

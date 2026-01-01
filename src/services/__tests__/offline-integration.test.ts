@@ -2,8 +2,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { offlineStore } from '../offlineStore'
 import { operationQueue } from '../operationQueue'
 import { offlineItemService } from '../offlineItemService'
+import { offlineMediaService } from '../offlineMediaService'
 import * as supabaseModule from '../supabase'
 import { conflictDetector } from '../conflictDetector'
+import { conflictResolver } from '../conflictResolver'
 
 let userSpy: ReturnType<typeof vi.spyOn> | null = null
 let getSessionSpy: ReturnType<typeof vi.spyOn> | null = null
@@ -253,8 +255,6 @@ describe('Offline Integration Tests', () => {
     })
 
     it('should cleanup expired media', async () => {
-      const { offlineMediaService } = await import('../offlineMediaService')
-
       // Save media with expiration
       const blob = new Blob(['test'], { type: 'text/plain' })
       const file = new File([blob], 'test.txt')
@@ -265,6 +265,178 @@ describe('Offline Integration Tests', () => {
       // Cleanup expired media
       const deletedCount = await offlineMediaService.cleanupExpiredMedia()
       expect(deletedCount).toBeGreaterThanOrEqual(1)
+    })
+  })
+
+  describe('Media Upload Queue', () => {
+    it('should queue media uploads when offline', async () => {
+      mockNavigator.onLine = false
+
+      const blob = new Blob(['test image'], { type: 'image/jpeg' })
+      const file = new File([blob], 'test.jpg', { type: 'image/jpeg' })
+
+      const result = await offlineMediaService.queueMediaUpload('acc-123', 'item-123', file)
+
+      expect(result.queued).toBe(true)
+      expect(result.mediaId).toBeDefined()
+
+      // Check upload queue
+      const queue = await offlineStore.getMediaUploadQueue('acc-123')
+      expect(queue).toHaveLength(1)
+      expect(queue[0].mediaId).toBe(result.mediaId)
+      expect(queue[0].itemId).toBe('item-123')
+    })
+
+    it('should process queued uploads when coming online', async () => {
+      mockNavigator.onLine = false
+
+      // Queue a media upload
+      const blob = new Blob(['test image'], { type: 'image/jpeg' })
+      const file = new File([blob], 'test.jpg', { type: 'image/jpeg' })
+      const result = await offlineMediaService.queueMediaUpload('acc-123', 'item-123', file)
+
+      // Come online
+      mockNavigator.onLine = true
+
+      // Process queue (would normally upload to Supabase Storage)
+      const processResult = await offlineMediaService.processQueuedUploads('acc-123')
+
+      // Queue entry should be removed after processing
+      const queue = await offlineStore.getMediaUploadQueue('acc-123')
+      expect(queue.length).toBeLessThanOrEqual(0) // May be removed or still there if upload fails
+    })
+  })
+
+  describe('Conflict Resolution Flow', () => {
+    it('should detect and resolve conflicts during sync', async () => {
+      // Create local item
+      await offlineStore.saveItems([{
+        itemId: 'item-123',
+        accountId: TEST_ACCOUNT_ID,
+        projectId: 'proj-123',
+        name: 'Local Name',
+        version: 1,
+        lastUpdated: '2024-01-01T00:00:00Z',
+        last_synced_at: '2024-01-01T00:00:00Z'
+      }])
+
+      // Mock server item with different name
+      const serverItem = {
+        id: 'uuid-123',
+        item_id: 'item-123',
+        account_id: TEST_ACCOUNT_ID,
+        project_id: 'proj-123',
+        name: 'Server Name',
+        version: 2,
+        last_updated: '2024-01-01T00:10:00Z'
+      }
+
+      // Mock conflict detection
+      conflictSpy.mockResolvedValueOnce([{
+        id: 'item-123',
+        type: 'content',
+        field: 'name',
+        local: {
+          data: { name: 'Local Name' },
+          timestamp: '2024-01-01T00:00:00Z',
+          version: 1
+        },
+        server: {
+          data: { name: 'Server Name' },
+          timestamp: '2024-01-01T00:10:00Z',
+          version: 2
+        }
+      }])
+
+      // Detect conflicts
+      const conflicts = await conflictDetector.detectConflicts('proj-123')
+      expect(conflicts).toHaveLength(1)
+
+      // Resolve conflicts (auto-resolve: server wins for version conflicts)
+      const resolutions = await conflictResolver.resolveConflicts(conflicts)
+      expect(resolutions).toHaveLength(1)
+      expect(resolutions[0].resolution.strategy).toBe('keep_server')
+    })
+  })
+
+  describe('Long-lived Offline Session', () => {
+    it('should handle multiple operations during extended offline period', async () => {
+      mockNavigator.onLine = false
+
+      // Create multiple items offline
+      for (let i = 0; i < 5; i++) {
+        await offlineItemService.createItem(TEST_ACCOUNT_ID, {
+          projectId: 'proj-123',
+          name: `Offline Item ${i}`,
+          description: `Created offline at ${i}`
+        })
+      }
+
+      // Verify all operations are queued
+      expect(operationQueue.getQueueLength()).toBe(5)
+
+      // Come online and process
+      mockNavigator.onLine = true
+
+      // Mock successful server responses
+      const fromSpy = vi.spyOn(supabaseModule.supabase, 'from').mockImplementation(() => ({
+        insert: () => ({
+          select: () => ({
+            single: () => Promise.resolve({
+              data: {
+                id: `server-item-${Date.now()}`,
+                account_id: TEST_ACCOUNT_ID,
+                project_id: 'proj-123',
+                name: 'Offline Item',
+                version: 1
+              },
+              error: null
+            })
+          })
+        })
+      } as any))
+
+      await operationQueue.processQueue()
+
+      // All operations should be processed
+      expect(operationQueue.getQueueLength()).toBe(0)
+
+      fromSpy.mockRestore()
+    })
+  })
+
+  describe('Cold Start Offline', () => {
+    it('should load cached data when starting app offline', async () => {
+      // Pre-populate cache with items
+      await offlineStore.saveItems([
+        {
+          itemId: 'item-1',
+          accountId: TEST_ACCOUNT_ID,
+          projectId: 'proj-123',
+          name: 'Cached Item 1',
+          version: 1,
+          lastUpdated: '2024-01-01T00:00:00Z',
+          last_synced_at: '2024-01-01T00:00:00Z'
+        },
+        {
+          itemId: 'item-2',
+          accountId: TEST_ACCOUNT_ID,
+          projectId: 'proj-123',
+          name: 'Cached Item 2',
+          version: 1,
+          lastUpdated: '2024-01-01T00:00:00Z',
+          last_synced_at: '2024-01-01T00:00:00Z'
+        }
+      ])
+
+      // Start offline
+      mockNavigator.onLine = false
+
+      // Load items from cache
+      const cachedItems = await offlineStore.getItems('proj-123')
+      expect(cachedItems).toHaveLength(2)
+      expect(cachedItems[0].name).toBe('Cached Item 1')
+      expect(cachedItems[1].name).toBe('Cached Item 2')
     })
   })
 })

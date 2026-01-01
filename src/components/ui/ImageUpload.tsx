@@ -1,6 +1,8 @@
 import React, { useMemo, useState, useRef, useCallback } from 'react'
 import { Upload, Image as ImageIcon, FileText, AlertCircle, ChevronDown, Trash2, Eye } from 'lucide-react'
 import { ImageUploadService } from '@/services/imageService'
+import { OfflineAwareImageService } from '@/services/offlineAwareImageService'
+import { useNetworkState } from '@/hooks/useNetworkState'
 
 interface ImageUploadProps {
   onImagesChange: (files: File[]) => void
@@ -31,9 +33,11 @@ export default function ImageUpload({
   const [isDragOver, setIsDragOver] = useState(false)
   const [openMenuIndex, setOpenMenuIndex] = useState<number | null>(null)
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false)
+  const [storageError, setStorageError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const galleryInputRef = useRef<HTMLInputElement>(null)
+  const { isOnline } = useNetworkState()
 
   const supportsPdf = useMemo(() => acceptedTypes.includes('application/pdf'), [acceptedTypes])
   const supportsImages = useMemo(() => acceptedTypes.some(t => t.startsWith('image/')), [acceptedTypes])
@@ -56,7 +60,7 @@ export default function ImageUpload({
     return file.name.toLowerCase().endsWith('.pdf')
   }
 
-  const validateFile = useCallback((file: File): string | null => {
+  const validateFile = useCallback(async (file: File): Promise<string | null> => {
     // Some browsers provide an empty MIME type (especially for certain files).
     // Fall back to file extension checks for PDFs and common image types.
     if (file.type) {
@@ -78,22 +82,34 @@ export default function ImageUpload({
       return `File too large. Maximum size: ${maxFileSize}MB`
     }
 
-    return null
-  }, [acceptedTypes, maxFileSize, isPdfFile, isRenderableImageFile, supportsImages, supportsPdf])
+    // Check storage quota for offline storage
+    if (!isOnline) {
+      const quotaCheck = await OfflineAwareImageService.canUpload(file.size)
+      if (!quotaCheck.allowed) {
+        return quotaCheck.reason || 'Storage quota exceeded'
+      }
+    }
 
-  const addImages = useCallback((files: FileList | File[]) => {
+    return null
+  }, [acceptedTypes, maxFileSize, isPdfFile, isRenderableImageFile, supportsImages, supportsPdf, isOnline])
+
+  const addImages = useCallback(async (files: FileList | File[]) => {
     const fileArray = Array.from(files)
     const validFiles: File[] = []
     const newPreviewImages: PreviewImage[] = []
 
-    fileArray.forEach(file => {
-      const error = validateFile(file)
+    // Validate files (async for quota checks)
+    for (const file of fileArray) {
+      const error = await validateFile(file)
       if (error) {
         newPreviewImages.push({
           file,
           previewUrl: '',
           error
         })
+        if (error.includes('Storage quota')) {
+          setStorageError(error)
+        }
       } else {
         validFiles.push(file)
         newPreviewImages.push({
@@ -101,7 +117,7 @@ export default function ImageUpload({
           previewUrl: ImageUploadService.createPreviewUrl(file)
         })
       }
-    })
+    }
 
     const existingValidFiles = images.filter(img => !img.error).map(img => img.file)
     const existingValidCount = existingValidFiles.length
@@ -128,7 +144,12 @@ export default function ImageUpload({
     const combinedFiles = [...existingValidFiles, ...validFiles]
     const limitedFiles = combinedFiles.slice(0, maxImages)
     onImagesChange(limitedFiles)
-  }, [images, maxImages, validateFile, onImagesChange])
+    
+    // Clear storage error after a delay
+    if (storageError) {
+      setTimeout(() => setStorageError(null), 5000)
+    }
+  }, [images, maxImages, validateFile, onImagesChange, storageError])
 
   const removeImage = useCallback((index: number) => {
     const imageToRemove = images[index]
@@ -149,10 +170,10 @@ export default function ImageUpload({
     onImagesChange(remainingFiles)
   }, [images, onImagesChange])
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (files && files.length > 0) {
-      addImages(files)
+      await addImages(files)
     }
   }
 
@@ -161,7 +182,7 @@ export default function ImageUpload({
     try {
       const files = await ImageUploadService.selectFromGallery()
       if (files.length > 0) {
-        addImages(files)
+        await addImages(files)
       }
     } catch (error) {
       console.error('Error selecting from gallery:', error)
@@ -203,7 +224,7 @@ export default function ImageUpload({
     setIsDragOver(false)
   }, [])
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
     setIsDragOver(false)
@@ -212,7 +233,7 @@ export default function ImageUpload({
 
     const files = e.dataTransfer.files
     if (files && files.length > 0) {
-      addImages(files)
+      await addImages(files)
     }
   }, [disabled, addImages])
 
@@ -261,6 +282,16 @@ export default function ImageUpload({
 
   return (
     <div className={`space-y-4 ${className}`}>
+      {/* Storage Error Banner */}
+      {storageError && (
+        <div className="rounded-lg border border-red-500 bg-red-50 p-3 text-sm text-red-900">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 flex-shrink-0" />
+            <span>{storageError}</span>
+          </div>
+        </div>
+      )}
+      
       {/* Upload Area */}
       <div
         className={`relative border-2 border-dashed rounded-lg p-6 sm:p-8 text-center transition-colors touch-manipulation ${

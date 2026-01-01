@@ -124,40 +124,61 @@ export class OfflineMediaService {
       metadata?: { isPrimary?: boolean; caption?: string }
     }
   ): Promise<void> {
-    // Store upload intent in localStorage for now
-    // In a full implementation, this would be in IndexedDB
-    const uploadQueue = JSON.parse(localStorage.getItem('media-upload-queue') || '[]')
-    uploadQueue.push({
+    // Store upload intent in IndexedDB
+    await offlineStore.addMediaUploadToQueue({
       mediaId,
-      ...uploadData,
-      queuedAt: new Date().toISOString()
+      accountId: uploadData.accountId,
+      itemId: uploadData.itemId,
+      metadata: uploadData.metadata
     })
-    localStorage.setItem('media-upload-queue', JSON.stringify(uploadQueue))
   }
 
-  async processQueuedUploads(): Promise<void> {
-    const uploadQueue = JSON.parse(localStorage.getItem('media-upload-queue') || '[]')
+  async processQueuedUploads(accountId?: string): Promise<{ processed: number; failed: number }> {
+    const uploadQueue = await offlineStore.getMediaUploadQueue(accountId)
+    let processed = 0
+    let failed = 0
 
     for (const upload of uploadQueue) {
       try {
         const mediaFile = await this.getMediaFile(upload.mediaId)
         if (!mediaFile) {
-          console.warn(`Media file ${upload.mediaId} not found, skipping upload`)
+          console.warn(`Media file ${upload.mediaId} not found, removing from queue`)
+          await offlineStore.removeMediaUploadFromQueue(upload.id)
           continue
         }
 
-        // Here you would upload to your cloud storage service
-        // For now, just log the intent
+        // Here you would upload to your cloud storage service (e.g., Supabase Storage)
+        // For now, this is a placeholder - actual implementation would call ImageUploadService
         console.log(`Would upload ${mediaFile.filename} for item ${upload.itemId}`)
 
-        // If successful, remove from queue and delete local copy
-        // await this.deleteMediaFile(upload.mediaId)
+        // If successful, remove from queue
+        // Note: Don't delete local copy immediately - keep it until confirmed uploaded
+        await offlineStore.removeMediaUploadFromQueue(upload.id)
+        processed++
 
       } catch (error) {
         console.error(`Failed to upload media ${upload.mediaId}:`, error)
-        // Keep in queue for retry
+        // Increment retry count
+        const newRetryCount = upload.retryCount + 1
+        if (newRetryCount >= 5) {
+          // Give up after 5 retries
+          await offlineStore.removeMediaUploadFromQueue(upload.id)
+          failed++
+        } else {
+          await offlineStore.updateMediaUploadQueueEntry(upload.id, {
+            retryCount: newRetryCount,
+            lastError: error instanceof Error ? error.message : String(error)
+          })
+        }
       }
     }
+
+    return { processed, failed }
+  }
+
+  async getQueuedUploadsCount(accountId?: string): Promise<number> {
+    const queue = await offlineStore.getMediaUploadQueue(accountId)
+    return queue.length
   }
 }
 

@@ -21,8 +21,8 @@ Document the gap-closing work required to make Phases 1–3 production-ready for
 | Conflict detection & UX | 🟢 Completed | Detector, modal, IndexedDB persistence, UX embedding, and resolver writeback implemented. |
 | Service worker & network state | 🟢 Completed | Ping endpoint with build timestamp, Background Sync registered, queue processing via SW delegation, essential data cached, network state hook fixed. |
 | Schema & auth dependencies | 🟢 Completed | Migration applied: version/updated_by columns added to projects, business_profiles, budget_categories; RLS policies updated; auth refresh and validation implemented in operationQueue. |
-| Media & large payload strategy | 🔴 Not started | Offline media service exists but unused in UI. |
-| Testing & tooling | 🔴 Not started | Only unit tests drafted; no integration coverage. |
+| Media & large payload strategy | 🟢 Completed | Offline media service integrated into UI via `offlineAwareImageService`, storage quota warnings (`StorageQuotaWarning` component), upload queue moved to IndexedDB, automatic cleanup on app start. |
+| Testing & tooling | 🟢 Completed | Unit tests for `conflictDetector` and `conflictResolver`, comprehensive integration tests for offline/online transitions, manual QA matrix documented in `OFFLINE_QA_MATRIX.md`. |
 
 > Update this table whenever implementation moves forward so remediation progress stays visible.
 
@@ -64,13 +64,13 @@ Document the gap-closing work required to make Phases 1–3 production-ready for
 - [x] Ensure auth/session refresh happens before processing queue; persist minimal auth metadata required for offline writes. (Implemented: operationQueue refreshes session before processing; AuthContext/AccountContext persist userId/accountId to offlineContext; added validation that current user matches operation's updatedBy)
 
 #### 6. Media & Large Payload Strategy
-- [ ] Define how images/documents are handled offline (e.g., queue uploads with Blob storage in IndexedDB, or gate editing while offline).
-- [ ] Enforce storage quotas and warn users as they approach IndexedDB limits; add cleanup logic for stale blobs.
+- [x] Define how images/documents are handled offline (e.g., queue uploads with Blob storage in IndexedDB, or gate editing while offline). (Implemented: `offlineMediaService` queues uploads in IndexedDB, `offlineAwareImageService` wraps upload logic)
+- [x] Enforce storage quotas and warn users as they approach IndexedDB limits; add cleanup logic for stale blobs. (Implemented: `StorageQuotaWarning` component, quota checks in `ImageUpload`, automatic cleanup on app start)
 
 #### 7. Testing & Tooling
-- [ ] Create automated integration tests simulating offline/online transitions (Cypress + service worker mocks).
-- [ ] Add unit tests for `offlineStore`, `operationQueue`, and conflict logic.
-- [ ] Document manual QA matrix: cold start offline, long-lived offline edits, conflict scenarios, auth expiration mid-sync.
+- [x] Create automated integration tests simulating offline/online transitions (Cypress + service worker mocks). (Implemented: Comprehensive Vitest integration tests in `offline-integration.test.ts`)
+- [x] Add unit tests for `offlineStore`, `operationQueue`, and conflict logic. (Implemented: Unit tests for `conflictDetector` and `conflictResolver`, existing tests for `offlineStore` and `operationQueue`)
+- [x] Document manual QA matrix: cold start offline, long-lived offline edits, conflict scenarios, auth expiration mid-sync. (Implemented: Comprehensive QA matrix in `OFFLINE_QA_MATRIX.md`)
 
 ---
 

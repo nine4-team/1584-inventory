@@ -116,6 +116,20 @@ interface DBMediaEntry {
   expiresAt?: string // For cleanup of temporary uploads
 }
 
+interface DBMediaUploadQueueEntry {
+  id: string
+  mediaId: string
+  accountId: string
+  itemId: string
+  metadata?: {
+    isPrimary?: boolean
+    caption?: string
+  }
+  queuedAt: string
+  retryCount: number
+  lastError?: string
+}
+
 interface DBConflict {
   id: string
   itemId: string
@@ -141,7 +155,7 @@ class OfflineStore {
   private db: IDBDatabase | null = null
   private initPromise: Promise<void> | null = null
   private readonly dbName = 'ledger-offline'
-  private readonly dbVersion = 4 // Increment when schema changes
+  private readonly dbVersion = 5 // Increment when schema changes
 
   async init(): Promise<void> {
     if (this.db) {
@@ -274,6 +288,17 @@ class OfflineStore {
         } catch (error) {
           console.warn('Failed to add accountId_timestamp index to operations store during migration:', error)
         }
+      }
+    }
+
+    // Migration 5: Add media upload queue store
+    if (oldVersion < 5) {
+      if (!db.objectStoreNames.contains('mediaUploadQueue')) {
+        const queueStore = db.createObjectStore('mediaUploadQueue', { keyPath: 'id' })
+        queueStore.createIndex('mediaId', 'mediaId', { unique: false })
+        queueStore.createIndex('accountId', 'accountId', { unique: false })
+        queueStore.createIndex('itemId', 'itemId', { unique: false })
+        queueStore.createIndex('queuedAt', 'queuedAt', { unique: false })
       }
     }
   }
@@ -969,10 +994,77 @@ class OfflineStore {
     })
   }
 
+  // Media upload queue methods
+  async addMediaUploadToQueue(entry: Omit<DBMediaUploadQueueEntry, 'id' | 'queuedAt' | 'retryCount'>): Promise<string> {
+    if (!this.db) throw new Error('Database not initialized')
+    const id = `upload-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    const queueEntry: DBMediaUploadQueueEntry = {
+      ...entry,
+      id,
+      queuedAt: new Date().toISOString(),
+      retryCount: 0
+    }
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction(['mediaUploadQueue'], 'readwrite')
+      const store = transaction.objectStore('mediaUploadQueue')
+      const request = store.put(queueEntry)
+
+      request.onsuccess = () => resolve(id)
+      request.onerror = () => reject(request.error)
+    })
+  }
+
+  async getMediaUploadQueue(accountId?: string): Promise<DBMediaUploadQueueEntry[]> {
+    if (!this.db) throw new Error('Database not initialized')
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction(['mediaUploadQueue'], 'readonly')
+      const store = transaction.objectStore('mediaUploadQueue')
+      const request = accountId
+        ? store.index('accountId').getAll(accountId)
+        : store.getAll()
+
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+  }
+
+  async removeMediaUploadFromQueue(queueId: string): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized')
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction(['mediaUploadQueue'], 'readwrite')
+      const store = transaction.objectStore('mediaUploadQueue')
+      const request = store.delete(queueId)
+
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+    })
+  }
+
+  async updateMediaUploadQueueEntry(queueId: string, updates: Partial<DBMediaUploadQueueEntry>): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized')
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction(['mediaUploadQueue'], 'readwrite')
+      const store = transaction.objectStore('mediaUploadQueue')
+      const getRequest = store.get(queueId)
+
+      getRequest.onsuccess = () => {
+        const entry = getRequest.result
+        if (entry) {
+          Object.assign(entry, updates)
+          store.put(entry)
+        }
+      }
+
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+    })
+  }
+
   // Utility methods
   async clearAll(): Promise<void> {
     if (!this.db) throw new Error('Database not initialized')
-    const transaction = this.db.transaction(['items', 'transactions', 'projects', 'operations', 'cache', 'conflicts', 'media'], 'readwrite')
+    const transaction = this.db.transaction(['items', 'transactions', 'projects', 'operations', 'cache', 'conflicts', 'media', 'mediaUploadQueue'], 'readwrite')
 
     transaction.objectStore('items').clear()
     transaction.objectStore('transactions').clear()
@@ -981,6 +1073,9 @@ class OfflineStore {
     transaction.objectStore('cache').clear()
     transaction.objectStore('conflicts').clear()
     transaction.objectStore('media').clear()
+    if (transaction.objectStore('mediaUploadQueue')) {
+      transaction.objectStore('mediaUploadQueue').clear()
+    }
 
     return new Promise((resolve, reject) => {
       transaction.oncomplete = () => resolve()
@@ -990,4 +1085,4 @@ class OfflineStore {
 }
 
 export const offlineStore = new OfflineStore()
-export type { DBItem, DBTransaction, DBProject, DBOperation, DBContextRecord }
+export type { DBItem, DBTransaction, DBProject, DBOperation, DBContextRecord, DBMediaUploadQueueEntry }
