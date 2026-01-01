@@ -49,26 +49,44 @@ self.addEventListener('sync', event => {
   console.log('Background sync triggered:', event.tag)
 
   if (event.tag === 'sync-operations') {
+    console.log('Processing sync-operations queue via Background Sync')
     broadcastSyncMessage('SYNC_PROGRESS', { source: SYNC_SOURCE_BACKGROUND })
     event.waitUntil(
       processOperationQueue()
         .then(result => {
           if (result.success) {
+            console.log('Background sync completed successfully', { pendingOperations: result.pendingOperations })
             broadcastSyncMessage('SYNC_COMPLETE', {
               source: SYNC_SOURCE_BACKGROUND,
               pendingOperations: result.pendingOperations
             })
+            // Re-register sync if there are still pending operations
+            if (result.pendingOperations && result.pendingOperations > 0) {
+              self.registration.sync.register('sync-operations').catch(err => {
+                console.warn('Failed to re-register background sync:', err)
+              })
+            }
           } else {
+            console.warn('Background sync failed:', result.error)
             broadcastSyncMessage('SYNC_ERROR', {
               source: SYNC_SOURCE_BACKGROUND,
               error: result.error || 'Unknown sync failure'
             })
+            // Re-register sync to retry later
+            self.registration.sync.register('sync-operations').catch(err => {
+              console.warn('Failed to re-register background sync after error:', err)
+            })
           }
         })
         .catch(error => {
+          console.error('Background sync error:', error)
           broadcastSyncMessage('SYNC_ERROR', {
             source: SYNC_SOURCE_BACKGROUND,
             error: error?.message || 'Background sync failed'
+          })
+          // Re-register sync to retry later
+          self.registration.sync.register('sync-operations').catch(err => {
+            console.warn('Failed to re-register background sync after exception:', err)
           })
         })
     )

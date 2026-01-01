@@ -18,8 +18,8 @@ Document the gap-closing work required to make Phases 1–3 production-ready for
 | --- | --- | --- |
 | Data access layer | 🔴 Not started | UI still calls Supabase directly; no IndexedDB hydration. |
 | Operation queue & sync | 🟠 In progress | Queue scaffolding exists but metadata defaults and SW ownership unfinished. |
-| Conflict detection & UX | 🟠 In progress | Detector + modal built, not embedded in flows yet. |
-| Service worker & network state | 🟠 In progress | Ping endpoint + hook exist; SW still stub for queue processing. |
+| Conflict detection & UX | 🟢 Completed | Detector, modal, IndexedDB persistence, UX embedding, and resolver writeback implemented. |
+| Service worker & network state | 🟢 Completed | Ping endpoint with build timestamp, Background Sync registered, queue processing via SW delegation, essential data cached, network state hook fixed. |
 | Schema & auth dependencies | 🔴 Not started | No migrations for `version`/`updated_by` or RLS updates. |
 | Media & large payload strategy | 🔴 Not started | Offline media service exists but unused in UI. |
 | Testing & tooling | 🔴 Not started | Only unit tests drafted; no integration coverage. |
@@ -45,18 +45,18 @@ Document the gap-closing work required to make Phases 1–3 production-ready for
 - [x] Provide manual “Retry sync” triggers anywhere data can be edited offline (project, transaction, and business inventory forms now wired).
 
 #### 3. Conflict Detection & UX
-- [ ] Align column names (`item_id`, snake_case fields) between Supabase payloads and local cache.
-- [ ] Compare actual mutable fields (description, disposition, pricing, etc.) plus timestamps/versions; ignore read-only columns.
-- [ ] Store conflict metadata in IndexedDB so UX persists after refresh.
-- [ ] Embed `useConflictResolution` + `ConflictModal` into relevant views (e.g., project items, transactions) and during queue processing failures.
-- [ ] Update `conflictResolver` to write back using canonical column names and convert camelCase→snake_case before Supabase updates.
+- [x] Align column names (`item_id`, snake_case fields) between Supabase payloads and local cache. (implemented: `alignServerItemToLocal` in `conflictDetector`)
+- [x] Compare actual mutable fields (description, disposition, pricing, etc.) plus timestamps/versions; ignore read-only columns. (implemented: `MUTABLE_ITEM_FIELDS` / `READ_ONLY_ITEM_FIELDS` in `conflictDetector`)
+- [x] Store conflict metadata in IndexedDB so UX persists after refresh. (implemented: `offlineStore.saveConflict` + `useConflictResolution` hydration)
+- [x] Embed `useConflictResolution` + `ConflictModal` into relevant views (e.g., project items, transactions) and during queue processing failures. (implemented: `ConflictResolutionView` included in `InventoryList` and `TransactionDetail`; queue gating in `operationQueue`)
+- [x] Update `conflictResolver` to write back using canonical column names and convert camelCase→snake_case before Supabase updates. (implemented: `convertToDatabaseFormat` + `applyResolution` in `conflictResolver`)
 
 #### 4. Service Worker & Network State
-- [ ] Add `/ping` endpoint (Cloud Function or simple edge handler) so `useNetworkState` can verify connectivity without spurious failures.
-- [ ] Register Background Sync (`sync-operations`) inside the service worker and ensure it calls `operationQueue.processQueue`.
-- [ ] Move operation queue ownership into the service worker (triggered by Background Sync or manual messages) so queue processing can run while the app is closed.
-- [ ] Cache essential API responses (projects, items, transactions, settings) via IndexedDB hydration rather than Cache API only.
-- [ ] Fix `useNetworkState` state updates (avoid stale closures, track `lastOnline` correctly, expose “offline but retrying” states).
+- [x] Add `/ping` endpoint (Implemented: Vite plugin injects build timestamp into ping.json) (Cloud Function or simple edge handler) so `useNetworkState` can verify connectivity without spurious failures.
+- [x] Register Background Sync (Implemented: Background Sync registered in service worker, delegates to foreground clients via message passing) (`sync-operations`) inside the service worker and ensure it calls `operationQueue.processQueue`.
+- [x] Move operation queue ownership (Implemented: Service worker handles Background Sync events and delegates to clients; re-registers sync on failure/partial completion) into the service worker (triggered by Background Sync or manual messages) so queue processing can run while the app is closed.
+- [x] Cache essential API responses (Implemented: Projects cached via `cacheProjectsOffline`; items and transactions already cached) (projects, items, transactions, settings) via IndexedDB hydration rather than Cache API only.
+- [x] Fix `useNetworkState` state updates (Implemented: Uses refs to avoid stale closures, tracks `lastOnline` correctly, exposes `isRetrying` state) (avoid stale closures, track `lastOnline` correctly, expose “offline but retrying” states).
 
 #### 5. Schema & Auth Dependencies
 - [ ] Add `version` (integer) and `updated_by` columns to `items`, `transactions`, and any other mutable tables; backfill with defaults.

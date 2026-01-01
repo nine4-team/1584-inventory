@@ -1,12 +1,14 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../services/supabase'
 import { reportNetworkStatus } from '../services/syncScheduler'
+import { getSyncSchedulerSnapshot } from '../services/syncScheduler'
 
 interface NetworkState {
   isOnline: boolean
   isSlowConnection: boolean
   lastOnline: Date | null
   connectionType: string
+  isRetrying: boolean
 }
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
@@ -16,12 +18,15 @@ export function useNetworkState(): NetworkState {
     isOnline: navigator.onLine,
     isSlowConnection: false,
     lastOnline: navigator.onLine ? new Date() : null,
-    connectionType: 'unknown'
+    connectionType: 'unknown',
+    isRetrying: false
   })
 
-  useEffect(() => {
-    let lastOnlineTime = networkState.lastOnline
+  // Use refs to avoid stale closures
+  const lastOnlineRef = useRef<Date | null>(navigator.onLine ? new Date() : null)
+  const syncCheckIntervalRef = useRef<number | null>(null)
 
+  useEffect(() => {
     const updateNetworkState = async () => {
       const isOnline = navigator.onLine
 
@@ -75,18 +80,23 @@ export function useNetworkState(): NetworkState {
         }
       }
 
-      // Update lastOnline time
-      if (actualOnline && !lastOnlineTime) {
-        lastOnlineTime = new Date()
-      } else if (!actualOnline && lastOnlineTime) {
+      // Update lastOnline time using ref to avoid stale closure
+      if (actualOnline && !lastOnlineRef.current) {
+        lastOnlineRef.current = new Date()
+      } else if (!actualOnline && lastOnlineRef.current) {
         // Keep the last online time when going offline
       }
+
+      // Check if sync scheduler is retrying
+      const syncSnapshot = getSyncSchedulerSnapshot()
+      const isRetrying = !actualOnline && syncSnapshot.pendingOperations > 0 && syncSnapshot.isRunning
 
       setNetworkState({
         isOnline: actualOnline,
         isSlowConnection,
-        lastOnline: lastOnlineTime,
-        connectionType
+        lastOnline: lastOnlineRef.current,
+        connectionType,
+        isRetrying
       })
 
       reportNetworkStatus(actualOnline)
@@ -111,12 +121,24 @@ export function useNetworkState(): NetworkState {
     // Periodic connectivity checks (every 30 seconds)
     const interval = setInterval(updateNetworkState, 30000)
 
+    // Check sync retry status periodically (every 5 seconds)
+    syncCheckIntervalRef.current = window.setInterval(() => {
+      const syncSnapshot = getSyncSchedulerSnapshot()
+      setNetworkState(prev => ({
+        ...prev,
+        isRetrying: !prev.isOnline && syncSnapshot.pendingOperations > 0 && syncSnapshot.isRunning
+      }))
+    }, 5000)
+
     return () => {
       window.removeEventListener('online', handleOnline)
       window.removeEventListener('offline', handleOffline)
       clearInterval(interval)
+      if (syncCheckIntervalRef.current) {
+        clearInterval(syncCheckIntervalRef.current)
+      }
     }
-  }, []) // Remove networkState dependency to avoid stale closure
+  }, []) // Empty deps - using refs to avoid stale closures
 
   return networkState
 }

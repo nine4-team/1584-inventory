@@ -4,7 +4,7 @@ import { toDateOnlyString } from '@/utils/dateUtils'
 import { getTaxPresetById } from './taxPresetsService'
 import { CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { lineageService } from './lineageService'
-import { offlineStore, type DBItem, type DBTransaction } from './offlineStore'
+import { offlineStore, type DBItem, type DBTransaction, type DBProject } from './offlineStore'
 import type { Item, Project, FilterOptions, PaginationOptions, Transaction, TransactionItemFormData, TransactionCompleteness, CompletenessStatus, ItemImage } from '@/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
@@ -58,6 +58,17 @@ async function cacheTransactionsOffline(rows: any[]) {
     await offlineStore.saveTransactions(dbTransactions)
   } catch (error) {
     console.warn('Failed to cache transactions offline:', error)
+  }
+}
+
+async function cacheProjectsOffline(rows: any[]) {
+  if (!rows || rows.length === 0) return
+  try {
+    await offlineStore.init()
+    const dbProjects: DBProject[] = rows.map(mapSupabaseProjectToOfflineRecord)
+    await offlineStore.saveProjects(dbProjects)
+  } catch (error) {
+    console.warn('Failed to cache projects offline:', error)
   }
 }
 
@@ -161,6 +172,25 @@ function mapSupabaseTransactionToOfflineRecord(row: any): DBTransaction {
     needsReview: converted.needs_review ?? undefined,
     sumItemPurchasePrices: converted.sum_item_purchase_prices !== undefined ? String(converted.sum_item_purchase_prices) : undefined,
     itemIds: Array.isArray(converted.item_ids) ? converted.item_ids : [],
+    version: converted.version ?? 1,
+    last_synced_at: new Date().toISOString()
+  }
+}
+
+function mapSupabaseProjectToOfflineRecord(row: any): DBProject {
+  const converted = convertTimestamps(row)
+  return {
+    id: converted.id,
+    name: converted.name || '',
+    description: converted.description || '',
+    clientName: converted.client_name || '',
+    budget: converted.budget ? String(converted.budget) : undefined,
+    designFee: converted.design_fee ? String(converted.design_fee) : undefined,
+    defaultCategoryId: converted.default_category_id || undefined,
+    mainImageUrl: converted.main_image_url || undefined,
+    createdAt: converted.created_at,
+    updatedAt: converted.updated_at,
+    createdBy: converted.created_by || '',
     version: converted.version ?? 1,
     last_synced_at: new Date().toISOString()
   }
@@ -378,6 +408,11 @@ export const projectService = {
       .order('updated_at', { ascending: false })
 
     if (error) throw error
+
+    // Cache projects offline for offline access
+    if (data && data.length > 0) {
+      void cacheProjectsOffline(data)
+    }
 
     return (data || []).map(project => {
       const converted = convertTimestamps(project)

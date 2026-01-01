@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 import { VitePWA } from 'vite-plugin-pwa'
+import fs from 'fs'
 
 // Quick build-time visibility into Vite env vars (removed after debugging)
 console.log('🔍 BUILD ENV:', {
@@ -12,10 +13,26 @@ console.log('🔍 BUILD ENV:', {
 // Generate a timestamp for cache busting
 const timestamp = Date.now()
 
+// Plugin to inject build timestamp into ping.json
+const pingTimestampPlugin = () => {
+  return {
+    name: 'ping-timestamp',
+    buildStart() {
+      const pingPath = path.resolve(__dirname, 'public/ping.json')
+      if (fs.existsSync(pingPath)) {
+        const content = JSON.parse(fs.readFileSync(pingPath, 'utf-8'))
+        content.timestamp = new Date().toISOString()
+        fs.writeFileSync(pingPath, JSON.stringify(content, null, 2))
+      }
+    }
+  }
+}
+
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
     react(),
+    pingTimestampPlugin(),
     VitePWA({
       strategies: 'injectManifest',
       srcDir: 'public',
