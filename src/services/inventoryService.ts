@@ -188,9 +188,9 @@ function mapSupabaseProjectToOfflineRecord(row: any): DBProject {
     name: converted.name || '',
     description: converted.description || '',
     clientName: converted.client_name || '',
-    budget: converted.budget ? String(converted.budget) : undefined,
-    designFee: converted.design_fee ? String(converted.design_fee) : undefined,
-    defaultCategoryId: converted.default_category_id || undefined,
+    budget: converted.budget !== undefined && converted.budget !== null ? Number(converted.budget) : undefined,
+    designFee: converted.design_fee !== undefined && converted.design_fee !== null ? Number(converted.design_fee) : undefined,
+    // default_category_id removed - default category is now account-wide preset
     mainImageUrl: converted.main_image_url || undefined,
     createdAt: converted.created_at,
     updatedAt: converted.updated_at,
@@ -619,6 +619,7 @@ export const projectService = {
       budget: converted.budget ? parseFloat(converted.budget) : undefined,
       designFee: converted.design_fee ? parseFloat(converted.design_fee) : undefined,
       budgetCategories: converted.budget_categories || undefined,
+      mainImageUrl: converted.main_image_url || undefined,
       createdAt: converted.created_at,
       updatedAt: converted.updated_at,
       createdBy: converted.created_by,
@@ -1727,8 +1728,8 @@ export const transactionService = {
           },
           async (payload) => {
             const { eventType, new: newRecord, old: oldRecord } = payload
-            const newProjectId = newRecord?.project_id ?? null
-            const oldProjectId = oldRecord?.project_id ?? null
+            const newProjectId = (newRecord as any)?.project_id ?? null
+            const oldProjectId = (oldRecord as any)?.project_id ?? null
 
             const matchesProject = (candidate: string | null | undefined) => candidate === projectId
             let nextTransactions = entry?.data ?? []
@@ -3648,11 +3649,11 @@ export const unifiedItemsService = {
         }
 
         // If the transaction has a tax rate, propagate it to the added item
-        try {
+          try {
           const txTax = existingTransaction.tax_rate_pct
           if (txTax !== undefined && txTax !== null) {
             await this.updateItem(accountId, itemId, {
-              tax_rate_pct: txTax
+              taxRatePct: txTax
             })
           }
         } catch (e) {
