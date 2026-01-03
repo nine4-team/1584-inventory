@@ -397,7 +397,7 @@ export async function hydrateProjectTransactionsCache(
 ): Promise<void> {
   try {
     await offlineStore.init()
-    const cachedTransactions = await offlineStore.getTransactions()
+    const cachedTransactions = await offlineStore.getTransactions(projectId)
     const projectTxIds = cachedTransactions
       .filter(tx => tx.accountId === accountId && tx.projectId === projectId)
       .map(tx => tx.transactionId)
@@ -425,5 +425,43 @@ export async function hydrateProjectTransactionsCache(
     }
   } catch (error) {
     console.warn('Failed to hydrate project transactions cache:', error)
+  }
+}
+
+/**
+ * Get cached project transactions from offlineStore
+ * Returns empty array if cache is cold
+ */
+export async function getCachedProjectTransactions(
+  accountId: string,
+  projectId: string
+): Promise<Transaction[]> {
+  try {
+    await offlineStore.init()
+    const cachedTransactions = await offlineStore.getTransactions(projectId)
+    const projectTxIds = cachedTransactions
+      .filter(tx => tx.accountId === accountId && tx.projectId === projectId)
+      .map(tx => tx.transactionId)
+    
+    if (projectTxIds.length === 0) return []
+    
+    const { transactionService } = await import('../services/inventoryService')
+    const transactions: Transaction[] = []
+    
+    for (const txId of projectTxIds) {
+      try {
+        const { transaction } = await transactionService._getTransactionByIdOffline(accountId, txId)
+        if (transaction) {
+          transactions.push(transaction)
+        }
+      } catch (error) {
+        console.warn(`Failed to convert cached transaction ${txId}:`, error)
+      }
+    }
+    
+    return transactions
+  } catch (error) {
+    console.warn('Failed to get cached project transactions:', error)
+    return []
   }
 }

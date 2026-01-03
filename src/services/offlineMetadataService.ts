@@ -4,6 +4,7 @@ import { convertTimestamps, ensureAuthenticatedForDatabase } from './databaseSer
 import { BudgetCategory, TaxPreset } from '@/types'
 import { isNetworkOnline } from './networkStatusService'
 import { DEFAULT_TAX_PRESETS } from '@/constants/taxPresets'
+import { TRANSACTION_SOURCES } from '@/constants/transactionSources'
 
 /**
  * Offline Metadata Service
@@ -128,13 +129,93 @@ export async function cacheTaxPresetsOffline(accountId: string): Promise<void> {
 }
 
 /**
+ * Cache vendor defaults for an account to IndexedDB
+ * Optionally accepts pre-fetched slots to avoid duplicate network calls
+ */
+export async function cacheVendorDefaultsOffline(
+  accountId: string,
+  slots?: Array<string | null>
+): Promise<void> {
+  try {
+    await offlineStore.init()
+
+    let normalizedSlots = slots?.slice()
+
+    if (!normalizedSlots) {
+      // Only fetch when online
+      if (!isNetworkOnline()) {
+        console.warn('[offlineMetadataService] Cannot cache vendor defaults while offline')
+        return
+      }
+
+      await ensureAuthenticatedForDatabase()
+      const { data, error } = await supabase
+        .from('account_presets')
+        .select('presets')
+        .eq('account_id', accountId)
+        .single()
+
+      if (error && error.code !== 'PGRST116') {
+        throw error
+      }
+
+      const fetchedSlots = Array.isArray(data?.presets?.vendor_defaults)
+        ? (data?.presets?.vendor_defaults as Array<string | null>)
+        : null
+
+      if (fetchedSlots) {
+        normalizedSlots = fetchedSlots.map(slot => (typeof slot === 'string' ? slot : null))
+      } else {
+        normalizedSlots = TRANSACTION_SOURCES.slice(0, 10).map(name => name)
+      }
+    }
+
+    // Ensure exactly 10 slots of string | null
+    const padded = normalizedSlots.map(slot => (typeof slot === 'string' ? slot : null))
+    while (padded.length < 10) padded.push(null)
+    const truncated = padded.slice(0, 10)
+
+    await offlineStore.saveVendorDefaults(accountId, truncated)
+
+    const configuredCount = truncated.filter(s => s !== null).length
+    console.log('[offlineMetadataService] Vendor defaults cached', {
+      accountId,
+      count: configuredCount
+    })
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('offlineMetadataCacheWarm', {
+        detail: { type: 'vendorDefaults', accountId, count: configuredCount }
+      }))
+    }
+  } catch (error) {
+    console.error('[offlineMetadataService] Failed to cache vendor defaults:', error)
+    throw error
+  }
+}
+
+/**
+ * Get cached vendor defaults for an account
+ */
+export async function getCachedVendorDefaults(accountId: string): Promise<Array<string | null> | null> {
+  try {
+    await offlineStore.init()
+    return await offlineStore.getVendorDefaults(accountId)
+  } catch (error) {
+    console.warn('[offlineMetadataService] Failed to get cached vendor defaults:', error)
+    return null
+  }
+}
+
+/**
  * Hydrate all metadata caches for an account
  */
 export async function hydrateMetadataCaches(accountId: string): Promise<void> {
   try {
     await Promise.all([
       cacheBudgetCategoriesOffline(accountId),
-      cacheTaxPresetsOffline(accountId)
+      cacheTaxPresetsOffline(accountId),
+      cacheVendorDefaultsOffline(accountId)
     ])
   } catch (error) {
     console.error('[offlineMetadataService] Failed to hydrate metadata caches:', error)
@@ -236,23 +317,27 @@ export async function getCachedTaxPresets(accountId: string): Promise<TaxPreset[
 export async function areMetadataCachesWarm(accountId: string): Promise<{
   budgetCategories: boolean
   taxPresets: boolean
+  vendorDefaults: boolean
 }> {
   try {
     await offlineStore.init()
-    const [categories, presets] = await Promise.all([
+    const [categories, presets, vendorDefaults] = await Promise.all([
       offlineStore.getBudgetCategories(accountId),
-      offlineStore.getTaxPresets(accountId)
+      offlineStore.getTaxPresets(accountId),
+      offlineStore.getVendorDefaults(accountId)
     ])
     
     return {
       budgetCategories: categories.length > 0,
-      taxPresets: presets !== null && presets.length > 0
+      taxPresets: presets !== null && presets.length > 0,
+      vendorDefaults: vendorDefaults !== null && vendorDefaults.length === 10
     }
   } catch (error) {
     console.warn('[offlineMetadataService] Failed to check cache warmth:', error)
     return {
       budgetCategories: false,
-      taxPresets: false
+      taxPresets: false,
+      vendorDefaults: false
     }
   }
 }
@@ -265,7 +350,8 @@ export async function clearMetadataCaches(accountId: string): Promise<void> {
     await offlineStore.init()
     await Promise.all([
       offlineStore.clearBudgetCategories(accountId),
-      offlineStore.clearTaxPresets(accountId)
+      offlineStore.clearTaxPresets(accountId),
+      offlineStore.clearVendorDefaults(accountId)
     ])
   } catch (error) {
     console.error('[offlineMetadataService] Failed to clear metadata caches:', error)

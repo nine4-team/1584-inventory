@@ -5,7 +5,8 @@ import {
   areMetadataCachesWarm,
   hydrateMetadataCaches,
   getCachedBudgetCategories,
-  getCachedTaxPresets
+  getCachedTaxPresets,
+  getCachedVendorDefaults
 } from '@/services/offlineMetadataService'
 
 export type OfflinePrerequisiteStatus = 'ready' | 'warming' | 'blocked'
@@ -17,6 +18,7 @@ export interface OfflinePrerequisitesResult {
   hydrateNow: () => Promise<void>
   budgetCategories: boolean
   taxPresets: boolean
+  vendorDefaults: boolean
 }
 
 /**
@@ -37,6 +39,7 @@ export function useOfflinePrerequisites(): OfflinePrerequisitesResult {
   const [blockingReason, setBlockingReason] = useState<string | null>(null)
   const [budgetCategories, setBudgetCategories] = useState(false)
   const [taxPresets, setTaxPresets] = useState(false)
+  const [vendorDefaults, setVendorDefaults] = useState(false)
   const [isHydrating, setIsHydrating] = useState(false)
 
   const checkCacheWarmth = useCallback(async (accountId: string) => {
@@ -44,15 +47,17 @@ export function useOfflinePrerequisites(): OfflinePrerequisitesResult {
       const warmth = await areMetadataCachesWarm(accountId)
       setBudgetCategories(warmth.budgetCategories)
       setTaxPresets(warmth.taxPresets)
+      setVendorDefaults(warmth.vendorDefaults)
 
       // Determine status
-      if (warmth.budgetCategories && warmth.taxPresets) {
+      if (warmth.budgetCategories && warmth.taxPresets && warmth.vendorDefaults) {
         setStatus('ready')
         setBlockingReason(null)
       } else {
         const missing: string[] = []
         if (!warmth.budgetCategories) missing.push('budget categories')
         if (!warmth.taxPresets) missing.push('tax presets')
+        if (!warmth.vendorDefaults) missing.push('vendor defaults')
         
         if (isOnline) {
           setStatus('warming')
@@ -113,7 +118,7 @@ export function useOfflinePrerequisites(): OfflinePrerequisitesResult {
       return
     }
 
-    if (status === 'blocked' || (!budgetCategories || !taxPresets)) {
+    if (status === 'blocked' || (!budgetCategories || !taxPresets || !vendorDefaults)) {
       // Auto-hydrate in background
       hydrateMetadataCaches(currentAccountId).then(() => {
         checkCacheWarmth(currentAccountId)
@@ -128,9 +133,9 @@ export function useOfflinePrerequisites(): OfflinePrerequisitesResult {
         }
       })
     }
-  }, [currentAccountId, isOnline, status, budgetCategories, taxPresets, accountLoading, isHydrating, checkCacheWarmth])
+  }, [currentAccountId, isOnline, status, budgetCategories, taxPresets, vendorDefaults, accountLoading, isHydrating, checkCacheWarmth])
 
-  const isReady = status === 'ready' && budgetCategories && taxPresets
+  const isReady = status === 'ready' && budgetCategories && taxPresets && vendorDefaults
 
   return {
     isReady,
@@ -138,6 +143,7 @@ export function useOfflinePrerequisites(): OfflinePrerequisitesResult {
     blockingReason,
     hydrateNow,
     budgetCategories,
-    taxPresets
+    taxPresets,
+    vendorDefaults
   }
 }

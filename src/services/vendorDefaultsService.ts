@@ -1,5 +1,7 @@
 import { TRANSACTION_SOURCES } from '@/constants/transactionSources'
 import { getAccountPresets, upsertAccountPresets } from './accountPresetsService'
+import { isNetworkOnline } from './networkStatusService'
+import { getCachedVendorDefaults, cacheVendorDefaultsOffline } from './offlineMetadataService'
 
 export interface VendorSlot {
   id: string | null
@@ -13,8 +15,31 @@ export interface VendorDefaultsResponse {
 /**
  * Get vendor defaults from Postgres for an account
  * Returns exactly 10 slots (may contain null values)
+ * When offline, uses cached vendor defaults from IndexedDB
  */
 export async function getVendorDefaults(accountId: string): Promise<VendorDefaultsResponse> {
+  const online = isNetworkOnline()
+  
+  // When offline, try cache first
+  if (!online) {
+    const cached = await getCachedVendorDefaults(accountId)
+    if (cached && cached.length === 10) {
+      const slots: VendorSlot[] = cached.map(slot => {
+        if (typeof slot === 'string') return { id: slot, name: slot }
+        return { id: null, name: null }
+      })
+      return { slots }
+    }
+    // Cache is cold offline - log warning and return fallback
+    console.warn('[vendorDefaultsService] Vendor defaults cache is cold while offline. Returning fallback.')
+    const fallbackStored: Array<string | null> = TRANSACTION_SOURCES.slice(0, 10).map(name => name)
+    while (fallbackStored.length < 10) {
+      fallbackStored.push(null)
+    }
+    const fallbackSlots = fallbackStored.map(s => (s ? { id: s, name: s } : { id: null, name: null }))
+    return { slots: fallbackSlots }
+  }
+
   try {
     // Read canonical vendor_defaults from account_presets
     const ap = await getAccountPresets(accountId)
@@ -27,6 +52,14 @@ export async function getVendorDefaults(accountId: string): Promise<VendorDefaul
         if (typeof slot === 'string') return { id: slot, name: slot }
         return { id: null, name: null }
       })
+
+      const storedSlots: Array<string | null> = truncated.map(slot =>
+        typeof slot === 'string' ? slot : null
+      )
+      cacheVendorDefaultsOffline(accountId, storedSlots).catch(err => {
+        console.warn('[vendorDefaultsService] Failed to cache vendor defaults:', err)
+      })
+      
       return { slots }
     }
 
@@ -39,9 +72,25 @@ export async function getVendorDefaults(accountId: string): Promise<VendorDefaul
       console.warn('Failed to initialize vendor_defaults in account_presets:', err)
     }
     const initialSlots = initialStoredSlots.map(s => (s ? { id: s, name: s } : { id: null, name: null }))
+    
+    cacheVendorDefaultsOffline(accountId, initialStoredSlots).catch(err => {
+      console.warn('[vendorDefaultsService] Failed to cache initialized vendor defaults:', err)
+    })
+    
     return { slots: initialSlots }
   } catch (error) {
     console.error('Error fetching vendor defaults from Postgres:', error)
+    
+    // Try cache as fallback when online fetch fails
+    const cached = await getCachedVendorDefaults(accountId)
+    if (cached && cached.length === 10) {
+      const slots: VendorSlot[] = cached.map(slot => {
+        if (typeof slot === 'string') return { id: slot, name: slot }
+        return { id: null, name: null }
+      })
+      return { slots }
+    }
+    
     // Fallback to first 10 from TRANSACTION_SOURCES
     const fallbackStored: Array<string | null> = TRANSACTION_SOURCES.slice(0, 10).map(name => name)
     while (fallbackStored.length < 10) {
@@ -120,6 +169,13 @@ export async function updateVendorDefaults(
     // Persist exclusively to canonical account_presets
     await upsertAccountPresets(accountId, { presets: { vendor_defaults: storedSlots } })
     console.log('Vendor defaults updated successfully (account_presets)')
+    
+    // Update cache after successful update
+    if (isNetworkOnline()) {
+      cacheVendorDefaultsOffline(accountId, storedSlots).catch(err => {
+        console.warn('[vendorDefaultsService] Failed to cache updated vendor defaults:', err)
+      })
+    }
   } catch (error) {
     console.error('Error updating vendor defaults:', error)
     throw error

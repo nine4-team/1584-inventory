@@ -1,5 +1,6 @@
 import { supabase, getCurrentUser } from './supabase'
 import { ensureAuthenticatedForDatabase } from './databaseService'
+import { isNetworkOnline } from './networkStatusService'
 import type { ItemLineageEdge } from '@/types'
 
 type LineageEdgeListener = (edge: ItemLineageEdge) => void
@@ -69,11 +70,13 @@ const getOrCreateAccountChannel = (accountId: string): AccountChannelEntry => {
       {
         event: 'INSERT',
         schema: 'public',
-        table: 'item_lineage_edges',
-        filter: `account_id=eq.${accountId}`,
+        table: 'item_lineage_edges'
       },
       payload => {
         try {
+          if ((payload.new?.account_id ?? payload.old?.account_id) !== accountId) {
+            return
+          }
           const edge = convertEdgeFromDb(payload.new)
           dispatchItemListeners(edge)
           dispatchTransactionListeners(edge)
@@ -280,6 +283,10 @@ export const lineageService = {
    * Used for reconstructing the full history path.
    */
   async getItemLineageHistory(itemId: string, accountId: string): Promise<ItemLineageEdge[]> {
+    if (!isNetworkOnline()) {
+      return []
+    }
+
     await ensureAuthenticatedForDatabase()
 
     const { data, error } = await supabase
@@ -302,6 +309,10 @@ export const lineageService = {
    * Used to find items that "moved out" of a transaction.
    */
   async getEdgesFromTransaction(transactionId: string, accountId: string): Promise<ItemLineageEdge[]> {
+    if (!isNetworkOnline()) {
+      return []
+    }
+
     await ensureAuthenticatedForDatabase()
 
     const { data, error } = await supabase

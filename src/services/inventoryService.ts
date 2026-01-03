@@ -228,6 +228,44 @@ function mapSupabaseProjectToOfflineRecord(row: any): DBProject {
   }
 }
 
+function mapOfflineProjectToProject(project: DBProject): Project {
+  return {
+    id: project.id,
+    accountId: project.accountId,
+    name: project.name,
+    description: project.description || '',
+    clientName: project.clientName || '',
+    budget: project.budget,
+    designFee: project.designFee,
+    budgetCategories: project.budgetCategories,
+    defaultCategoryId: project.defaultCategoryId ?? undefined,
+    mainImageUrl: project.mainImageUrl,
+    createdAt: new Date(project.createdAt),
+    updatedAt: new Date(project.updatedAt),
+    createdBy: project.createdBy || '',
+    settings: (project.settings ?? undefined) as Project['settings'],
+    metadata: (project.metadata ?? undefined) as Project['metadata'],
+    itemCount: project.itemCount ?? 0,
+    transactionCount: project.transactionCount ?? 0,
+    totalValue: project.totalValue ?? 0
+  }
+}
+
+async function getProjectFromOfflineCache(accountId: string, projectId: string): Promise<Project | null> {
+  try {
+    await offlineStore.init()
+    const cached = await offlineStore.getProjectById(projectId)
+    if (!cached) return null
+    if (cached.accountId && cached.accountId !== accountId) {
+      return null
+    }
+    return mapOfflineProjectToProject(cached)
+  } catch (error) {
+    console.debug('Failed to read project from offline cache:', error)
+    return null
+  }
+}
+
 function mapOfflineTransactionToSupabaseShape(tx: DBTransaction) {
   return {
     transaction_id: tx.transactionId,
@@ -486,57 +524,64 @@ export const projectService = {
       console.debug('Failed to check React Query cache for project:', error)
     }
 
-    await ensureAuthenticatedForDatabase()
+    const offlineProject = await getProjectFromOfflineCache(accountId, projectId)
+    if (offlineProject) {
+      try {
+        const queryClient = tryGetQueryClient()
+        if (queryClient) {
+          queryClient.setQueryData(['project', accountId, projectId], offlineProject)
+        }
+      } catch (cacheError) {
+        console.debug('Failed to prime React Query with offline project:', cacheError)
+      }
+    }
 
-    const { data, error } = await supabase
-      .from('projects')
-      .select('*')
-      .eq('id', projectId)
-      .eq('account_id', accountId)
-      .single()
+    if (!isNetworkOnline()) {
+      return offlineProject
+    }
 
-    if (error) {
-      if (error.code === 'PGRST116') {
-        return null
+    try {
+      await ensureAuthenticatedForDatabase()
+
+      const { data, error } = await supabase
+        .from('projects')
+        .select('*')
+        .eq('id', projectId)
+        .eq('account_id', accountId)
+        .single()
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          return null
+        }
+        throw error
+      }
+
+      if (!data) return null
+
+      void cacheProjectsOffline([data])
+
+      const project = this._convertProjectFromDb(data)
+
+      // Update React Query cache with fetched project
+      try {
+        const queryClient = tryGetQueryClient()
+        if (queryClient) {
+          queryClient.setQueryData(['project', accountId, projectId], project)
+        }
+      } catch (cacheError) {
+        // Non-fatal - cache update failed
+        console.debug('Failed to update React Query cache for project:', cacheError)
+      }
+
+      return project
+    } catch (error) {
+      console.warn('Failed to fetch project online, using offline cache when available:', error)
+      if (offlineProject) {
+        return offlineProject
       }
       throw error
     }
-
-    if (!data) return null
-
-    const converted = convertTimestamps(data)
-    const project = {
-      id: converted.id,
-      accountId: converted.account_id,
-      name: converted.name,
-      description: converted.description || '',
-      clientName: converted.client_name || '',
-      budget: converted.budget ? parseFloat(converted.budget) : undefined,
-      designFee: converted.design_fee ? parseFloat(converted.design_fee) : undefined,
-      budgetCategories: converted.budget_categories || undefined,
-      mainImageUrl: converted.main_image_url || undefined,
-      createdAt: converted.created_at,
-      updatedAt: converted.updated_at,
-      createdBy: converted.created_by,
-      settings: converted.settings || undefined,
-      metadata: converted.metadata || undefined,
-      itemCount: converted.item_count || 0,
-      transactionCount: converted.transaction_count || 0,
-      totalValue: converted.total_value ? parseFloat(converted.total_value) : 0
-    } as Project
-
-    // Update React Query cache with fetched project
-    try {
-      const queryClient = tryGetQueryClient()
-      if (queryClient) {
-        queryClient.setQueryData(['project', accountId, projectId], project)
-      }
-    } catch (cacheError) {
-      // Non-fatal - cache update failed
-      console.debug('Failed to update React Query cache for project:', cacheError)
-    }
-
-    return project
   },
 
   // Create new project
@@ -764,12 +809,16 @@ export const projectService = {
         {
           event: '*',
           schema: 'public',
-          table: 'projects',
-          filter: 'account_id=eq.' + accountId
+          table: 'projects'
         },
         (payload) => {
-          console.log('Projects change received!', payload)
           const { eventType, new: newRecord, old: oldRecord } = payload
+          const recordAccountId = (eventType === 'DELETE' ? oldRecord?.account_id : newRecord?.account_id) ?? null
+          if (recordAccountId && recordAccountId !== accountId) {
+            return
+          }
+
+          console.log('Projects change received!', payload)
 
           if (eventType === 'INSERT') {
             const newProject = projectService._convertProjectFromDb(newRecord)
@@ -2114,11 +2163,15 @@ export const transactionService = {
           {
             event: '*',
             schema: 'public',
-            table: 'transactions',
-            filter: 'account_id=eq.' + accountId
+            table: 'transactions'
           },
           async (payload) => {
             const { eventType, new: newRecord, old: oldRecord } = payload
+            const recordAccountId = (eventType === 'DELETE' ? oldRecord?.account_id : newRecord?.account_id) ?? null
+            if (recordAccountId && recordAccountId !== accountId) {
+              return
+            }
+
             const newProjectId = (newRecord as any)?.project_id ?? null
             const oldProjectId = (oldRecord as any)?.project_id ?? null
 
@@ -2234,12 +2287,16 @@ export const transactionService = {
         {
           event: '*',
           schema: 'public',
-          table: 'transactions',
-          filter: 'account_id=eq.' + accountId
+          table: 'transactions'
         },
         async (payload) => {
-          console.log('All transactions change received!', payload)
           const { eventType, new: newRecord, old: oldRecord } = payload
+          const recordAccountId = (eventType === 'DELETE' ? oldRecord?.account_id : newRecord?.account_id) ?? null
+          if (recordAccountId && recordAccountId !== accountId) {
+            return
+          }
+
+          console.log('All transactions change received!', payload)
 
           if (eventType === 'INSERT') {
             const newTransaction = _convertTransactionFromDb(newRecord)
@@ -2286,10 +2343,20 @@ export const transactionService = {
         {
           event: '*',
           schema: 'public',
-          table: 'transactions',
-          filter: 'account_id=eq.' + accountId + ' AND transaction_id=eq.' + transactionId
+          table: 'transactions'
         },
-        async () => {
+        async (payload) => {
+          const newRow = payload.new as Record<string, any> | null
+          const oldRow = payload.old as Record<string, any> | null
+          const recordAccountId = (newRow?.account_id ?? oldRow?.account_id) ?? null
+          if (recordAccountId && recordAccountId !== accountId) {
+            return
+          }
+          const recordTransactionId = (newRow?.transaction_id ?? oldRow?.transaction_id) ?? null
+          if (recordTransactionId && recordTransactionId !== transactionId) {
+            return
+          }
+
           // Refetch transaction on any change
           try {
             const { data, error } = await supabase
@@ -2735,11 +2802,15 @@ export const unifiedItemsService = {
           {
             event: '*',
             schema: 'public',
-            table: 'items',
-            filter: 'account_id=eq.' + accountId
+            table: 'items'
           },
           (payload) => {
             const { eventType, new: newRecord, old: oldRecord } = payload
+            const recordAccountId = (eventType === 'DELETE' ? oldRecord?.account_id : newRecord?.account_id) ?? null
+            if (recordAccountId && recordAccountId !== accountId) {
+              return
+            }
+
             let nextItems = entry?.data ?? []
 
             if (eventType === 'INSERT') {
@@ -2760,7 +2831,7 @@ export const unifiedItemsService = {
                 nextItems = nextItems.map(i => i.itemId === updatedItem.itemId ? updatedItem : i)
               }
             } else if (eventType === 'DELETE') {
-              if (oldRecord.item_id) {
+              if (oldRecord.item_id && oldRecord.account_id === accountId) {
                 nextItems = nextItems.filter(i => i.itemId !== oldRecord.item_id)
               }
             }
@@ -2891,27 +2962,27 @@ export const unifiedItemsService = {
         {
           event: '*',
           schema: 'public',
-          table: 'items',
-          filter: 'account_id=eq.' + accountId
+          table: 'items'
         },
         (payload) => {
-          console.log('Business inventory change received!', payload)
           const { eventType, new: newRecord, old: oldRecord } = payload
+          const recordAccountId = (eventType === 'DELETE' ? oldRecord?.account_id : newRecord?.account_id) ?? null
+          if (recordAccountId && recordAccountId !== accountId) {
+            return
+          }
+
+          console.log('Business inventory change received!', payload)
 
           if (eventType === 'INSERT') {
-            // Check raw DB record (snake_case)
             if (!newRecord.project_id) {
               const newItem = this._convertItemFromDb(newRecord)
               items = [newItem, ...items]
             }
           } else if (eventType === 'UPDATE') {
             const updatedItem = this._convertItemFromDb(newRecord)
-            // Check converted item (camelCase) - if projectId is null/undefined, it's business inventory
             if (!updatedItem.projectId) {
-              // It's a business inventory item, update it
               items = items.map(i => i.itemId === updatedItem.itemId ? updatedItem : i)
             } else {
-              // It's no longer a business inventory item (moved to a project), remove it
               items = items.filter(i => i.itemId !== updatedItem.itemId)
             }
           } else if (eventType === 'DELETE') {

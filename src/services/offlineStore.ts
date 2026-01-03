@@ -188,11 +188,17 @@ interface DBTaxPresetsCache {
   cachedAt: string // When this was cached
 }
 
+interface DBVendorDefaultsCache {
+  accountId: string
+  slots: Array<string | null> // Raw string slots (exactly 10)
+  cachedAt: string // When this was cached
+}
+
 class OfflineStore {
   private db: IDBDatabase | null = null
   private initPromise: Promise<void> | null = null
   private readonly dbName = 'ledger-offline'
-  private readonly dbVersion = 8 // Increment when schema changes
+  private readonly dbVersion = 9 // Increment when schema changes
   private resettingDatabase = false
 
   async init(): Promise<void> {
@@ -519,6 +525,14 @@ class OfflineStore {
         } catch (error) {
           console.warn('Failed to add indexes to taxPresets store during migration:', error)
         }
+      }
+    }
+
+    // Migration 9: Add vendor defaults store for offline caching
+    if (oldVersion < 9) {
+      if (!db.objectStoreNames.contains('vendorDefaults')) {
+        const vendorDefaultsStore = db.createObjectStore('vendorDefaults', { keyPath: 'accountId' })
+        vendorDefaultsStore.createIndex('cachedAt', 'cachedAt', { unique: false })
       }
     }
   }
@@ -1784,10 +1798,72 @@ class OfflineStore {
     })
   }
 
+  // Vendor Defaults CRUD
+  async saveVendorDefaults(accountId: string, slots: Array<string | null>): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized')
+    if (!(await this.ensureStoreInitialized('vendorDefaults'))) {
+      return
+    }
+
+    // Validate slots
+    if (!Array.isArray(slots) || slots.length !== 10) {
+      throw new Error('Vendor defaults must be an array of exactly 10 slots')
+    }
+
+    const transaction = this.db.transaction(['vendorDefaults'], 'readwrite')
+    const store = transaction.objectStore('vendorDefaults')
+    const cachedAt = new Date().toISOString()
+
+    const cacheEntry: DBVendorDefaultsCache = {
+      accountId,
+      slots,
+      cachedAt
+    }
+    store.put(cacheEntry)
+
+    return new Promise((resolve, reject) => {
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+    })
+  }
+
+  async getVendorDefaults(accountId: string): Promise<Array<string | null> | null> {
+    if (!this.db) throw new Error('Database not initialized')
+    if (!(await this.ensureStoreInitialized('vendorDefaults'))) {
+      return null
+    }
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction(['vendorDefaults'], 'readonly')
+      const store = transaction.objectStore('vendorDefaults')
+      const request = store.get(accountId)
+
+      request.onsuccess = () => {
+        const cache = request.result as DBVendorDefaultsCache | undefined
+        resolve(cache?.slots ?? null)
+      }
+      request.onerror = () => reject(request.error)
+    })
+  }
+
+  async clearVendorDefaults(accountId: string): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized')
+    if (!(await this.ensureStoreInitialized('vendorDefaults'))) {
+      return
+    }
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction(['vendorDefaults'], 'readwrite')
+      const store = transaction.objectStore('vendorDefaults')
+      const request = store.delete(accountId)
+
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+    })
+  }
+
   // Utility methods
   async clearAll(): Promise<void> {
     if (!this.db) throw new Error('Database not initialized')
-    const transaction = this.db.transaction(['items', 'transactions', 'projects', 'operations', 'cache', 'conflicts', 'media', 'mediaUploadQueue', 'budgetCategories', 'taxPresets'], 'readwrite')
+    const transaction = this.db.transaction(['items', 'transactions', 'projects', 'operations', 'cache', 'conflicts', 'media', 'mediaUploadQueue', 'budgetCategories', 'taxPresets', 'vendorDefaults'], 'readwrite')
 
     transaction.objectStore('items').clear()
     transaction.objectStore('transactions').clear()
@@ -1805,6 +1881,9 @@ class OfflineStore {
     if (transaction.objectStore('taxPresets')) {
       transaction.objectStore('taxPresets').clear()
     }
+    if (transaction.objectStore('vendorDefaults')) {
+      transaction.objectStore('vendorDefaults').clear()
+    }
 
     return new Promise((resolve, reject) => {
       transaction.oncomplete = () => resolve()
@@ -1814,4 +1893,4 @@ class OfflineStore {
 }
 
 export const offlineStore = new OfflineStore()
-export type { DBItem, DBTransaction, DBProject, DBOperation, DBContextRecord, DBMediaUploadQueueEntry, DBBudgetCategory, DBTaxPreset, DBTaxPresetsCache }
+export type { DBItem, DBTransaction, DBProject, DBOperation, DBContextRecord, DBMediaUploadQueueEntry, DBBudgetCategory, DBTaxPreset, DBTaxPresetsCache, DBVendorDefaultsCache }

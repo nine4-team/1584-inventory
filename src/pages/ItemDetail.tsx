@@ -22,7 +22,7 @@ import { Combobox } from '@/components/ui/Combobox'
 import { supabase } from '@/services/supabase'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import { getGlobalQueryClient } from '@/utils/queryClient'
-import { hydrateItemCache } from '@/utils/hydrationHelpers'
+import { hydrateItemCache, hydrateProjectCache } from '@/utils/hydrationHelpers'
 
 export default function ItemDetail({ itemId: propItemId, projectId: propProjectId, onClose }: { itemId?: string; projectId?: string; onClose?: () => void } = {}) {
   const { id, projectId: routeProjectId, itemId } = useParams<{ id?: string; projectId?: string; itemId?: string }>()
@@ -99,6 +99,14 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
             await hydrateItemCache(getGlobalQueryClient(), currentAccountId, actualItemId)
           } catch (error) {
             console.warn('Failed to hydrate item cache (non-fatal):', error)
+          }
+
+          if (projectId) {
+            try {
+              await hydrateProjectCache(getGlobalQueryClient(), currentAccountId, projectId)
+            } catch (error) {
+              console.warn('Failed to hydrate project cache (non-fatal):', error)
+            }
           }
 
           // Check React Query cache first (for optimistic items created offline)

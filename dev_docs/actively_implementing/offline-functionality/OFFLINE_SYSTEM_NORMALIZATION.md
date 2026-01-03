@@ -540,6 +540,54 @@ export function detectTransactionConflict(local: Transaction, remote: Transactio
 - [ ] Test React Query cache hydration
 - [ ] Test "not found" scenarios for optimistic entities
 
+## Outstanding gaps (unaddressed)
+
+- [ ] Re-check every offline CRUD path (items, transactions, projects, lineage) for missing network gating so offline screens don't keep pinging Supabase when connectivity is gone.
+- [ ] Bridge offline mutations into our realtime snapshots. Right now `ProjectRealtimeProvider` (and any consumers such as `ProjectLayout` → `InventoryList`) only ever hydrate from Supabase fetches or realtime events, so edits that happen while offline stay invisible until the queue finishes *and* a follow-up fetch/event lands. We need to either push offline-store writes into the provider (e.g. via `syncProjectItemsRealtimeCache` or a new hook) or rehydrate snapshots from IndexedDB whenever we refuse to initialize because `isNetworkOnline()` is false. This impacts every view that relies solely on realtime snapshots (items, transactions, budget summaries, lineage overlays).
+
+### Vendor defaults: caching implemented (status: done, follow-ups)
+- Status: implemented. Vendor defaults are now cached in IndexedDB and will be used offline when available; cache hydrations happen once per successful online fetch/update (no endless loops).
+- What changed:
+  - Added `vendorDefaults` store + migration (db version bump) and methods: `saveVendorDefaults`, `getVendorDefaults`, `clearVendorDefaults` in `src/services/offlineStore.ts`.
+  - Added caching helpers `cacheVendorDefaultsOffline(accountId, slots?)` and `getCachedVendorDefaults(accountId)` in `src/services/offlineMetadataService.ts`.
+  - `vendorDefaultsService.getVendorDefaults` now:
+    - Short‑circuits to the cache when offline.
+    - Hydrates the cache (passing already-fetched slots) after successful network fetchs/updates to avoid recursive cache calls.
+    - Falls back to `TRANSACTION_SOURCES` when no canonical data exists.
+  - `useOfflinePrerequisites` now includes `vendorDefaults` in its warmth checks so the prerequisite banner and Retry button cover vendor defaults as well.
+  - Retry/hydration flow: `RetrySyncButton` → `hydrateMetadataCaches` will populate vendor defaults along with tax presets and categories.
+- Files touched (non-exhaustive): 
+  - `src/services/offlineStore.ts` (migration + vendor defaults CRUD)
+  - `src/services/offlineMetadataService.ts` (cacheVendorDefaultsOffline, getCachedVendorDefaults, included in hydrateMetadataCaches)
+  - `src/services/vendorDefaultsService.ts` (cache-aware reads + cache hydration)
+  - `src/hooks/useOfflinePrerequisites.ts` (vendorDefaults warmth + UI gating)
+  - `src/components/ui/RetrySyncButton.tsx` (unchanged API; it uses hydrateNow)
+- Follow-ups / tests:
+  - Add Vitest tests ensuring `getVendorDefaults` does not call Supabase when `isNetworkOnline() === false`.
+  - Add tests for `offlineStore` vendor defaults CRUD and `cacheVendorDefaultsOffline`.
+
+### Transaction combobox uncontrolled → controlled: fixed (status: done)
+- Status: implemented. The combobox no longer flips between uncontrolled/controlled during hydration.
+- What changed:
+  - Hydration helper `hydrateProjectTransactionsCache` now reads the project-specific transactions from IndexedDB and primes React Query before components mount (`src/utils/hydrationHelpers.ts`).
+  - `EditItem` (and AddItem) hydrate the project-transactions cache on mount, then fetch network data; they also read primed React Query data to avoid empty-state flashes.
+  - Combobox control fixes:
+    - `EditItem` now guards the combobox `value`: if the selected transaction ID is not yet present in the loaded options, it passes `''` (empty) to avoid undefined.
+    - `src/components/ui/Combobox.tsx` now resolves the selected option to `null` if not found (prevents Headless UI receiving undefined).
+  - Added `getCachedProjectTransactions` helper for direct offline reads (used during hydration).
+- Files touched (non-exhaustive):
+  - `src/pages/EditItem.tsx` (hydrate before fetch, guard value)
+  - `src/utils/hydrationHelpers.ts` (hydrateProjectTransactionsCache, getCachedProjectTransactions)
+  - `src/components/ui/Combobox.tsx` (selectedOption null guard)
+  - `src/services/inventoryService.ts` (transaction offline helpers already present; hydration now used)
+- Follow-ups / tests:
+  - Unit-test the combobox guard and add an integration test simulating: online warm cache, offline warm cache, offline cold cache (ensure UI gating + banner).
+
+Notes
+- I updated the docs to reflect what was implemented and the follow-ups that would be good to add as tests. If you'd like, I can:
+  - Add the Vitest tests now (I left them as follow-ups to keep the change focused), or
+  - Reword the doc further (shorter or more verbose) and add links to specific diffs/PRs.
+
 ## Key Principles
 
 1. **Optimistic First:** Always generate IDs and persist data before queueing operations
