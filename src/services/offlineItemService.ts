@@ -4,6 +4,7 @@ import { operationQueue } from './operationQueue'
 import type { Item } from '../types'
 import type { Operation } from '../types/operations'
 import { isNetworkOnline } from './networkStatusService'
+import { refreshProjectSnapshot } from '../utils/realtimeSnapshotUpdater'
 
 export interface OfflineOperationResult {
   operationId: string
@@ -214,6 +215,11 @@ export class OfflineItemService {
       })
     }
 
+    // Refresh realtime snapshot if item belongs to a project
+    if (itemData.projectId) {
+      refreshProjectSnapshot(itemData.projectId)
+    }
+
     return { operationId, wasQueued: true, itemId }
   }
 
@@ -297,6 +303,12 @@ export class OfflineItemService {
       operationQueue.processQueue()
     }
 
+    // Refresh realtime snapshot if item belongs to a project
+    const projectId = optimisticItem.projectId || itemToUpdate.projectId
+    if (projectId) {
+      refreshProjectSnapshot(projectId)
+    }
+
     return { operationId, wasQueued: true, itemId }
   }
 
@@ -334,6 +346,11 @@ export class OfflineItemService {
     // Trigger immediate processing if online
     if (isNetworkOnline()) {
       operationQueue.processQueue()
+    }
+
+    // Refresh realtime snapshot if item belongs to a project
+    if (existingItem.projectId) {
+      refreshProjectSnapshot(existingItem.projectId)
     }
 
     return { operationId, wasQueued: true, itemId }

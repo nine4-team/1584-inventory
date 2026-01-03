@@ -5,6 +5,7 @@ import type { Operation } from '../types/operations'
 import { isNetworkOnline } from './networkStatusService'
 import { offlineItemService } from './offlineItemService'
 import { getCachedBudgetCategoryById, getCachedTaxPresetById } from './offlineMetadataService'
+import { refreshProjectSnapshot } from '../utils/realtimeSnapshotUpdater'
 
 export interface OfflineOperationResult {
   operationId: string
@@ -223,6 +224,11 @@ export class OfflineTransactionService {
       })
     }
 
+    // Refresh realtime snapshot if transaction belongs to a project
+    if (projectId) {
+      refreshProjectSnapshot(projectId)
+    }
+
     return { operationId, wasQueued: true, transactionId }
   }
 
@@ -328,6 +334,12 @@ export class OfflineTransactionService {
       operationQueue.processQueue()
     }
 
+    // Refresh realtime snapshot if transaction belongs to a project
+    const projectId = optimisticTransaction.projectId || existingTransaction.projectId
+    if (projectId) {
+      refreshProjectSnapshot(projectId)
+    }
+
     return { operationId, wasQueued: true, transactionId }
   }
 
@@ -385,6 +397,11 @@ export class OfflineTransactionService {
     // Trigger immediate processing if online
     if (isNetworkOnline()) {
       operationQueue.processQueue()
+    }
+
+    // Refresh realtime snapshot if transaction belongs to a project
+    if (existingTransaction.projectId) {
+      refreshProjectSnapshot(existingTransaction.projectId)
     }
 
     return { operationId, wasQueued: true, transactionId }

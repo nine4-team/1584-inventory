@@ -3,6 +3,7 @@ import { operationQueue } from './operationQueue'
 import type { Project } from '../types'
 import type { Operation } from '../types/operations'
 import { isNetworkOnline } from './networkStatusService'
+import { refreshProjectSnapshot } from '../utils/realtimeSnapshotUpdater'
 
 export interface OfflineOperationResult {
   operationId: string
@@ -123,6 +124,9 @@ export class OfflineProjectService {
       })
     }
 
+    // Refresh realtime snapshot for the newly created project
+    refreshProjectSnapshot(projectId)
+
     return { operationId, wasQueued: true, projectId }
   }
 
@@ -204,6 +208,9 @@ export class OfflineProjectService {
       operationQueue.processQueue()
     }
 
+    // Refresh realtime snapshot for the updated project
+    refreshProjectSnapshot(projectId)
+
     return { operationId, wasQueued: true, projectId }
   }
 
@@ -257,6 +264,9 @@ export class OfflineProjectService {
     if (isNetworkOnline()) {
       operationQueue.processQueue()
     }
+
+    // Refresh realtime snapshot for the deleted project (to remove it from snapshots)
+    refreshProjectSnapshot(projectId)
 
     return { operationId, wasQueued: true, projectId }
   }

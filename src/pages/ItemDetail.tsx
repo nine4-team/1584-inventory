@@ -130,6 +130,21 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
               }
             }
             setIsLoadingItem(false)
+
+            // Background refresh to replace stale cache entry
+            ;(async () => {
+              try {
+                const freshItem = await unifiedItemsService.getItemById(currentAccountId, actualItemId)
+                if (freshItem) {
+                  queryClient.setQueryData(['item', currentAccountId, actualItemId], freshItem)
+                  setItem(freshItem)
+                }
+              } catch (error) {
+                console.warn('Failed to refresh item after serving cache:', error)
+              }
+            })().catch(() => {
+              // errors already logged above
+            })
             return
           }
           
@@ -185,7 +200,11 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
   }, [actualItemId, id, projectId, currentAccountId, isBusinessInventoryItem])
 
   // Set up real-time listener for item updates
-  const subscriptionProjectId = id || queryProjectId
+  const subscriptionProjectId = useMemo(() => {
+    if (projectId) return projectId
+    if (item?.projectId) return item.projectId
+    return queryProjectId || null
+  }, [projectId, item?.projectId, queryProjectId])
 
   useEffect(() => {
     if (!subscriptionProjectId || !actualItemId || !currentAccountId) return
@@ -570,13 +589,50 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
       console.log('After update - updatedImages length:', updatedImages.length)
       console.log('New images URLs:', newImages.map(img => img.url))
 
-      if (projectId && currentAccountId) {
+      const updatedItemState = { ...item, images: updatedImages }
+
+      if (currentAccountId) {
         console.log('Updating item in database with multiple new images')
         await unifiedItemsService.updateItem(currentAccountId, item.itemId, { images: updatedImages })
+
+        const queryClient = getGlobalQueryClient()
+        const itemCacheKey = ['item', currentAccountId, item.itemId]
+
+        queryClient.setQueryData<Item | undefined>(itemCacheKey, (cached) => {
+          if (!cached) {
+            return updatedItemState
+          }
+          return { ...cached, images: updatedImages }
+        })
+
+        const effectiveProjectId = projectId || item.projectId || null
+        const updateItemCollection = (key: unknown[]) => {
+          queryClient.setQueryData<Item[] | undefined>(key, (old) => {
+            if (!old) return old
+            return old.map(existing =>
+              existing.itemId === item.itemId ? { ...existing, images: updatedImages } : existing
+            )
+          })
+        }
+
+        if (effectiveProjectId) {
+          updateItemCollection(['project-items', currentAccountId, effectiveProjectId])
+        } else {
+          updateItemCollection(['business-inventory', currentAccountId])
+        }
+
+        if (item.transactionId) {
+          updateItemCollection(['transaction-items', currentAccountId, item.transactionId])
+        }
+
+        queryClient.invalidateQueries({ queryKey: itemCacheKey })
+      } else {
+        console.warn('Unable to persist images without an authenticated account context.')
       }
 
       // Update local state
-      setItem({ ...item, images: updatedImages })
+      setItem(updatedItemState)
+
       setUploadProgress(100)
 
       console.log('Multiple image upload completed successfully')

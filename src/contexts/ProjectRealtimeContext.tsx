@@ -3,7 +3,9 @@ import { useAccount } from './AccountContext'
 import type { Item, Project, Transaction } from '@/types'
 import { lineageService } from '@/services/lineageService'
 import { projectService, transactionService, unifiedItemsService } from '@/services/inventoryService'
-import { isNetworkOnline } from '@/services/networkStatusService'
+import { isNetworkOnline, subscribeToNetworkStatus, getNetworkStatusSnapshot } from '@/services/networkStatusService'
+import { offlineStore } from '@/services/offlineStore'
+import { registerSnapshotRefreshCallback } from '@/utils/realtimeSnapshotUpdater'
 
 type ProjectRealtimeTelemetry = {
   activeChannelCount: number
@@ -14,6 +16,7 @@ type ProjectRealtimeTelemetry = {
   lastCollectionsRefreshAt: number | null
   lastDisconnectAt: number | null
   lastDisconnectReason: string | null
+  lastCacheHydrationAt: number | null
 }
 
 type ProjectRealtimeEntry = {
@@ -25,6 +28,7 @@ type ProjectRealtimeEntry = {
   initialized: boolean
   refCount: number
   telemetry: ProjectRealtimeTelemetry
+  hydratedFromCache: boolean
 }
 
 type ProjectSubscriptions = {
@@ -41,6 +45,7 @@ interface ProjectRealtimeContextValue {
   refreshTransactions: (projectId: string) => Promise<void>
   refreshItems: (projectId: string) => Promise<void>
   refreshCollections: (projectId: string, options?: { includeProject?: boolean }) => Promise<void>
+  refreshFromIndexedDB: (projectId: string) => Promise<void>
 }
 
 const ProjectRealtimeContext = createContext<ProjectRealtimeContextValue | undefined>(undefined)
@@ -54,6 +59,7 @@ const createDefaultTelemetry = (): ProjectRealtimeTelemetry => ({
   lastCollectionsRefreshAt: null,
   lastDisconnectAt: null,
   lastDisconnectReason: null,
+  lastCacheHydrationAt: null,
 })
 
 const createEmptyEntry = (): ProjectRealtimeEntry => ({
@@ -65,6 +71,7 @@ const createEmptyEntry = (): ProjectRealtimeEntry => ({
   initialized: false,
   refCount: 0,
   telemetry: createDefaultTelemetry(),
+  hydratedFromCache: false,
 })
 
 interface ProviderProps {
@@ -465,6 +472,97 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
     [applyTelemetryPatch, attachLineageSubscriptions, fetchAndStoreItems, fetchAndStoreTransactions, refreshProject]
   )
 
+  const hydrateProjectFromIndexedDB = useCallback(
+    async (projectId: string) => {
+      if (!currentAccountId) return
+
+      try {
+        await offlineStore.init()
+
+        // Load project
+        const cachedProject = await offlineStore.getProjectById(projectId)
+        const project: Project | null = cachedProject
+          ? {
+              id: cachedProject.id,
+              accountId: cachedProject.accountId,
+              name: cachedProject.name,
+              description: cachedProject.description || '',
+              clientName: cachedProject.clientName || '',
+              budget: cachedProject.budget,
+              designFee: cachedProject.designFee,
+              budgetCategories: cachedProject.budgetCategories,
+              defaultCategoryId: cachedProject.defaultCategoryId || undefined,
+              mainImageUrl: cachedProject.mainImageUrl,
+              createdAt: new Date(cachedProject.createdAt),
+              updatedAt: new Date(cachedProject.updatedAt),
+              createdBy: cachedProject.createdBy || '',
+              settings: cachedProject.settings || undefined,
+              metadata: cachedProject.metadata || undefined,
+              itemCount: cachedProject.itemCount || 0,
+              transactionCount: cachedProject.transactionCount || 0,
+              totalValue: cachedProject.totalValue || 0,
+            }
+          : null
+
+        // Load items
+        const cachedItems = await offlineStore.getItems(projectId)
+        const items = cachedItems
+          .filter(item => !item.accountId || item.accountId === currentAccountId)
+          .map(item => unifiedItemsService._convertOfflineItem(item))
+
+        // Load transactions
+        const cachedTransactions = await offlineStore.getTransactions(projectId)
+        const transactions: Transaction[] = []
+        for (const tx of cachedTransactions.filter(tx => tx.accountId === currentAccountId)) {
+          try {
+            const { transaction } = await transactionService._getTransactionByIdOffline(
+              currentAccountId,
+              tx.transactionId
+            )
+            if (transaction) {
+              transactions.push(transaction)
+            }
+          } catch (error) {
+            console.warn(`Failed to convert cached transaction ${tx.transactionId}:`, error)
+          }
+        }
+
+        // Update snapshot
+        setEntry(projectId, entry => ({
+          ...entry,
+          project,
+          items,
+          transactions,
+          initialized: true,
+          isLoading: false,
+          error: project ? null : 'Project not found in cache',
+          hydratedFromCache: true,
+        }))
+
+        const now = Date.now()
+        applyTelemetryPatch(projectId, {
+          lastCollectionsRefreshAt: now,
+          lastCacheHydrationAt: now,
+        })
+      } catch (error) {
+        console.error('Failed to hydrate project from IndexedDB:', error)
+        setEntry(projectId, entry => ({
+          ...entry,
+          error: 'Failed to load from cache',
+          isLoading: false,
+        }))
+      }
+    },
+    [currentAccountId, setEntry, applyTelemetryPatch]
+  )
+
+  const refreshFromIndexedDB = useCallback(
+    async (projectId: string) => {
+      await hydrateProjectFromIndexedDB(projectId)
+    },
+    [hydrateProjectFromIndexedDB]
+  )
+
   const initializeProject = useCallback(
     async (projectId: string) => {
       if (initializingRef.current[projectId]) return
@@ -475,15 +573,10 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
         return
       }
 
-      // Guard: don't initialize projects while offline
+      // Guard: don't initialize projects while offline, but hydrate from IndexedDB
       if (!isNetworkOnline()) {
-        console.warn(`ProjectRealtimeProvider: Skipping initialization of project ${projectId} while offline`)
-        setEntry(projectId, entry => ({
-          ...entry,
-          isLoading: false,
-          error: 'Network unavailable',
-          initialized: false, // Keep false so it retries when we come back online
-        }))
+        console.warn(`ProjectRealtimeProvider: Skipping network initialization of project ${projectId} while offline, hydrating from cache`)
+        await hydrateProjectFromIndexedDB(projectId)
         initializingRef.current[projectId] = false
         return
       }
@@ -522,6 +615,7 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
           error: null,
           isLoading: false,
           initialized: true,
+          hydratedFromCache: false,
         }))
         const now = Date.now()
         applyTelemetryPatch(projectId, {
@@ -543,7 +637,7 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
         initializingRef.current[projectId] = false
       }
     },
-    [applyTelemetryPatch, currentAccountId, setEntry, startRealtimeSubscriptions]
+    [applyTelemetryPatch, currentAccountId, hydrateProjectFromIndexedDB, setEntry, startRealtimeSubscriptions]
   )
 
   useEffect(() => {
@@ -559,6 +653,29 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
     })
   }, [initializeProject, snapshots])
 
+  // Handle network status transitions: re-initialize cache-hydrated projects when network comes back online
+  useEffect(() => {
+    const unsubscribe = subscribeToNetworkStatus(networkStatus => {
+      // When network comes back online, re-initialize projects that were hydrated from cache
+      if (networkStatus.isOnline) {
+        Object.entries(snapshots).forEach(([projectId, entry]) => {
+          if (
+            entry.refCount > 0 &&
+            entry.initialized &&
+            entry.hydratedFromCache &&
+            !initializingRef.current[projectId]
+          ) {
+            // Re-initialize to get fresh data from network
+            // Keep showing cached data until network data arrives (no flash of empty state)
+            void initializeProject(projectId)
+          }
+        })
+      }
+    })
+
+    return unsubscribe
+  }, [initializeProject, snapshots])
+
   const contextValue = useMemo<ProjectRealtimeContextValue>(
     () => ({
       snapshots,
@@ -568,9 +685,19 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
       refreshTransactions,
       refreshItems,
       refreshCollections,
+      refreshFromIndexedDB,
     }),
-    [snapshots, registerProject, releaseProject, refreshProject, refreshTransactions, refreshItems, refreshCollections]
+    [snapshots, registerProject, releaseProject, refreshProject, refreshTransactions, refreshItems, refreshCollections, refreshFromIndexedDB]
   )
+
+  // Register snapshot refresh callback for offline services
+  useEffect(() => {
+    registerSnapshotRefreshCallback(refreshFromIndexedDB)
+    // Cleanup: unregister callback when component unmounts
+    return () => {
+      registerSnapshotRefreshCallback(() => {})
+    }
+  }, [refreshFromIndexedDB])
 
   return <ProjectRealtimeContext.Provider value={contextValue}>{children}</ProjectRealtimeContext.Provider>
 }
