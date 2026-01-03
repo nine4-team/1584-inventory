@@ -2,6 +2,8 @@ import { supabase } from './supabase'
 import { convertTimestamps, handleSupabaseError, ensureAuthenticatedForDatabase } from './databaseService'
 import { BudgetCategory } from '@/types'
 import { getBudgetCategoryOrder } from './accountPresetsService'
+import { cacheBudgetCategoriesOffline } from './offlineMetadataService'
+import { isNetworkOnline } from './networkStatusService'
 
 /**
  * Budget Categories Service
@@ -80,7 +82,17 @@ export const budgetCategoriesService = {
     }
 
     // Fallback to alphabetical sorting by name
-    return categories.sort((a, b) => a.name.localeCompare(b.name))
+    const sortedCategories = categories.sort((a, b) => a.name.localeCompare(b.name))
+
+    // Background cache refresh when online and not including archived
+    if (isNetworkOnline() && !includeArchived) {
+      cacheBudgetCategoriesOffline(accountId).catch((error) => {
+        // Don't fail the request if caching fails
+        console.warn('[budgetCategoriesService] Background cache refresh failed:', error)
+      })
+    }
+
+    return sortedCategories
   },
 
   /**

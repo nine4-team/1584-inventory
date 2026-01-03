@@ -16,7 +16,11 @@ let getGlobalQueryClient: (() => any) | null = null
 function tryGetQueryClient() {
   try {
     if (!getGlobalQueryClient) {
-      getGlobalQueryClient = require('@/utils/queryClient').getGlobalQueryClient
+      const queryClientModule = require('@/utils/queryClient')
+      getGlobalQueryClient = queryClientModule?.getGlobalQueryClient || null
+    }
+    if (!getGlobalQueryClient) {
+      return null
     }
     return getGlobalQueryClient()
   } catch {
@@ -461,6 +465,20 @@ export const projectService = {
 
   // Get single project
   async getProject(accountId: string, projectId: string): Promise<Project | null> {
+    // Check React Query cache first (for optimistic projects created offline)
+    try {
+      const queryClient = tryGetQueryClient()
+      if (queryClient) {
+        const cachedProject = queryClient.getQueryData<Project>(['project', accountId, projectId])
+        if (cachedProject) {
+          return cachedProject
+        }
+      }
+    } catch (error) {
+      // Non-fatal - continue to network fetch
+      console.debug('Failed to check React Query cache for project:', error)
+    }
+
     await ensureAuthenticatedForDatabase()
 
     const { data, error } = await supabase
@@ -480,7 +498,7 @@ export const projectService = {
     if (!data) return null
 
     const converted = convertTimestamps(data)
-    return {
+    const project = {
       id: converted.id,
       accountId: converted.account_id,
       name: converted.name,
@@ -499,79 +517,229 @@ export const projectService = {
       transactionCount: converted.transaction_count || 0,
       totalValue: converted.total_value ? parseFloat(converted.total_value) : 0
     } as Project
+
+    // Update React Query cache with fetched project
+    try {
+      const queryClient = tryGetQueryClient()
+      if (queryClient) {
+        queryClient.setQueryData(['project', accountId, projectId], project)
+      }
+    } catch (cacheError) {
+      // Non-fatal - cache update failed
+      console.debug('Failed to update React Query cache for project:', cacheError)
+    }
+
+    return project
   },
 
   // Create new project
   async createProject(accountId: string, projectData: Omit<Project, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
-    await ensureAuthenticatedForDatabase()
+    // Generate optimistic ID upfront so we always have one, even if operations fail
+    const optimisticProjectId = `P-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
+    
+    const queueOfflineCreate = async (reason: 'offline' | 'fallback' | 'timeout'): Promise<string> => {
+      try {
+        const { offlineProjectService } = await import('./offlineProjectService')
+        const result = await offlineProjectService.createProject(accountId, projectData)
+        if (import.meta.env.DEV) {
+          console.info('[projectService] createProject queued for offline processing', {
+            accountId,
+            projectId: result.projectId,
+            operationId: result.operationId,
+            reason
+          })
+        }
+        return result.projectId ?? optimisticProjectId
+      } catch (error) {
+        // Propagate typed errors that the UI should handle
+        if (error instanceof OfflineQueueUnavailableError || error instanceof OfflineContextError) {
+          console.error('[projectService] typed error during offline queue, propagating', {
+            accountId,
+            projectId: optimisticProjectId,
+            reason,
+            errorType: error.constructor.name,
+            errorMessage: error.message
+          })
+          throw error
+        }
+        
+        // For unexpected errors, return optimistic ID so UI can still show feedback
+        console.error('[projectService] unexpected error during offline queue, returning optimistic ID', {
+          accountId,
+          projectId: optimisticProjectId,
+          reason,
+          error: error instanceof Error ? error.message : String(error),
+          errorType: error instanceof Error ? error.constructor.name : typeof error
+        })
+        return optimisticProjectId
+      }
+    }
 
-    const { data, error } = await supabase
-      .from('projects')
-      .insert({
-        account_id: accountId,
-        name: projectData.name,
-        description: projectData.description || null,
-        client_name: projectData.clientName || null,
-        budget: projectData.budget || null,
-        design_fee: projectData.designFee || null,
-        budget_categories: projectData.budgetCategories || {},
-        main_image_url: projectData.mainImageUrl || null,
-        // default_category_id removed - default category is now account-wide preset
-        settings: projectData.settings || {},
-        metadata: projectData.metadata || {},
-        created_by: projectData.createdBy,
-        item_count: 0,
-        transaction_count: 0,
-        total_value: 0,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+    // Hydrate from offlineStore before attempting Supabase operations
+    try {
+      await offlineStore.init()
+      await offlineStore.getProjects().catch(() => [])
+    } catch (e) {
+      console.warn('Failed to hydrate from offlineStore:', e)
+    }
+
+    if (!isNetworkOnline()) {
+      return queueOfflineCreate('offline')
+    }
+
+    try {
+      await ensureAuthenticatedForDatabase()
+
+      const { data, error } = await withNetworkTimeout(async () => {
+        return await supabase
+          .from('projects')
+          .insert({
+            account_id: accountId,
+            name: projectData.name,
+            description: projectData.description || null,
+            client_name: projectData.clientName || null,
+            budget: projectData.budget || null,
+            design_fee: projectData.designFee || null,
+            budget_categories: projectData.budgetCategories || {},
+            main_image_url: projectData.mainImageUrl || null,
+            // default_category_id removed - default category is now account-wide preset
+            settings: projectData.settings || {},
+            metadata: projectData.metadata || {},
+            created_by: projectData.createdBy,
+            item_count: 0,
+            transaction_count: 0,
+            total_value: 0,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .select('id')
+          .single()
       })
-      .select('id')
-      .single()
 
-    if (error) throw error
-    return data.id
+      if (error) throw error
+      return data.id
+    } catch (error) {
+      if (error instanceof NetworkTimeoutError) {
+        console.warn('Supabase insert timed out, queuing project for offline sync.')
+        return queueOfflineCreate('timeout')
+      }
+      console.warn('Failed to create project online, falling back to offline queue:', error)
+      return queueOfflineCreate('fallback')
+    }
   },
 
   // Update project
   async updateProject(accountId: string, projectId: string, updates: Partial<Project>): Promise<void> {
-    await ensureAuthenticatedForDatabase()
-
-    const updateData: any = {
-      updated_at: new Date().toISOString()
+    // Check network state and hydrate from offlineStore first
+    const online = isNetworkOnline()
+    
+    // Hydrate from offlineStore before attempting Supabase operations
+    try {
+      await offlineStore.init()
+      const existingOfflineProject = await offlineStore.getProjectById(projectId).catch(() => null)
+      if (existingOfflineProject) {
+        // Pre-hydrate React Query cache if needed
+        // This prevents empty state flashes
+      }
+    } catch (e) {
+      console.warn('Failed to hydrate from offlineStore:', e)
     }
 
-    if (updates.name !== undefined) updateData.name = updates.name
-    if (updates.description !== undefined) updateData.description = updates.description
-    if (updates.clientName !== undefined) updateData.client_name = updates.clientName
-    if (updates.budget !== undefined) updateData.budget = updates.budget
-    if (updates.designFee !== undefined) updateData.design_fee = updates.designFee
-    if (updates.budgetCategories !== undefined) updateData.budget_categories = updates.budgetCategories
-    if (updates.mainImageUrl !== undefined) updateData.main_image_url = updates.mainImageUrl || null
-    // defaultCategoryId updates removed - default category is now account-wide preset
-    if (updates.settings !== undefined) updateData.settings = updates.settings
-    if (updates.metadata !== undefined) updateData.metadata = updates.metadata
+    // If offline, delegate to offlineProjectService
+    if (!online) {
+      const { offlineProjectService } = await import('./offlineProjectService')
+      await offlineProjectService.updateProject(accountId, projectId, updates)
+      return
+    }
 
-    const { error } = await supabase
-      .from('projects')
-      .update(updateData)
-      .eq('id', projectId)
-      .eq('account_id', accountId)
+    // Online: try Supabase first, fall back to offline if it fails
+    try {
+      await ensureAuthenticatedForDatabase()
 
-    if (error) throw error
+      const updateData: any = {
+        updated_at: new Date().toISOString()
+      }
+
+      if (updates.name !== undefined) updateData.name = updates.name
+      if (updates.description !== undefined) updateData.description = updates.description
+      if (updates.clientName !== undefined) updateData.client_name = updates.clientName
+      if (updates.budget !== undefined) updateData.budget = updates.budget
+      if (updates.designFee !== undefined) updateData.design_fee = updates.designFee
+      if (updates.budgetCategories !== undefined) updateData.budget_categories = updates.budgetCategories
+      if (updates.mainImageUrl !== undefined) updateData.main_image_url = updates.mainImageUrl || null
+      // defaultCategoryId updates removed - default category is now account-wide preset
+      if (updates.settings !== undefined) updateData.settings = updates.settings
+      if (updates.metadata !== undefined) updateData.metadata = updates.metadata
+
+      await withNetworkTimeout(async () => {
+        const { error } = await supabase
+          .from('projects')
+          .update(updateData)
+          .eq('id', projectId)
+          .eq('account_id', accountId)
+
+        if (error) throw error
+      })
+    } catch (error) {
+      if (error instanceof NetworkTimeoutError) {
+        console.warn('Supabase update timed out, queuing project update for offline sync.')
+        const { offlineProjectService } = await import('./offlineProjectService')
+        await offlineProjectService.updateProject(accountId, projectId, updates)
+        return
+      }
+      console.warn('Failed to update project online, falling back to offline queue:', error)
+      const { offlineProjectService } = await import('./offlineProjectService')
+      await offlineProjectService.updateProject(accountId, projectId, updates)
+    }
   },
 
   // Delete project
   async deleteProject(accountId: string, projectId: string): Promise<void> {
-    await ensureAuthenticatedForDatabase()
+    // Check network state and hydrate from offlineStore first
+    const online = isNetworkOnline()
+    
+    // Hydrate from offlineStore before attempting Supabase operations
+    try {
+      await offlineStore.init()
+      const existingOfflineProject = await offlineStore.getProjectById(projectId).catch(() => null)
+      if (existingOfflineProject) {
+        // Pre-hydrate React Query cache if needed
+      }
+    } catch (e) {
+      console.warn('Failed to hydrate from offlineStore:', e)
+    }
 
-    const { error } = await supabase
-      .from('projects')
-      .delete()
-      .eq('id', projectId)
-      .eq('account_id', accountId)
+    // If offline, delegate to offlineProjectService
+    if (!online) {
+      const { offlineProjectService } = await import('./offlineProjectService')
+      await offlineProjectService.deleteProject(accountId, projectId)
+      return
+    }
 
-    if (error) throw error
+    // Online: try Supabase first, fall back to offline if it fails
+    try {
+      await ensureAuthenticatedForDatabase()
+
+      await withNetworkTimeout(async () => {
+        const { error } = await supabase
+          .from('projects')
+          .delete()
+          .eq('id', projectId)
+          .eq('account_id', accountId)
+
+        if (error) throw error
+      })
+    } catch (error) {
+      if (error instanceof NetworkTimeoutError) {
+        console.warn('Supabase delete timed out, queuing project delete for offline sync.')
+        const { offlineProjectService } = await import('./offlineProjectService')
+        await offlineProjectService.deleteProject(accountId, projectId)
+        return
+      }
+      console.warn('Failed to delete project online, falling back to offline queue:', error)
+      const { offlineProjectService } = await import('./offlineProjectService')
+      await offlineProjectService.deleteProject(accountId, projectId)
+    }
   },
 
   // Subscribe to projects with real-time updates
@@ -1014,6 +1182,24 @@ export const transactionService = {
 
   // Get transaction by ID across all projects (for business inventory) - account-scoped
   async getTransactionById(accountId: string, transactionId: string): Promise<{ transaction: Transaction | null; projectId: string | null }> {
+    // Check React Query cache first (for optimistic transactions created offline)
+    try {
+      const { tryGetQueryClient } = await import('../utils/queryClient')
+      const queryClient = tryGetQueryClient()
+      if (queryClient) {
+        const cachedTransaction = queryClient.getQueryData<Transaction>(['transaction', accountId, transactionId])
+        if (cachedTransaction) {
+          return {
+            transaction: cachedTransaction,
+            projectId: cachedTransaction.projectId ?? null
+          }
+        }
+      }
+    } catch (error) {
+      // Non-fatal - continue to offline/network fetch
+      console.debug('Failed to check React Query cache for transaction:', error)
+    }
+
     const online = isNetworkOnline()
     if (online) {
       try {
@@ -1035,6 +1221,18 @@ export const transactionService = {
         const converted = convertTimestamps(data)
         const transaction = _convertTransactionFromDb(data)
         const enriched = await _enrichTransactionsWithProjectNames(accountId, [transaction])
+
+        // Update React Query cache with fetched transaction
+        try {
+          const { tryGetQueryClient } = await import('../utils/queryClient')
+          const queryClient = tryGetQueryClient()
+          if (queryClient) {
+            queryClient.setQueryData(['transaction', accountId, transactionId], enriched[0] || transaction)
+          }
+        } catch (cacheError) {
+          // Non-fatal - cache update failed
+          console.debug('Failed to update React Query cache for transaction:', cacheError)
+        }
 
         return {
           transaction: enriched[0] || transaction,
@@ -1473,6 +1671,64 @@ export const transactionService = {
     transactionData: Omit<Transaction, 'transactionId' | 'createdAt'>,
     items?: TransactionItemFormData[]
   ): Promise<string> {
+    // Generate optimistic ID upfront so we always have one, even if operations fail
+    const optimisticTransactionId = `T-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
+    
+    const queueOfflineCreate = async (reason: 'offline' | 'fallback' | 'timeout'): Promise<string> => {
+      try {
+        const { offlineTransactionService } = await import('./offlineTransactionService')
+        const result = await offlineTransactionService.createTransaction(
+          accountId,
+          projectId,
+          transactionData,
+          items
+        )
+        if (import.meta.env.DEV) {
+          console.info('[transactionService] createTransaction queued for offline processing', {
+            accountId,
+            transactionId: result.transactionId,
+            operationId: result.operationId,
+            reason
+          })
+        }
+        return result.transactionId ?? optimisticTransactionId
+      } catch (error) {
+        // Propagate typed errors that the UI should handle
+        if (error instanceof OfflineQueueUnavailableError || error instanceof OfflineContextError) {
+          console.error('[transactionService] typed error during offline queue, propagating', {
+            accountId,
+            transactionId: optimisticTransactionId,
+            reason,
+            errorType: error.constructor.name,
+            errorMessage: error.message
+          })
+          throw error
+        }
+        
+        // For unexpected errors, return optimistic ID so UI can still show feedback
+        console.error('[transactionService] unexpected error during offline queue, returning optimistic ID', {
+          accountId,
+          transactionId: optimisticTransactionId,
+          reason,
+          error: error instanceof Error ? error.message : String(error),
+          errorType: error instanceof Error ? error.constructor.name : typeof error
+        })
+        return optimisticTransactionId
+      }
+    }
+
+    // Hydrate from offlineStore before attempting Supabase operations
+    try {
+      await offlineStore.init()
+      await offlineStore.getAllTransactions().catch(() => [])
+    } catch (e) {
+      console.warn('Failed to hydrate from offlineStore:', e)
+    }
+
+    if (!isNetworkOnline()) {
+      return queueOfflineCreate('offline')
+    }
+
     try {
       await ensureAuthenticatedForDatabase()
 
@@ -1485,8 +1741,8 @@ export const transactionService = {
       }
 
       const now = new Date()
-      // Generate a unique transaction_id (UUID format)
-      const transactionId = crypto.randomUUID()
+      // Use the pre-generated optimistic ID for consistency
+      const transactionId = optimisticTransactionId
 
       // Convert camelCase transactionData to database format
       const dbTransaction = _convertTransactionToDb({
@@ -1544,11 +1800,13 @@ export const transactionService = {
         }
       }
 
-      const { error } = await supabase
-        .from('transactions')
-        .insert(dbTransaction)
+      await withNetworkTimeout(async () => {
+        const { error } = await supabase
+          .from('transactions')
+          .insert(dbTransaction)
 
-      if (error) throw error
+        if (error) throw error
+      })
 
       console.log('Transaction created successfully:', transactionId)
 
@@ -1557,6 +1815,14 @@ export const transactionService = {
         console.log('Creating items for transaction:', transactionId)
         // Propagate tax_rate_pct to created items if present on transaction
         const itemsToCreate = items.map(i => ({ ...i }))
+        
+        // Check if we're still online before creating items
+        if (!isNetworkOnline()) {
+          // If we went offline during transaction creation, queue the whole thing offline
+          console.warn('Network went offline during transaction creation, queuing for offline sync')
+          return queueOfflineCreate('fallback')
+        }
+        
         const createdItemIds = await unifiedItemsService.createTransactionItems(
           accountId,
           projectId || '',
@@ -1594,148 +1860,225 @@ export const transactionService = {
 
       return transactionId
     } catch (error) {
-      console.error('Error creating transaction:', error)
-      throw error // Re-throw to preserve original error for debugging
+      if (error instanceof NetworkTimeoutError) {
+        console.warn('Supabase insert timed out, queuing transaction for offline sync.')
+        return queueOfflineCreate('timeout')
+      }
+      console.warn('Failed to create transaction online, falling back to offline queue:', error)
+      return queueOfflineCreate('fallback')
     }
   },
 
   // Update transaction (account-scoped)
   async updateTransaction(accountId: string, _projectId: string, transactionId: string, updates: Partial<Transaction>): Promise<void> {
-    await ensureAuthenticatedForDatabase()
-
-    // Apply business rules for reimbursement type and status (using camelCase)
-    const finalUpdates: Partial<Transaction> = { ...updates }
-
-    // If status is being set to 'completed', clear reimbursementType
-    if (finalUpdates.status === 'completed' && finalUpdates.reimbursementType !== undefined) {
-      finalUpdates.reimbursementType = null
+    // Check network state and hydrate from offlineStore first
+    const online = isNetworkOnline()
+    
+    // Hydrate from offlineStore before attempting Supabase operations
+    try {
+      await offlineStore.init()
+      const existingOfflineTransaction = await offlineStore.getTransactionById(transactionId).catch(() => null)
+      if (existingOfflineTransaction) {
+        // Pre-hydrate React Query cache if needed
+        // This prevents empty state flashes
+      }
+    } catch (e) {
+      console.warn('Failed to hydrate from offlineStore:', e)
     }
 
-    // If reimbursementType is being set to empty string, also clear it
-    if (finalUpdates.reimbursementType === '') {
-      finalUpdates.reimbursementType = null
+    // If offline, delegate to offlineTransactionService
+    if (!online) {
+      const { offlineTransactionService } = await import('./offlineTransactionService')
+      await offlineTransactionService.updateTransaction(accountId, transactionId, updates)
+      return
     }
 
-    // If reimbursementType is being set to a non-empty value, ensure status is not 'completed'
-    if (finalUpdates.reimbursementType && finalUpdates.status === 'completed') {
-      // Set status to 'pending' if reimbursementType is being set to a non-empty value and status is 'completed'
-      finalUpdates.status = 'pending'
-    }
+    // Online: try Supabase first, fall back to offline if it fails
+    try {
+      await ensureAuthenticatedForDatabase()
 
-    // Apply tax mapping / computation before save (using camelCase)
-    if (finalUpdates.taxRatePreset !== undefined) {
-      if (finalUpdates.taxRatePreset === 'Other') {
-        // Compute from provided subtotal and amount if present in updates or existing doc
-        const { data: existing } = await supabase
-          .from('transactions')
-          .select('amount, subtotal')
+      // Apply business rules for reimbursement type and status (using camelCase)
+      const finalUpdates: Partial<Transaction> = { ...updates }
+
+      // If status is being set to 'completed', clear reimbursementType
+      if (finalUpdates.status === 'completed' && finalUpdates.reimbursementType !== undefined) {
+        finalUpdates.reimbursementType = null
+      }
+
+      // If reimbursementType is being set to empty string, also clear it
+      if (finalUpdates.reimbursementType === '') {
+        finalUpdates.reimbursementType = null
+      }
+
+      // If reimbursementType is being set to a non-empty value, ensure status is not 'completed'
+      if (finalUpdates.reimbursementType && finalUpdates.status === 'completed') {
+        // Set status to 'pending' if reimbursementType is being set to a non-empty value and status is 'completed'
+        finalUpdates.status = 'pending'
+      }
+
+      // Apply tax mapping / computation before save (using camelCase)
+      if (finalUpdates.taxRatePreset !== undefined) {
+        if (finalUpdates.taxRatePreset === 'Other') {
+          // Compute from provided subtotal and amount if present in updates or existing doc
+          const { data: existing } = await supabase
+            .from('transactions')
+            .select('amount, subtotal')
+            .eq('account_id', accountId)
+            .eq('transaction_id', transactionId)
+            .single()
+
+          const existingData = existing as { amount?: string; subtotal?: string } | null
+          const amountVal = finalUpdates.amount !== undefined ? parseFloat(finalUpdates.amount) : parseFloat(existingData?.amount || '0')
+          const subtotalVal = finalUpdates.subtotal !== undefined ? parseFloat(finalUpdates.subtotal) : parseFloat(existingData?.subtotal || '0')
+          if (!isNaN(amountVal) && !isNaN(subtotalVal) && subtotalVal > 0 && amountVal >= subtotalVal) {
+            const rate = ((amountVal - subtotalVal) / subtotalVal) * 100
+            finalUpdates.taxRatePct = rate
+          }
+        } else {
+          // Look up preset by ID
+          try {
+            const preset = await getTaxPresetById(accountId, finalUpdates.taxRatePreset)
+            if (preset) {
+              finalUpdates.taxRatePct = preset.rate
+              // Remove subtotal when using presets
+              finalUpdates.subtotal = undefined
+            } else {
+              console.warn(`Tax preset with ID '${finalUpdates.taxRatePreset}' not found during update`)
+            }
+          } catch (e) {
+            console.warn('Tax preset lookup failed during update:', e)
+          }
+        }
+      }
+
+      // Convert camelCase updates to database format
+      const dbUpdates = _convertTransactionToDb(finalUpdates)
+      
+      // Validate category_id belongs to account if provided
+      if (dbUpdates.category_id !== undefined && dbUpdates.category_id !== null) {
+        const { data: category, error: categoryError } = await supabase
+          .from('budget_categories')
+          .select('id, account_id')
+          .eq('id', dbUpdates.category_id)
           .eq('account_id', accountId)
-          .eq('transaction_id', transactionId)
           .single()
 
-        const existingData = existing as { amount?: string; subtotal?: string } | null
-        const amountVal = finalUpdates.amount !== undefined ? parseFloat(finalUpdates.amount) : parseFloat(existingData?.amount || '0')
-        const subtotalVal = finalUpdates.subtotal !== undefined ? parseFloat(finalUpdates.subtotal) : parseFloat(existingData?.subtotal || '0')
-        if (!isNaN(amountVal) && !isNaN(subtotalVal) && subtotalVal > 0 && amountVal >= subtotalVal) {
-          const rate = ((amountVal - subtotalVal) / subtotalVal) * 100
-          finalUpdates.taxRatePct = rate
+        if (categoryError || !category) {
+          throw new Error(`Category ID '${dbUpdates.category_id}' not found or does not belong to this account.`)
         }
-      } else {
-        // Look up preset by ID
+      }
+      
+      // Add updated_at timestamp for database
+      dbUpdates.updated_at = new Date().toISOString()
+
+      await withNetworkTimeout(async () => {
+        const { error } = await supabase
+          .from('transactions')
+          .update(dbUpdates)
+          .eq('account_id', accountId)
+          .eq('transaction_id', transactionId)
+
+        if (error) throw error
+      })
+
+      // If taxRatePct is set in updates, propagate to items
+      if (finalUpdates.taxRatePct !== undefined) {
         try {
-          const preset = await getTaxPresetById(accountId, finalUpdates.taxRatePreset)
-          if (preset) {
-            finalUpdates.taxRatePct = preset.rate
-            // Remove subtotal when using presets
-            finalUpdates.subtotal = undefined
-          } else {
-            console.warn(`Tax preset with ID '${finalUpdates.taxRatePreset}' not found during update`)
+          const items = await unifiedItemsService.getItemsForTransaction(accountId, _projectId, transactionId)
+          if (items && items.length > 0) {
+            // Update each item individually (Supabase batch operations)
+            for (const item of items) {
+              await unifiedItemsService.updateItem(accountId, item.itemId, {
+                taxRatePct: finalUpdates.taxRatePct
+              })
+            }
           }
         } catch (e) {
-          console.warn('Tax preset lookup failed during update:', e)
+          console.warn('Failed to propagate tax_rate_pct to items:', e)
         }
       }
-    }
-
-    // Convert camelCase updates to database format
-    const dbUpdates = _convertTransactionToDb(finalUpdates)
-    
-    // Validate category_id belongs to account if provided
-    if (dbUpdates.category_id !== undefined && dbUpdates.category_id !== null) {
-      const { data: category, error: categoryError } = await supabase
-        .from('budget_categories')
-        .select('id, account_id')
-        .eq('id', dbUpdates.category_id)
-        .eq('account_id', accountId)
-        .single()
-
-      if (categoryError || !category) {
-        throw new Error(`Category ID '${dbUpdates.category_id}' not found or does not belong to this account.`)
+      // Recompute and persist needs_review unless caller explicitly provided it
+      if (finalUpdates.needsReview === undefined) {
+      // Schedule recompute asynchronously; do not await to keep updates fast
+      this._enqueueRecomputeNeedsReview(accountId, _projectId, transactionId).catch((e: any) => {
+        console.warn('Failed to recompute needs_review after transaction update:', e)
+      })
       }
-    }
-    
-    // Add updated_at timestamp for database
-    dbUpdates.updated_at = new Date().toISOString()
 
-    const { error } = await supabase
-      .from('transactions')
-      .update(dbUpdates)
-      .eq('account_id', accountId)
-      .eq('transaction_id', transactionId)
-
-    if (error) throw error
-
-    // If taxRatePct is set in updates, propagate to items
-    if (finalUpdates.taxRatePct !== undefined) {
+      // Invalidate transaction display info cache so UI updates immediately
       try {
-        const items = await unifiedItemsService.getItemsForTransaction(accountId, _projectId, transactionId)
-        if (items && items.length > 0) {
-          // Update each item individually (Supabase batch operations)
-          for (const item of items) {
-            await unifiedItemsService.updateItem(accountId, item.itemId, {
-              taxRatePct: finalUpdates.taxRatePct
-            })
-          }
-        }
+        const { invalidateTransactionDisplayInfo } = await import('@/hooks/useTransactionDisplayInfo')
+        invalidateTransactionDisplayInfo(accountId, transactionId)
       } catch (e) {
-        console.warn('Failed to propagate tax_rate_pct to items:', e)
+        console.warn('Failed to invalidate transaction display info cache:', e)
       }
-    }
-    // Recompute and persist needs_review unless caller explicitly provided it
-    if (finalUpdates.needsReview === undefined) {
-    // Schedule recompute asynchronously; do not await to keep updates fast
-    this._enqueueRecomputeNeedsReview(accountId, _projectId, transactionId).catch((e: any) => {
-      console.warn('Failed to recompute needs_review after transaction update:', e)
-    })
-    }
-
-    // Invalidate transaction display info cache so UI updates immediately
-    try {
-      const { invalidateTransactionDisplayInfo } = await import('@/hooks/useTransactionDisplayInfo')
-      invalidateTransactionDisplayInfo(accountId, transactionId)
-    } catch (e) {
-      console.warn('Failed to invalidate transaction display info cache:', e)
+    } catch (error) {
+      if (error instanceof NetworkTimeoutError) {
+        console.warn('Supabase update timed out, queuing transaction update for offline sync.')
+        const { offlineTransactionService } = await import('./offlineTransactionService')
+        await offlineTransactionService.updateTransaction(accountId, transactionId, updates)
+        return
+      }
+      console.warn('Failed to update transaction online, falling back to offline queue:', error)
+      const { offlineTransactionService } = await import('./offlineTransactionService')
+      await offlineTransactionService.updateTransaction(accountId, transactionId, updates)
     }
   },
 
   // Delete transaction (account-scoped)
   async deleteTransaction(accountId: string, _projectId: string, transactionId: string): Promise<void> {
-    await ensureAuthenticatedForDatabase()
-
+    // Check network state and hydrate from offlineStore first
+    const online = isNetworkOnline()
+    
+    // Hydrate from offlineStore before attempting Supabase operations
     try {
-      await detachItemsFromTransaction(accountId, transactionId)
-    } catch (error) {
-      console.warn('deleteTransaction - failed to detach items before delete', error)
-      // Continue with delete so the transaction does not linger, but surface the warning.
+      await offlineStore.init()
+      const existingOfflineTransaction = await offlineStore.getTransactionById(transactionId).catch(() => null)
+      if (existingOfflineTransaction) {
+        // Pre-hydrate React Query cache if needed
+      }
+    } catch (e) {
+      console.warn('Failed to hydrate from offlineStore:', e)
     }
 
-    const { error } = await supabase
-      .from('transactions')
-      .delete()
-      .eq('account_id', accountId)
-      .eq('transaction_id', transactionId)
+    // If offline, delegate to offlineTransactionService
+    if (!online) {
+      const { offlineTransactionService } = await import('./offlineTransactionService')
+      await offlineTransactionService.deleteTransaction(accountId, transactionId)
+      return
+    }
 
-    if (error) throw error
+    // Online: try Supabase first, fall back to offline if it fails
+    try {
+      await ensureAuthenticatedForDatabase()
+
+      try {
+        await detachItemsFromTransaction(accountId, transactionId)
+      } catch (error) {
+        console.warn('deleteTransaction - failed to detach items before delete', error)
+        // Continue with delete so the transaction does not linger, but surface the warning.
+      }
+
+      await withNetworkTimeout(async () => {
+        const { error } = await supabase
+          .from('transactions')
+          .delete()
+          .eq('account_id', accountId)
+          .eq('transaction_id', transactionId)
+
+        if (error) throw error
+      })
+    } catch (error) {
+      if (error instanceof NetworkTimeoutError) {
+        console.warn('Supabase delete timed out, queuing transaction delete for offline sync.')
+        const { offlineTransactionService } = await import('./offlineTransactionService')
+        await offlineTransactionService.deleteTransaction(accountId, transactionId)
+        return
+      }
+      console.warn('Failed to delete transaction online, falling back to offline queue:', error)
+      const { offlineTransactionService } = await import('./offlineTransactionService')
+      await offlineTransactionService.deleteTransaction(accountId, transactionId)
+    }
   },
 
   // Subscribe to transactions with real-time updates

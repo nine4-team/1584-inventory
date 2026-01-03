@@ -5,6 +5,7 @@ import { ImageUploadService } from '@/services/imageService'
 import { projectService } from '@/services/inventoryService'
 import { useAccount } from '@/contexts/AccountContext'
 import { budgetCategoriesService } from '@/services/budgetCategoriesService'
+import { OfflinePrerequisiteBanner, useOfflinePrerequisiteGate } from './ui/OfflinePrerequisiteBanner'
 
 interface ProjectFormData {
   name: string;
@@ -203,6 +204,15 @@ export default function ProjectForm({ onSubmit, onCancel, isLoading = false, ini
 
     if (!validateForm()) {
       console.debug('ProjectForm: validation failed', { formData })
+      return
+    }
+    
+    // Block submission if offline prerequisites are not ready
+    if (!isReady) {
+      setErrors(prev => ({ 
+        ...prev, 
+        _prerequisite: blockingReason || 'Offline prerequisites not ready. Please sync metadata before saving.' 
+      }))
       return
     }
 
@@ -495,8 +505,8 @@ export default function ProjectForm({ onSubmit, onCancel, isLoading = false, ini
               </button>
               <button
                 type="submit"
-                disabled={isLoading || isUploadingImage}
-                className="px-6 py-3 text-sm font-semibold text-white bg-primary-600 hover:bg-primary-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 shadow-lg hover:shadow-xl transition-all"
+                disabled={isLoading || isUploadingImage || !isReady}
+                className="px-6 py-3 text-sm font-semibold text-white bg-primary-600 hover:bg-primary-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transition-all"
               >
                 {isLoading || isUploadingImage
                   ? (isEditing ? 'Updating...' : 'Creating...')

@@ -20,7 +20,8 @@ import { useAccount } from '@/contexts/AccountContext'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
 import { useNetworkState } from '@/hooks/useNetworkState'
-import { hydrateOptimisticItem } from '@/utils/hydrationHelpers'
+import { hydrateOptimisticItem, hydrateTransactionCache } from '@/utils/hydrationHelpers'
+import { getGlobalQueryClient } from '@/utils/queryClient'
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import TransactionAudit from '@/components/ui/TransactionAudit'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
@@ -315,11 +316,48 @@ export default function TransactionDetail() {
       if (!transactionId || !currentAccountId) return
 
       try {
-        let actualProjectId: string | null | undefined = projectId ?? null
-        let transactionData: any
-        let projectData: Project | null = null
+        // First, try to hydrate from offlineStore to React Query cache
+        // This ensures optimistic transactions created offline are available
+        try {
+          await hydrateTransactionCache(getGlobalQueryClient(), currentAccountId, transactionId)
+        } catch (error) {
+          console.warn('Failed to hydrate transaction cache (non-fatal):', error)
+        }
 
-        if (!actualProjectId) {
+        // Check React Query cache first (for optimistic transactions created offline)
+        const queryClient = getGlobalQueryClient()
+        const cachedTransaction = queryClient.getQueryData<Transaction>(['transaction', currentAccountId, transactionId])
+        
+        let actualProjectId: string | null | undefined = projectId ?? null
+        let transactionData: Transaction | null = null
+        let projectData: Project | null = null
+        
+        if (cachedTransaction) {
+          console.log('✅ Transaction found in React Query cache:', cachedTransaction.transactionId)
+          transactionData = cachedTransaction
+          actualProjectId = cachedTransaction.projectId ?? projectId ?? null
+          
+          // Still need to load project if projectId exists
+          if (actualProjectId) {
+            try {
+              projectData = await projectService.getProject(currentAccountId, actualProjectId)
+              if (projectData) {
+                setProject(projectData)
+              }
+            } catch (error) {
+              console.warn('Failed to fetch project name:', error)
+            }
+          }
+          
+          setTransaction(transactionData)
+          setIsLoading(false)
+          // Continue to load items below - use cached transaction data
+        } else {
+          // Transaction not in cache, proceed with normal loading
+          let fetchedTransactionData: any
+          let fetchedProjectData: Project | null = null
+
+          if (!actualProjectId) {
           // For business inventory transactions, we need to find the transaction across all projects
           console.log('TransactionDetail - No projectId provided, searching across all projects for business inventory transaction')
           const result = await transactionService.getTransactionById(currentAccountId, transactionId)
@@ -331,26 +369,40 @@ export default function TransactionDetail() {
             return
           }
 
-          transactionData = result.transaction
-          actualProjectId = result.projectId
+            fetchedTransactionData = result.transaction
+            actualProjectId = result.projectId
 
-          // Get project data only if projectId exists (business inventory transactions have null projectId)
-          if (actualProjectId) {
-            projectData = await projectService.getProject(currentAccountId, actualProjectId)
+            // Get project data only if projectId exists (business inventory transactions have null projectId)
+            if (actualProjectId) {
+              fetchedProjectData = await projectService.getProject(currentAccountId, actualProjectId)
+            }
+          } else {
+            // Fetch transaction and project data for regular project transactions.
+            // We intentionally do NOT rely on `getItemsForTransaction` here because moved/deallocated
+            // items may have been cleared from the `transaction_id` column. Instead, read
+            // `itemIds` from the transaction row and load each item by `item_id` so moved items
+            // are still discoverable and can be shown in the "Moved out" section.
+            const [fetchedTxData, fetchedProjData] = await Promise.all([
+              transactionService.getTransaction(currentAccountId, actualProjectId, transactionId),
+              projectService.getProject(currentAccountId, actualProjectId)
+            ])
+
+            fetchedTransactionData = fetchedTxData
+            fetchedProjectData = fetchedProjData
           }
-        } else {
-          // Fetch transaction and project data for regular project transactions.
-          // We intentionally do NOT rely on `getItemsForTransaction` here because moved/deallocated
-          // items may have been cleared from the `transaction_id` column. Instead, read
-          // `itemIds` from the transaction row and load each item by `item_id` so moved items
-          // are still discoverable and can be shown in the "Moved out" section.
-          const [fetchedTransactionData, fetchedProjectData] = await Promise.all([
-            transactionService.getTransaction(currentAccountId, actualProjectId, transactionId),
-            projectService.getProject(currentAccountId, actualProjectId)
-          ])
-
+          
           transactionData = fetchedTransactionData
           projectData = fetchedProjectData
+          
+          setTransaction(transactionData)
+          if (projectData) {
+            setProject(projectData)
+          }
+          setIsLoading(false)
+        }
+        
+        // Load items for both cached and fetched transactions
+        if (transactionData) {
 
           // Prefer item IDs stored on the transaction record
           const itemIdsFromTransaction = Array.isArray(transactionData?.itemIds) ? transactionData.itemIds : []
@@ -385,7 +437,7 @@ export default function TransactionDetail() {
             // Fallback: query items by transaction_id when itemIds is empty or missing
             console.log('TransactionDetail - itemIds empty, falling back to getItemsForTransaction')
             try {
-              const transactionItems = await unifiedItemsService.getItemsForTransaction(currentAccountId, actualProjectId, transactionId)
+              const transactionItems = await unifiedItemsService.getItemsForTransaction(currentAccountId, actualProjectId || undefined, transactionId)
               const itemIds = transactionItems.map(item => item.itemId)
               const itemsPromises = itemIds.map(id => unifiedItemsService.getItemById(currentAccountId, id))
               const items = await Promise.all(itemsPromises)
@@ -416,90 +468,6 @@ export default function TransactionDetail() {
               setLoadedItems(validItems, movedOutItemIds)
             } catch (itemError) {
               console.error('TransactionDetail - failed to fetch items by transaction_id:', itemError)
-              setItems([])
-            }
-          }
-        }
-
-        const convertedTransaction: Transaction = {
-          ...transactionData,
-          transactionImages: Array.isArray(transactionData?.transactionImages) ? transactionData.transactionImages : []
-        } as Transaction
-
-        console.log('TransactionDetail - loaded transactionData:', transactionData)
-        console.log('TransactionDetail - convertedTransaction:', convertedTransaction)
-        console.log('TransactionDetail - actualProjectId:', actualProjectId)
-        setTransaction(convertedTransaction)
-        setProject(projectData)
-
-        // Fetch transaction items for business inventory transactions (when no projectId in URL)
-        if (!projectId) {
-          // For business inventory transactions, prefer item IDs stored on the transaction record
-          // so deallocated/moved items remain discoverable.
-          const transactionItemIds = Array.isArray(transactionData?.itemIds) ? transactionData.itemIds : []
-          if (transactionItemIds.length > 0) {
-            const itemsPromises = transactionItemIds.map((itemId: string) => unifiedItemsService.getItemById(currentAccountId, itemId))
-            const items = await Promise.all(itemsPromises)
-            let validItems = items.filter(item => item !== null) as Item[]
-            console.log('TransactionDetail - fetched items for business inventory transaction:', validItems.length)
-
-            try {
-              // Include items that were moved out of this transaction by consulting lineage edges.
-              // The UI displays both "in transaction" and "moved out" items; we need to load moved items too.
-              const edgesFromTransaction = await lineageService.getEdgesFromTransaction(transactionId, currentAccountId)
-              const movedOutItemIds = Array.from(new Set(edgesFromTransaction.map(edge => edge.itemId)))
-
-              // Fetch any moved item records that aren't already in the items list
-              const missingMovedItemIds = movedOutItemIds.filter(id => !validItems.some(it => it.itemId === id))
-              if (missingMovedItemIds.length > 0) {
-                const movedItemsPromises = missingMovedItemIds.map(id => unifiedItemsService.getItemById(currentAccountId, id))
-                const movedItems = await Promise.all(movedItemsPromises)
-                const validMovedItems = movedItems.filter(mi => mi !== null) as Item[]
-                validItems = validItems.concat(validMovedItems)
-                console.log('TransactionDetail - added moved items (business inventory):', validMovedItems.length)
-              }
-
-              setLoadedItems(validItems, new Set<string>(movedOutItemIds))
-            } catch (edgeErr) {
-              console.error('TransactionDetail - failed to fetch lineage edges (business inventory):', edgeErr)
-              setLoadedItems(validItems, new Set<string>())
-            }
-          } else {
-            // Fallback: query items by transaction_id when itemIds is empty or missing
-            console.log('TransactionDetail - itemIds empty for business inventory, falling back to getItemsForTransaction')
-            try {
-              const actualProjectIdForQuery = actualProjectId || ''
-              const transactionItems = await unifiedItemsService.getItemsForTransaction(currentAccountId, actualProjectIdForQuery, transactionId)
-              const itemIds = transactionItems.map(item => item.itemId)
-              const itemsPromises = itemIds.map(id => unifiedItemsService.getItemById(currentAccountId, id))
-              const items = await Promise.all(itemsPromises)
-              let validItems = items.filter(item => item !== null) as Item[]
-
-              let movedOutItemIds = new Set<string>()
-              try {
-                // Include items that were moved out of this transaction by consulting lineage edges.
-                // The UI displays both "in transaction" and "moved out" items; we need to load moved items too.
-                const edgesFromTransaction = await lineageService.getEdgesFromTransaction(transactionId, currentAccountId)
-                const allMovedOutItemIds = Array.from(new Set<string>(edgesFromTransaction.map(edge => edge.itemId)))
-
-                // Fetch any moved item records that aren't already in the items list
-                const missingMovedItemIds = allMovedOutItemIds.filter(id => !validItems.some(it => it.itemId === id))
-                if (missingMovedItemIds.length > 0) {
-                  const movedItemsPromises = missingMovedItemIds.map(id => unifiedItemsService.getItemById(currentAccountId, id))
-                  const movedItems = await Promise.all(movedItemsPromises)
-                  const validMovedItems = movedItems.filter(mi => mi !== null) as Item[]
-                  validItems = validItems.concat(validMovedItems)
-                  console.log('TransactionDetail - added moved items (business inventory fallback):', validMovedItems.length)
-                }
-
-                movedOutItemIds = new Set(allMovedOutItemIds)
-              } catch (edgeErr) {
-                console.error('TransactionDetail - failed to fetch lineage edges (business inventory fallback):', edgeErr)
-              }
-
-              setLoadedItems(validItems, movedOutItemIds)
-            } catch (itemError) {
-              console.error('TransactionDetail - failed to fetch items by transaction_id (business inventory):', itemError)
               setItems([])
             }
           }

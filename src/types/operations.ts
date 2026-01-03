@@ -5,6 +5,9 @@ export type OperationType =
   | 'CREATE_TRANSACTION'
   | 'UPDATE_TRANSACTION'
   | 'DELETE_TRANSACTION'
+  | 'CREATE_PROJECT'
+  | 'UPDATE_PROJECT'
+  | 'DELETE_PROJECT'
 
 export interface BaseOperation {
   id: string
@@ -51,7 +54,73 @@ export interface DeleteItemOperation extends BaseOperation {
   }
 }
 
+export interface CreateTransactionOperation extends BaseOperation {
+  type: 'CREATE_TRANSACTION'
+  data: {
+    id: string // transaction_id (business identifier)
+    accountId: string
+    projectId?: string | null
+  }
+}
+
+export interface UpdateTransactionOperation extends BaseOperation {
+  type: 'UPDATE_TRANSACTION'
+  data: {
+    id: string // transaction_id
+    accountId?: string
+    updates: Partial<{
+      amount: string
+      categoryId: string
+      taxRatePreset: string
+      status: string
+    }>
+  }
+}
+
+export interface DeleteTransactionOperation extends BaseOperation {
+  type: 'DELETE_TRANSACTION'
+  data: {
+    id: string // transaction_id
+    accountId?: string
+  }
+}
+
+export interface CreateProjectOperation extends BaseOperation {
+  type: 'CREATE_PROJECT'
+  data: {
+    id: string // project id (business identifier)
+    accountId: string
+  }
+}
+
+export interface UpdateProjectOperation extends BaseOperation {
+  type: 'UPDATE_PROJECT'
+  data: {
+    id: string // project id
+    accountId?: string
+    updates: Partial<{
+      name: string
+      budget: number
+      description: string
+    }>
+  }
+}
+
+export interface DeleteProjectOperation extends BaseOperation {
+  type: 'DELETE_PROJECT'
+  data: {
+    id: string // project id
+    accountId?: string
+  }
+}
+
 export type Operation =
   | CreateItemOperation
   | UpdateItemOperation
   | DeleteItemOperation
+  | CreateTransactionOperation
+  | UpdateTransactionOperation
+  | DeleteTransactionOperation
+  | CreateProjectOperation
+  | UpdateProjectOperation
+  | DeleteProjectOperation

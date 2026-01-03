@@ -5,8 +5,8 @@
 
 import { QueryClient } from '@tanstack/react-query'
 import { offlineStore } from '../services/offlineStore'
-import { unifiedItemsService } from '../services/inventoryService'
-import type { Item } from '../types'
+import { unifiedItemsService, transactionService, projectService } from '../services/inventoryService'
+import type { Item, Transaction, Project } from '../types'
 
 /**
  * Hydrate React Query cache for a single item from offlineStore
@@ -170,6 +170,170 @@ export async function hydrateOptimisticItem(
     }
   } catch (error) {
     console.warn('Failed to hydrate optimistic item into React Query cache:', error)
+    // Don't throw - this is a performance optimization, not critical
+  }
+}
+
+/**
+ * Hydrate React Query cache for a single transaction from offlineStore
+ * This should be called synchronously before rendering to prevent empty state flashes
+ */
+export async function hydrateTransactionCache(
+  queryClient: QueryClient,
+  accountId: string,
+  transactionId: string
+): Promise<void> {
+  try {
+    await offlineStore.init()
+    // Use the existing offline method which handles conversion and enrichment
+    const { transaction } = await transactionService._getTransactionByIdOffline(accountId, transactionId)
+    if (transaction) {
+      // Prime the React Query cache
+      queryClient.setQueryData(['transaction', accountId, transactionId], transaction)
+    }
+  } catch (error) {
+    console.warn('Failed to hydrate transaction cache:', error)
+  }
+}
+
+/**
+ * Hydrate React Query cache for a single project from offlineStore
+ * This should be called synchronously before rendering to prevent empty state flashes
+ */
+export async function hydrateProjectCache(
+  queryClient: QueryClient,
+  accountId: string,
+  projectId: string
+): Promise<void> {
+  try {
+    await offlineStore.init()
+    const cachedProject = await offlineStore.getProjectById(projectId)
+    if (cachedProject) {
+      // Convert DBProject to Project format using projectService converter
+      const project = projectService._convertProjectFromDb({
+        id: cachedProject.id,
+        account_id: accountId,
+        name: cachedProject.name,
+        description: cachedProject.description,
+        client_name: cachedProject.clientName,
+        budget: cachedProject.budget,
+        design_fee: cachedProject.designFee,
+        main_image_url: cachedProject.mainImageUrl,
+        created_at: cachedProject.createdAt,
+        updated_at: cachedProject.updatedAt,
+        created_by: cachedProject.createdBy,
+        settings: undefined,
+        metadata: undefined,
+        item_count: 0,
+        transaction_count: 0,
+        total_value: 0
+      })
+      // Prime the React Query cache
+      queryClient.setQueryData(['project', accountId, projectId], project)
+    }
+  } catch (error) {
+    console.warn('Failed to hydrate project cache:', error)
+  }
+}
+
+/**
+ * Hydrate optimistic transaction into React Query cache immediately after creation
+ * This makes the transaction appear in lists before sync completes
+ * 
+ * @param accountId - Account ID
+ * @param transactionId - Optimistic transaction ID
+ * @param transactionData - Transaction data that was just created
+ */
+export async function hydrateOptimisticTransaction(
+  accountId: string,
+  transactionId: string,
+  transactionData: Omit<Transaction, 'transactionId' | 'createdAt'>
+): Promise<void> {
+  try {
+    const { getGlobalQueryClient } = await import('./queryClient')
+    const queryClient = getGlobalQueryClient()
+    
+    // Convert transactionData to full Transaction format
+    const now = new Date().toISOString()
+    const optimisticTransaction: Transaction = {
+      ...transactionData,
+      transactionId,
+      createdAt: transactionData.createdAt || now,
+    }
+    
+    // Update single transaction cache
+    queryClient.setQueryData(['transaction', accountId, transactionId], optimisticTransaction)
+    
+    // Update project transactions cache if projectId exists
+    if (transactionData.projectId) {
+      queryClient.setQueryData(['project-transactions', accountId, transactionData.projectId], (old: Transaction[] | undefined) => {
+        if (!old) return [optimisticTransaction]
+        // Check if transaction already exists (shouldn't happen, but be safe)
+        const exists = old.some(tx => tx.transactionId === transactionId)
+        if (exists) {
+          return old.map(tx => tx.transactionId === transactionId ? optimisticTransaction : tx)
+        }
+        return [optimisticTransaction, ...old]
+      })
+    }
+    
+    // Update all transactions cache
+    queryClient.setQueryData(['transactions', accountId], (old: Transaction[] | undefined) => {
+      if (!old) return [optimisticTransaction]
+      const exists = old.some(tx => tx.transactionId === transactionId)
+      if (exists) {
+        return old.map(tx => tx.transactionId === transactionId ? optimisticTransaction : tx)
+      }
+      return [optimisticTransaction, ...old]
+    })
+  } catch (error) {
+    console.warn('Failed to hydrate optimistic transaction into React Query cache:', error)
+    // Don't throw - this is a performance optimization, not critical
+  }
+}
+
+/**
+ * Hydrate optimistic project into React Query cache immediately after creation
+ * This makes the project appear in lists before sync completes
+ * 
+ * @param accountId - Account ID
+ * @param projectId - Optimistic project ID
+ * @param projectData - Project data that was just created
+ */
+export async function hydrateOptimisticProject(
+  accountId: string,
+  projectId: string,
+  projectData: Omit<Project, 'id' | 'createdAt' | 'updatedAt'>
+): Promise<void> {
+  try {
+    const { getGlobalQueryClient } = await import('./queryClient')
+    const queryClient = getGlobalQueryClient()
+    
+    // Convert projectData to full Project format
+    const now = new Date()
+    const optimisticProject: Project = {
+      ...projectData,
+      id: projectId,
+      accountId,
+      createdAt: projectData.createdAt || now,
+      updatedAt: projectData.updatedAt || now,
+    }
+    
+    // Update single project cache
+    queryClient.setQueryData(['project', accountId, projectId], optimisticProject)
+    
+    // Update projects list cache
+    queryClient.setQueryData(['projects', accountId], (old: Project[] | undefined) => {
+      if (!old) return [optimisticProject]
+      // Check if project already exists (shouldn't happen, but be safe)
+      const exists = old.some(p => p.id === projectId)
+      if (exists) {
+        return old.map(p => p.id === projectId ? optimisticProject : p)
+      }
+      return [optimisticProject, ...old]
+    })
+  } catch (error) {
+    console.warn('Failed to hydrate optimistic project into React Query cache:', error)
     // Don't throw - this is a performance optimization, not critical
   }
 }

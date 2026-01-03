@@ -5,6 +5,7 @@ import { ImageUploadService } from '@/services/imageService'
 import ImagePreview from './ui/ImagePreview'
 import { useToast } from '@/components/ui/ToastContext'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
+import { OfflinePrerequisiteBanner, useOfflinePrerequisiteGate } from './ui/OfflinePrerequisiteBanner'
 
 interface TransactionItemFormProps {
   item?: TransactionItemFormData
@@ -17,6 +18,9 @@ interface TransactionItemFormProps {
 }
 
 export default function TransactionItemForm({ item, onSave, onCancel, isEditing = false, onImageFilesChange }: TransactionItemFormProps) {
+  // Check offline prerequisites
+  const { isReady, isBlocked, blockingReason } = useOfflinePrerequisiteGate()
+  
   // Generate a stable temporary ID that doesn't change during component lifetime
   const stableTempId = useMemo(() =>
     item?.id || `temp_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
@@ -143,6 +147,12 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
 
   const handleSubmit = () => {
     if (!validateForm()) return
+    
+    // Block submission if offline prerequisites are not ready
+    if (!isReady) {
+      showError(blockingReason || 'Offline prerequisites not ready. Please sync metadata before saving.')
+      return
+    }
 
     // Include images and files in the form data
     const itemWithImages = {
@@ -193,6 +203,11 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
       </div>
 
       <div className="space-y-4">
+        {/* Offline Prerequisites Banner */}
+        {!isReady && (
+          <OfflinePrerequisiteBanner className="mb-4" />
+        )}
+
         {/* Item Images */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -393,7 +408,8 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
               e.stopPropagation()
               handleSubmit()
             }}
-            className="px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+            disabled={!isReady}
+            className="px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isEditing ? 'Update Item' : 'Add Item'}
           </button>

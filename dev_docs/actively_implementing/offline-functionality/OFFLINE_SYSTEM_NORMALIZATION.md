@@ -3,6 +3,59 @@
 ## Purpose
 This document captures the established offline patterns discovered through code analysis and provides a roadmap for normalizing offline functionality across all entities (items, transactions, projects) in the application.
 
+## Implementation Status
+
+### Phase 0: Offline Invariants & Metadata ✅ **COMPLETE**
+- [x] IndexedDB schema expanded for `budget_categories` and `tax_presets`
+- [x] `offlineMetadataService` with caching and retrieval APIs
+- [x] Background refresh integrated into `budgetCategoriesService` and `taxPresetsService`
+- [x] `useOfflinePrerequisites` hook created
+- [x] Telemetry events implemented (`offlineMetadataCacheWarm`, `offlineMetadataCacheCold`, `offlineMetadataValidationBlocked`)
+
+**Files Created/Modified:**
+- `src/services/offlineStore.ts` - Added budget categories and tax presets stores
+- `src/services/offlineMetadataService.ts` - New service for metadata caching
+- `src/hooks/useOfflinePrerequisites.ts` - New hook for prerequisite checking
+- `src/services/budgetCategoriesService.ts` - Added auto-caching
+- `src/services/taxPresetsService.ts` - Added auto-caching
+
+### Phase 1: Purpose-built Offline Services ✅ **COMPLETE**
+- [x] Create `offlineTransactionService.ts`
+- [x] Create `offlineProjectService.ts`
+- [x] Integrate with `offlineItemService` for child item creation
+
+### Phase 2: Upgrade Unified Orchestrators ✅ **COMPLETE**
+- [x] Update `transactionService` CRUD methods
+- [x] Update `projectService` CRUD methods
+- [x] Add offline-first branching with network gating
+
+### Phase 3: Operation Queue & Conflict Hygiene ✅ **COMPLETE**
+- [x] Extend operation typings for transactions/projects
+- [x] Implement queue executors for transaction/project operations
+- [x] Expand conflict tracking beyond items
+- [x] Add conflict detectors for transactions/projects
+
+### Phase 4: Read Surfaces & React Query Hydration ✅ **COMPLETE**
+- [x] Add hydration helpers for transactions/projects
+- [x] Update detail/edit pages for cache-first reads
+- [x] Update list queries to follow cache-first order
+
+### Phase 5: UI Resilience & Testing ✅ **COMPLETE**
+- [x] Integrate `useOfflinePrerequisites` into forms
+- [x] Add inline banners and disabled states
+- [x] Add automated tests
+- [x] Manual QA checklist
+
+**Files Created/Modified:**
+- `src/components/ui/OfflinePrerequisiteBanner.tsx` - New reusable banner component
+- `src/components/TransactionItemForm.tsx` - Integrated prerequisite checking
+- `src/components/ProjectForm.tsx` - Integrated prerequisite checking
+- `src/components/ui/RetrySyncButton.tsx` - Added metadata rehydration support
+- `src/services/__tests__/offlineTransactionService.test.ts` - Transaction CRUD tests
+- `src/services/__tests__/offlineProjectService.test.ts` - Project CRUD tests
+- `src/services/__tests__/offline-integration-phase5.test.ts` - Integration tests
+- `dev_docs/actively_implementing/offline-functionality/PHASE5_QA_CHECKLIST.md` - Manual QA checklist
+
 ## Current State Analysis
 
 ### ✅ Fully Implemented: Items

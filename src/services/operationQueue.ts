@@ -1,5 +1,16 @@
-import { Operation, CreateItemOperation, UpdateItemOperation, DeleteItemOperation } from '../types/operations'
-import { offlineStore, type DBOperation, type DBItem } from './offlineStore'
+import { 
+  Operation, 
+  CreateItemOperation, 
+  UpdateItemOperation, 
+  DeleteItemOperation,
+  CreateTransactionOperation,
+  UpdateTransactionOperation,
+  DeleteTransactionOperation,
+  CreateProjectOperation,
+  UpdateProjectOperation,
+  DeleteProjectOperation
+} from '../types/operations'
+import { offlineStore, type DBOperation, type DBItem, type DBTransaction, type DBProject } from './offlineStore'
 import { supabase, getCurrentUser } from './supabase'
 import { conflictDetector } from './conflictDetector'
 import {
@@ -236,6 +247,18 @@ class OperationQueue {
           return (operation as UpdateItemOperation).data.accountId
         case 'DELETE_ITEM':
           return (operation as DeleteItemOperation).data.accountId
+        case 'CREATE_TRANSACTION':
+          return (operation as CreateTransactionOperation).data.accountId
+        case 'UPDATE_TRANSACTION':
+          return (operation as UpdateTransactionOperation).data.accountId
+        case 'DELETE_TRANSACTION':
+          return (operation as DeleteTransactionOperation).data.accountId
+        case 'CREATE_PROJECT':
+          return (operation as CreateProjectOperation).data.accountId
+        case 'UPDATE_PROJECT':
+          return (operation as UpdateProjectOperation).data.accountId
+        case 'DELETE_PROJECT':
+          return (operation as DeleteProjectOperation).data.accountId
         default:
           return undefined
       }
@@ -469,33 +492,47 @@ class OperationQueue {
   private async executeOperation(operation: Operation): Promise<boolean> {
     try {
       // Check for conflicts before executing
-      // Conflicts are detected and stored in IndexedDB by conflictDetector.detectConflicts
+      // Conflicts are detected and stored in IndexedDB by conflictDetector
       // The UI (ConflictResolutionView) will load and display them
-      const projectId = await this.resolveProjectId(operation)
-      if (projectId) {
-        const conflicts = await conflictDetector.detectConflicts(projectId)
-        const targetItemId = this.getOperationTargetItemId(operation)
-        const relevantConflicts = targetItemId 
-          ? conflicts.filter(conflict => conflict.id === targetItemId)
+      const accountId = operation.accountId
+      if (accountId) {
+        let conflicts: ConflictItem[] = []
+        
+        // Detect conflicts based on operation type
+        if (operation.type.startsWith('CREATE_ITEM') || operation.type.startsWith('UPDATE_ITEM') || operation.type.startsWith('DELETE_ITEM')) {
+          const projectId = await this.resolveProjectId(operation)
+          if (projectId) {
+            conflicts = await conflictDetector.detectConflicts(projectId)
+          }
+        } else if (operation.type.startsWith('CREATE_TRANSACTION') || operation.type.startsWith('UPDATE_TRANSACTION') || operation.type.startsWith('DELETE_TRANSACTION')) {
+          const projectId = await this.resolveProjectId(operation)
+          conflicts = await conflictDetector.detectTransactionConflicts(accountId, projectId ?? undefined)
+        } else if (operation.type.startsWith('CREATE_PROJECT') || operation.type.startsWith('UPDATE_PROJECT') || operation.type.startsWith('DELETE_PROJECT')) {
+          conflicts = await conflictDetector.detectProjectConflicts(accountId)
+        }
+        
+        const targetEntityId = this.getOperationTargetEntityId(operation)
+        const relevantConflicts = targetEntityId 
+          ? conflicts.filter(conflict => conflict.id === targetEntityId)
           : conflicts
         
         if (this.shouldBlockOperation(operation, conflicts)) {
           console.warn('Conflicts detected for queued operation, delaying execution', {
             operationId: operation.id,
             operationType: operation.type,
-            targetItemId,
-            conflictingItems: relevantConflicts.map(conflict => conflict.id),
+            targetEntityId,
+            conflictingEntities: relevantConflicts.map(conflict => conflict.id),
             totalConflicts: conflicts.length
           })
           // Conflicts are already stored in IndexedDB by conflictDetector
           // UI will surface them via ConflictResolutionView
           return false
-        } else if (conflicts.length > 0 && operation.type === 'UPDATE_ITEM') {
+        } else if (conflicts.length > 0 && (operation.type === 'UPDATE_ITEM' || operation.type === 'UPDATE_TRANSACTION' || operation.type === 'UPDATE_PROJECT')) {
           // Log that UPDATE is proceeding despite conflicts (it will resolve them)
-          console.log('UPDATE_ITEM proceeding despite conflicts - will resolve on sync', {
+          console.log(`${operation.type} proceeding despite conflicts - will resolve on sync`, {
             operationId: operation.id,
-            targetItemId,
-            conflictingItems: relevantConflicts.map(conflict => conflict.id)
+            targetEntityId,
+            conflictingEntities: relevantConflicts.map(conflict => conflict.id)
           })
         }
       }
@@ -507,6 +544,18 @@ class OperationQueue {
           return await this.executeUpdateItem(operation)
         case 'DELETE_ITEM':
           return await this.executeDeleteItem(operation)
+        case 'CREATE_TRANSACTION':
+          return await this.executeCreateTransaction(operation)
+        case 'UPDATE_TRANSACTION':
+          return await this.executeUpdateTransaction(operation)
+        case 'DELETE_TRANSACTION':
+          return await this.executeDeleteTransaction(operation)
+        case 'CREATE_PROJECT':
+          return await this.executeCreateProject(operation)
+        case 'UPDATE_PROJECT':
+          return await this.executeUpdateProject(operation)
+        case 'DELETE_PROJECT':
+          return await this.executeDeleteProject(operation)
         default:
           console.error('Unknown operation type:', operation.type)
           return false
@@ -521,6 +570,12 @@ class OperationQueue {
     switch (operation.type) {
       case 'CREATE_ITEM':
         return (operation as CreateItemOperation).data.projectId
+      case 'CREATE_TRANSACTION':
+        return (operation as CreateTransactionOperation).data.projectId ?? null
+      case 'UPDATE_TRANSACTION':
+      case 'DELETE_TRANSACTION':
+        // Try to get from local transaction
+        return null // Will be resolved via getOperationTargetTransactionId
       default:
         return null
     }
@@ -528,26 +583,41 @@ class OperationQueue {
 
   private async resolveProjectId(operation: Operation): Promise<string | null> {
     const directProjectId = this.getProjectIdFromOperation(operation)
-    if (directProjectId) {
+    if (directProjectId !== null) {
       return directProjectId
     }
 
-    const targetItemId = this.getOperationTargetItemId(operation)
-    if (!targetItemId) {
-      return null
+    // Try to resolve from transaction
+    const targetTransactionId = this.getOperationTargetTransactionId(operation)
+    if (targetTransactionId) {
+      try {
+        const localTransaction = await offlineStore.getTransactionById(targetTransactionId)
+        return localTransaction?.projectId ?? null
+      } catch (error) {
+        console.warn('Failed to resolve projectId from transaction for operation', {
+          operationId: operation.id,
+          targetTransactionId,
+          error
+        })
+      }
     }
 
-    try {
-      const localItem = await offlineStore.getItemById(targetItemId)
-      return localItem?.projectId ?? null
-    } catch (error) {
-      console.warn('Failed to resolve projectId for operation from offline store', {
-        operationId: operation.id,
-        targetItemId,
-        error
-      })
-      return null
+    // Try to resolve from item
+    const targetItemId = this.getOperationTargetItemId(operation)
+    if (targetItemId) {
+      try {
+        const localItem = await offlineStore.getItemById(targetItemId)
+        return localItem?.projectId ?? null
+      } catch (error) {
+        console.warn('Failed to resolve projectId for operation from offline store', {
+          operationId: operation.id,
+          targetItemId,
+          error
+        })
+      }
     }
+
+    return null
   }
 
   private async executeCreateItem(operation: CreateItemOperation): Promise<boolean> {
@@ -665,34 +735,73 @@ class OperationQueue {
     }
   }
 
+  private getOperationTargetEntityId(operation: Operation): string | null {
+    switch (operation.type) {
+      case 'CREATE_ITEM':
+      case 'UPDATE_ITEM':
+      case 'DELETE_ITEM':
+      case 'CREATE_TRANSACTION':
+      case 'UPDATE_TRANSACTION':
+      case 'DELETE_TRANSACTION':
+      case 'CREATE_PROJECT':
+      case 'UPDATE_PROJECT':
+      case 'DELETE_PROJECT':
+        return operation.data.id
+      default:
+        return null
+    }
+  }
+
+  private getOperationTargetTransactionId(operation: Operation): string | null {
+    switch (operation.type) {
+      case 'CREATE_TRANSACTION':
+      case 'UPDATE_TRANSACTION':
+      case 'DELETE_TRANSACTION':
+        return operation.data.id
+      default:
+        return null
+    }
+  }
+
+  private getOperationTargetProjectId(operation: Operation): string | null {
+    switch (operation.type) {
+      case 'CREATE_PROJECT':
+      case 'UPDATE_PROJECT':
+      case 'DELETE_PROJECT':
+        return operation.data.id
+      default:
+        return null
+    }
+  }
+
   private shouldBlockOperation(operation: Operation, conflicts: ConflictItem[]): boolean {
     if (conflicts.length === 0) {
       return false
     }
 
-    // CREATE_ITEM operations cannot conflict until after insertion succeeds
-    if (operation.type === 'CREATE_ITEM') {
+    // CREATE operations cannot conflict until after insertion succeeds
+    if (operation.type === 'CREATE_ITEM' || operation.type === 'CREATE_TRANSACTION' || operation.type === 'CREATE_PROJECT') {
       return false
     }
 
-    // UPDATE_ITEM operations should NOT be blocked by conflicts on the target item
+    // UPDATE operations should NOT be blocked by conflicts on the target entity
     // because the UPDATE will sync the local state to the server, resolving the conflict
     // Blocking UPDATE operations creates an infinite loop where:
-    // 1. Local item has optimistic updates (different from server)
+    // 1. Local entity has optimistic updates (different from server)
     // 2. Conflict detection flags this as a conflict
     // 3. UPDATE operation is blocked by the conflict
     // 4. UPDATE can't execute to resolve the conflict → infinite loop
-    if (operation.type === 'UPDATE_ITEM') {
+    if (operation.type === 'UPDATE_ITEM' || operation.type === 'UPDATE_TRANSACTION' || operation.type === 'UPDATE_PROJECT') {
       return false
     }
 
-    const targetItemId = this.getOperationTargetItemId(operation)
-    if (!targetItemId) {
+    const targetEntityId = this.getOperationTargetEntityId(operation)
+    if (!targetEntityId) {
       return false
     }
 
     // Only block DELETE operations if there are conflicts (user should resolve conflicts before deleting)
-    return conflicts.some(conflict => conflict.id === targetItemId)
+    return conflicts.some(conflict => conflict.id === targetEntityId)
   }
 
   private async executeUpdateItem(operation: UpdateItemOperation): Promise<boolean> {
@@ -841,6 +950,374 @@ class OperationQueue {
       return true
     } catch (error) {
       console.error('Failed to delete item:', error)
+      return false
+    }
+  }
+
+  private async executeCreateTransaction(operation: CreateTransactionOperation): Promise<boolean> {
+    const { data, accountId, updatedBy, version } = operation
+
+    try {
+      // Get the full transaction data from local store
+      const localTransaction = await offlineStore.getTransactionById(data.id)
+      
+      if (!localTransaction) {
+        console.error(`Cannot create transaction: local transaction ${data.id} not found in offline store`)
+        return false
+      }
+
+      // Create on server using the FULL transaction data from local store
+      const { data: serverTransaction, error } = await supabase
+        .from('transactions')
+        .insert({
+          transaction_id: data.id,
+          account_id: accountId,
+          project_id: localTransaction.projectId ?? data.projectId ?? null,
+          transaction_date: localTransaction.transactionDate,
+          source: localTransaction.source ?? '',
+          transaction_type: localTransaction.transactionType ?? '',
+          payment_method: localTransaction.paymentMethod ?? '',
+          amount: localTransaction.amount ?? '0.00',
+          budget_category: localTransaction.budgetCategory ?? null,
+          category_id: localTransaction.categoryId ?? null,
+          notes: localTransaction.notes ?? null,
+          receipt_emailed: localTransaction.receiptEmailed ?? false,
+          status: localTransaction.status ?? null,
+          reimbursement_type: localTransaction.reimbursementType ?? null,
+          trigger_event: localTransaction.triggerEvent ?? null,
+          tax_rate_preset: localTransaction.taxRatePreset ?? null,
+          tax_rate_pct: localTransaction.taxRatePct ?? null,
+          subtotal: localTransaction.subtotal ?? null,
+          needs_review: localTransaction.needsReview ?? null,
+          sum_item_purchase_prices: localTransaction.sumItemPurchasePrices ?? null,
+          item_ids: localTransaction.itemIds ?? null,
+          created_at: localTransaction.createdAt || new Date().toISOString(),
+          created_by: localTransaction.createdBy || updatedBy,
+          version: version
+        })
+        .select()
+        .single()
+
+      if (error) throw error
+
+      // Update local store with server response
+      const cachedAt = new Date().toISOString()
+      const dbTransaction: DBTransaction = {
+        transactionId: serverTransaction.transaction_id || data.id,
+        accountId,
+        projectId: serverTransaction.project_id ?? localTransaction.projectId ?? null,
+        transactionDate: serverTransaction.transaction_date ?? localTransaction.transactionDate,
+        source: serverTransaction.source ?? localTransaction.source ?? '',
+        transactionType: serverTransaction.transaction_type ?? localTransaction.transactionType ?? '',
+        paymentMethod: serverTransaction.payment_method ?? localTransaction.paymentMethod ?? '',
+        amount: serverTransaction.amount ?? localTransaction.amount ?? '0.00',
+        budgetCategory: serverTransaction.budget_category ?? localTransaction.budgetCategory,
+        categoryId: serverTransaction.category_id ?? localTransaction.categoryId,
+        notes: serverTransaction.notes ?? localTransaction.notes,
+        receiptEmailed: serverTransaction.receipt_emailed ?? localTransaction.receiptEmailed ?? false,
+        createdAt: serverTransaction.created_at ?? localTransaction.createdAt ?? cachedAt,
+        createdBy: serverTransaction.created_by ?? localTransaction.createdBy ?? updatedBy,
+        status: serverTransaction.status ?? localTransaction.status,
+        reimbursementType: serverTransaction.reimbursement_type ?? localTransaction.reimbursementType,
+        triggerEvent: serverTransaction.trigger_event ?? localTransaction.triggerEvent,
+        taxRatePreset: serverTransaction.tax_rate_preset ?? localTransaction.taxRatePreset,
+        taxRatePct: serverTransaction.tax_rate_pct ?? localTransaction.taxRatePct,
+        subtotal: serverTransaction.subtotal ?? localTransaction.subtotal,
+        needsReview: serverTransaction.needs_review ?? localTransaction.needsReview,
+        sumItemPurchasePrices: serverTransaction.sum_item_purchase_prices ?? localTransaction.sumItemPurchasePrices,
+        itemIds: serverTransaction.item_ids ?? localTransaction.itemIds,
+        version: version,
+        last_synced_at: cachedAt
+      }
+      await offlineStore.saveTransactions([dbTransaction])
+
+      return true
+    } catch (error) {
+      console.error('Failed to create transaction on server:', error)
+      return false
+    }
+  }
+
+  private async executeUpdateTransaction(operation: UpdateTransactionOperation): Promise<boolean> {
+    const { data, accountId, updatedBy, version } = operation
+
+    try {
+      // Get the full transaction data from local store
+      const localTransaction = await offlineStore.getTransactionById(data.id)
+      
+      if (!localTransaction) {
+        console.error(`Cannot update transaction: local transaction ${data.id} not found in offline store`)
+        return false
+      }
+
+      // Merge the operation updates into the full local transaction
+      const updatedLocalTransaction: DBTransaction = {
+        ...localTransaction,
+        ...(data.updates.amount !== undefined && { amount: data.updates.amount }),
+        ...(data.updates.categoryId !== undefined && { categoryId: data.updates.categoryId }),
+        ...(data.updates.taxRatePreset !== undefined && { taxRatePreset: data.updates.taxRatePreset }),
+        ...(data.updates.status !== undefined && { status: data.updates.status as 'pending' | 'completed' | 'canceled' }),
+        version: version
+      }
+
+      // Update on server using the FULL transaction data from local store
+      const { data: serverTransaction, error } = await supabase
+        .from('transactions')
+        .update({
+          project_id: updatedLocalTransaction.projectId ?? null,
+          transaction_date: updatedLocalTransaction.transactionDate,
+          source: updatedLocalTransaction.source ?? '',
+          transaction_type: updatedLocalTransaction.transactionType ?? '',
+          payment_method: updatedLocalTransaction.paymentMethod ?? '',
+          amount: updatedLocalTransaction.amount ?? '0.00',
+          budget_category: updatedLocalTransaction.budgetCategory ?? null,
+          category_id: updatedLocalTransaction.categoryId ?? null,
+          notes: updatedLocalTransaction.notes ?? null,
+          receipt_emailed: updatedLocalTransaction.receiptEmailed ?? false,
+          status: updatedLocalTransaction.status ?? null,
+          reimbursement_type: updatedLocalTransaction.reimbursementType ?? null,
+          trigger_event: updatedLocalTransaction.triggerEvent ?? null,
+          tax_rate_preset: updatedLocalTransaction.taxRatePreset ?? null,
+          tax_rate_pct: updatedLocalTransaction.taxRatePct ?? null,
+          subtotal: updatedLocalTransaction.subtotal ?? null,
+          needs_review: updatedLocalTransaction.needsReview ?? null,
+          sum_item_purchase_prices: updatedLocalTransaction.sumItemPurchasePrices ?? null,
+          item_ids: updatedLocalTransaction.itemIds ?? null,
+          version: version
+        })
+        .eq('transaction_id', data.id)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      // Update local store with server response
+      const cachedAt = new Date().toISOString()
+      const dbTransaction: DBTransaction = {
+        transactionId: serverTransaction.transaction_id || data.id,
+        accountId,
+        projectId: serverTransaction.project_id ?? updatedLocalTransaction.projectId ?? null,
+        transactionDate: serverTransaction.transaction_date ?? updatedLocalTransaction.transactionDate,
+        source: serverTransaction.source ?? updatedLocalTransaction.source ?? '',
+        transactionType: serverTransaction.transaction_type ?? updatedLocalTransaction.transactionType ?? '',
+        paymentMethod: serverTransaction.payment_method ?? updatedLocalTransaction.paymentMethod ?? '',
+        amount: serverTransaction.amount ?? updatedLocalTransaction.amount ?? '0.00',
+        budgetCategory: serverTransaction.budget_category ?? updatedLocalTransaction.budgetCategory,
+        categoryId: serverTransaction.category_id ?? updatedLocalTransaction.categoryId,
+        notes: serverTransaction.notes ?? updatedLocalTransaction.notes,
+        receiptEmailed: serverTransaction.receipt_emailed ?? updatedLocalTransaction.receiptEmailed ?? false,
+        createdAt: serverTransaction.created_at ?? updatedLocalTransaction.createdAt ?? cachedAt,
+        createdBy: serverTransaction.created_by ?? updatedLocalTransaction.createdBy ?? updatedBy,
+        status: serverTransaction.status ?? updatedLocalTransaction.status,
+        reimbursementType: serverTransaction.reimbursement_type ?? updatedLocalTransaction.reimbursementType,
+        triggerEvent: serverTransaction.trigger_event ?? updatedLocalTransaction.triggerEvent,
+        taxRatePreset: serverTransaction.tax_rate_preset ?? updatedLocalTransaction.taxRatePreset,
+        taxRatePct: serverTransaction.tax_rate_pct ?? updatedLocalTransaction.taxRatePct,
+        subtotal: serverTransaction.subtotal ?? updatedLocalTransaction.subtotal,
+        needsReview: serverTransaction.needs_review ?? updatedLocalTransaction.needsReview,
+        sumItemPurchasePrices: serverTransaction.sum_item_purchase_prices ?? updatedLocalTransaction.sumItemPurchasePrices,
+        itemIds: serverTransaction.item_ids ?? updatedLocalTransaction.itemIds,
+        version: version,
+        last_synced_at: cachedAt
+      }
+      await offlineStore.saveTransactions([dbTransaction])
+
+      // Clear any conflicts for this transaction
+      try {
+        if (accountId) {
+          await offlineStore.deleteConflictsForTransactions(accountId, [data.id])
+          console.log('Cleared conflicts for transaction after successful UPDATE', { transactionId: data.id })
+        }
+      } catch (conflictClearError) {
+        console.warn('Failed to clear conflicts after UPDATE (non-fatal)', {
+          transactionId: data.id,
+          error: conflictClearError
+        })
+      }
+
+      return true
+    } catch (error) {
+      console.error('Failed to update transaction:', error)
+      return false
+    }
+  }
+
+  private async executeDeleteTransaction(operation: DeleteTransactionOperation): Promise<boolean> {
+    const { data, accountId } = operation
+
+    try {
+      // Delete from server
+      const { error } = await supabase
+        .from('transactions')
+        .delete()
+        .eq('transaction_id', data.id)
+
+      if (error) throw error
+
+      return true
+    } catch (error) {
+      console.error('Failed to delete transaction:', error)
+      return false
+    }
+  }
+
+  private async executeCreateProject(operation: CreateProjectOperation): Promise<boolean> {
+    const { data, accountId, updatedBy, version } = operation
+
+    try {
+      // Get the full project data from local store
+      const localProject = await offlineStore.getProjectById(data.id)
+      
+      if (!localProject) {
+        console.error(`Cannot create project: local project ${data.id} not found in offline store`)
+        return false
+      }
+
+      // Create on server using the FULL project data from local store
+      const { data: serverProject, error } = await supabase
+        .from('projects')
+        .insert({
+          id: data.id,
+          account_id: accountId,
+          name: localProject.name,
+          description: localProject.description ?? '',
+          client_name: localProject.clientName ?? '',
+          budget: localProject.budget ?? null,
+          design_fee: localProject.designFee ?? null,
+          default_category_id: localProject.defaultCategoryId ?? null,
+          main_image_url: localProject.mainImageUrl ?? null,
+          created_at: localProject.createdAt || new Date().toISOString(),
+          updated_at: localProject.updatedAt || new Date().toISOString(),
+          created_by: localProject.createdBy || updatedBy,
+          version: version
+        })
+        .select()
+        .single()
+
+      if (error) throw error
+
+      // Update local store with server response
+      const cachedAt = new Date().toISOString()
+      const dbProject: DBProject = {
+        id: serverProject.id || data.id,
+        name: serverProject.name ?? localProject.name,
+        description: serverProject.description ?? localProject.description ?? '',
+        clientName: serverProject.client_name ?? localProject.clientName ?? '',
+        budget: serverProject.budget ?? localProject.budget,
+        designFee: serverProject.design_fee ?? localProject.designFee,
+        defaultCategoryId: serverProject.default_category_id ?? localProject.defaultCategoryId,
+        mainImageUrl: serverProject.main_image_url ?? localProject.mainImageUrl,
+        createdAt: serverProject.created_at ?? localProject.createdAt ?? cachedAt,
+        updatedAt: serverProject.updated_at ?? localProject.updatedAt ?? cachedAt,
+        createdBy: serverProject.created_by ?? localProject.createdBy ?? updatedBy,
+        version: version,
+        last_synced_at: cachedAt
+      }
+      await offlineStore.saveProjects([dbProject])
+
+      return true
+    } catch (error) {
+      console.error('Failed to create project on server:', error)
+      return false
+    }
+  }
+
+  private async executeUpdateProject(operation: UpdateProjectOperation): Promise<boolean> {
+    const { data, accountId, updatedBy, version } = operation
+
+    try {
+      // Get the full project data from local store
+      const localProject = await offlineStore.getProjectById(data.id)
+      
+      if (!localProject) {
+        console.error(`Cannot update project: local project ${data.id} not found in offline store`)
+        return false
+      }
+
+      // Merge the operation updates into the full local project
+      const updatedLocalProject: DBProject = {
+        ...localProject,
+        ...(data.updates.name !== undefined && { name: data.updates.name }),
+        ...(data.updates.budget !== undefined && { budget: data.updates.budget }),
+        ...(data.updates.description !== undefined && { description: data.updates.description }),
+        updatedAt: new Date().toISOString(),
+        version: version
+      }
+
+      // Update on server using the FULL project data from local store
+      const { data: serverProject, error } = await supabase
+        .from('projects')
+        .update({
+          name: updatedLocalProject.name,
+          description: updatedLocalProject.description ?? '',
+          client_name: updatedLocalProject.clientName ?? '',
+          budget: updatedLocalProject.budget ?? null,
+          design_fee: updatedLocalProject.designFee ?? null,
+          default_category_id: updatedLocalProject.defaultCategoryId ?? null,
+          main_image_url: updatedLocalProject.mainImageUrl ?? null,
+          updated_at: updatedLocalProject.updatedAt || new Date().toISOString(),
+          version: version
+        })
+        .eq('id', data.id)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      // Update local store with server response
+      const cachedAt = new Date().toISOString()
+      const dbProject: DBProject = {
+        id: serverProject.id || data.id,
+        name: serverProject.name ?? updatedLocalProject.name,
+        description: serverProject.description ?? updatedLocalProject.description ?? '',
+        clientName: serverProject.client_name ?? updatedLocalProject.clientName ?? '',
+        budget: serverProject.budget ?? updatedLocalProject.budget,
+        designFee: serverProject.design_fee ?? updatedLocalProject.designFee,
+        defaultCategoryId: serverProject.default_category_id ?? updatedLocalProject.defaultCategoryId,
+        mainImageUrl: serverProject.main_image_url ?? updatedLocalProject.mainImageUrl,
+        createdAt: serverProject.created_at ?? updatedLocalProject.createdAt ?? cachedAt,
+        updatedAt: serverProject.updated_at ?? updatedLocalProject.updatedAt ?? cachedAt,
+        createdBy: serverProject.created_by ?? updatedLocalProject.createdBy ?? updatedBy,
+        version: version,
+        last_synced_at: cachedAt
+      }
+      await offlineStore.saveProjects([dbProject])
+
+      // Clear any conflicts for this project
+      try {
+        if (accountId) {
+          await offlineStore.deleteConflictsForProjects(accountId, [data.id])
+          console.log('Cleared conflicts for project after successful UPDATE', { projectId: data.id })
+        }
+      } catch (conflictClearError) {
+        console.warn('Failed to clear conflicts after UPDATE (non-fatal)', {
+          projectId: data.id,
+          error: conflictClearError
+        })
+      }
+
+      return true
+    } catch (error) {
+      console.error('Failed to update project:', error)
+      return false
+    }
+  }
+
+  private async executeDeleteProject(operation: DeleteProjectOperation): Promise<boolean> {
+    const { data } = operation
+
+    try {
+      // Delete from server
+      const { error } = await supabase
+        .from('projects')
+        .delete()
+        .eq('id', data.id)
+
+      if (error) throw error
+
+      return true
+    } catch (error) {
+      console.error('Failed to delete project:', error)
       return false
     }
   }

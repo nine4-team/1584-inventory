@@ -4,6 +4,8 @@ import { Button } from './Button'
 import { operationQueue } from '@/services/operationQueue'
 import { triggerManualSync } from '@/services/serviceWorker'
 import { requestForegroundSync } from '@/services/syncScheduler'
+import { useOfflinePrerequisites } from '@/hooks/useOfflinePrerequisites'
+import { useNetworkState } from '@/hooks/useNetworkState'
 import { clsx } from 'clsx'
 
 interface RetrySyncButtonProps {
@@ -21,6 +23,8 @@ export function RetrySyncButton({
   label = 'Retry sync',
   showPendingCount = true
 }: RetrySyncButtonProps) {
+  const { isOnline } = useNetworkState()
+  const { hydrateNow, status } = useOfflinePrerequisites()
   const initialSnapshot = operationQueue.getSnapshot()
   const [pendingCount, setPendingCount] = useState(initialSnapshot.length)
   const [isProcessing, setIsProcessing] = useState(false)
@@ -51,15 +55,32 @@ export function RetrySyncButton({
     setError(null)
 
     try {
-      await triggerManualSync()
-    } catch (manualError) {
-      console.warn('Manual sync trigger failed', manualError)
-    }
+      // If online and metadata caches are cold, hydrate them first
+      if (isOnline && (status === 'blocked' || status === 'warming')) {
+        try {
+          await hydrateNow()
+          console.log('[RetrySyncButton] Metadata caches hydrated')
+        } catch (hydrateError) {
+          console.warn('[RetrySyncButton] Metadata hydration failed:', hydrateError)
+          // Don't fail the whole sync if metadata hydration fails
+        }
+      }
 
-    try {
-      await requestForegroundSync('manual')
-    } catch (foregroundError) {
-      console.warn('Foreground sync request failed', foregroundError)
+      // Trigger operation queue sync
+      try {
+        await triggerManualSync()
+      } catch (manualError) {
+        console.warn('[RetrySyncButton] Manual sync trigger failed', manualError)
+      }
+
+      try {
+        await requestForegroundSync('manual')
+      } catch (foregroundError) {
+        console.warn('[RetrySyncButton] Foreground sync request failed', foregroundError)
+        setError('Retry failed — please check your connection and try again.')
+      }
+    } catch (error) {
+      console.error('[RetrySyncButton] Unexpected error during retry:', error)
       setError('Retry failed — please check your connection and try again.')
     } finally {
       setIsProcessing(false)

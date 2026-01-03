@@ -1,5 +1,7 @@
 import { DEFAULT_TAX_PRESETS, TaxPreset } from '@/constants/taxPresets'
 import { getAccountPresets, upsertAccountPresets } from './accountPresetsService'
+import { cacheTaxPresetsOffline } from './offlineMetadataService'
+import { isNetworkOnline } from './networkStatusService'
 
 /**
  * Get tax presets from Postgres for an account, falling back to defaults if not found
@@ -10,7 +12,17 @@ export async function getTaxPresets(accountId: string): Promise<TaxPreset[]> {
     const ap = await getAccountPresets(accountId)
     const migrated: any = ap?.presets?.tax_presets
     if (Array.isArray(migrated) && migrated.length > 0) {
-      return migrated as TaxPreset[]
+      const presets = migrated as TaxPreset[]
+
+      // Background cache refresh when online
+      if (isNetworkOnline()) {
+        cacheTaxPresetsOffline(accountId).catch((error) => {
+          // Don't fail the request if caching fails
+          console.warn('[taxPresetsService] Background cache refresh failed:', error)
+        })
+      }
+
+      return presets
     }
 
     // If missing, initialize with defaults in account_presets and return defaults
@@ -19,7 +31,17 @@ export async function getTaxPresets(accountId: string): Promise<TaxPreset[]> {
     } catch (err) {
       console.warn('Failed to initialize tax_presets in account_presets:', err)
     }
-    return DEFAULT_TAX_PRESETS
+    const presets = DEFAULT_TAX_PRESETS
+
+    // Background cache refresh when online
+    if (isNetworkOnline()) {
+      cacheTaxPresetsOffline(accountId).catch((error) => {
+        // Don't fail the request if caching fails
+        console.warn('[taxPresetsService] Background cache refresh failed:', error)
+      })
+    }
+
+    return presets
   } catch (error) {
     console.error('Error fetching tax presets from Postgres:', error)
     // Fallback to defaults on error
@@ -62,6 +84,14 @@ export async function updateTaxPresets(accountId: string, presets: TaxPreset[]):
     // Persist exclusively to the canonical account_presets table
     await upsertAccountPresets(accountId, { presets: { tax_presets: presets } })
     console.log('Tax presets updated successfully (account_presets)')
+
+    // Update offline cache when online
+    if (isNetworkOnline()) {
+      cacheTaxPresetsOffline(accountId).catch((error) => {
+        // Don't fail the update if caching fails
+        console.warn('[taxPresetsService] Failed to update offline cache:', error)
+      })
+    }
   } catch (error) {
     console.error('Error updating tax presets:', error)
     throw error
