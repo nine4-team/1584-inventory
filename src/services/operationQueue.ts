@@ -436,32 +436,10 @@ class OperationQueue {
         // Process next operation
         setTimeout(() => this.processQueue(), 100)
       } else {
-        // Check for conflicts before retrying
-        // Conflicts are detected and stored in IndexedDB by conflictDetector.detectConflicts
-        // The UI (ConflictResolutionView) will load and display them
-        const projectId = await this.resolveProjectId(operation)
-        if (projectId) {
-          const conflicts = await conflictDetector.detectConflicts(projectId)
-          if (this.shouldBlockOperation(operation, conflicts)) {
-            const targetItemId = this.getOperationTargetItemId(operation)
-            const blockingConflicts = conflicts.filter(conflict => conflict.id === targetItemId)
-            console.warn('Conflicts detected for operation, marking as blocked', {
-              operationId: operation.id,
-              conflictingItems: blockingConflicts.map(conflict => conflict.id)
-            })
-            operation.lastError = targetItemId
-              ? `Conflicts detected for item ${targetItemId}`
-              : 'Conflicts detected - please resolve before retrying'
-            operation.retryCount = 5 // Mark as permanently failed due to conflicts
-            await this.persistQueue()
-            this.emitQueueChange() // Notify UI that queue state changed
-            // Don't process next operation - let UI handle conflict resolution
-            this.isProcessing = false
-            return
-          }
-        }
-
         // Mark for retry with exponential backoff
+        // Note: Conflict checking is done BEFORE execution (in executeOperation),
+        // so we don't need to check again here. If conflicts were blocking,
+        // executeOperation would have returned false before attempting execution.
         operation.retryCount++
         operation.lastError = 'Sync failed'
 
@@ -496,14 +474,29 @@ class OperationQueue {
       const projectId = await this.resolveProjectId(operation)
       if (projectId) {
         const conflicts = await conflictDetector.detectConflicts(projectId)
+        const targetItemId = this.getOperationTargetItemId(operation)
+        const relevantConflicts = targetItemId 
+          ? conflicts.filter(conflict => conflict.id === targetItemId)
+          : conflicts
+        
         if (this.shouldBlockOperation(operation, conflicts)) {
           console.warn('Conflicts detected for queued operation, delaying execution', {
             operationId: operation.id,
-            conflictingItems: conflicts.map(conflict => conflict.id)
+            operationType: operation.type,
+            targetItemId,
+            conflictingItems: relevantConflicts.map(conflict => conflict.id),
+            totalConflicts: conflicts.length
           })
           // Conflicts are already stored in IndexedDB by conflictDetector
           // UI will surface them via ConflictResolutionView
           return false
+        } else if (conflicts.length > 0 && operation.type === 'UPDATE_ITEM') {
+          // Log that UPDATE is proceeding despite conflicts (it will resolve them)
+          console.log('UPDATE_ITEM proceeding despite conflicts - will resolve on sync', {
+            operationId: operation.id,
+            targetItemId,
+            conflictingItems: relevantConflicts.map(conflict => conflict.id)
+          })
         }
       }
 
@@ -682,11 +675,23 @@ class OperationQueue {
       return false
     }
 
+    // UPDATE_ITEM operations should NOT be blocked by conflicts on the target item
+    // because the UPDATE will sync the local state to the server, resolving the conflict
+    // Blocking UPDATE operations creates an infinite loop where:
+    // 1. Local item has optimistic updates (different from server)
+    // 2. Conflict detection flags this as a conflict
+    // 3. UPDATE operation is blocked by the conflict
+    // 4. UPDATE can't execute to resolve the conflict → infinite loop
+    if (operation.type === 'UPDATE_ITEM') {
+      return false
+    }
+
     const targetItemId = this.getOperationTargetItemId(operation)
     if (!targetItemId) {
       return false
     }
 
+    // Only block DELETE operations if there are conflicts (user should resolve conflicts before deleting)
     return conflicts.some(conflict => conflict.id === targetItemId)
   }
 
@@ -795,6 +800,21 @@ class OperationQueue {
         last_synced_at: cachedAt
       }
       await offlineStore.saveItems([dbItem])
+
+      // Clear any conflicts for this item since the UPDATE successfully synced local state to server
+      // This resolves conflicts that were detected before the UPDATE executed
+      try {
+        if (accountId) {
+          await offlineStore.deleteConflictsForItems(accountId, [data.id])
+          console.log('Cleared conflicts for item after successful UPDATE', { itemId: data.id })
+        }
+      } catch (conflictClearError) {
+        // Non-fatal: log but don't fail the operation
+        console.warn('Failed to clear conflicts after UPDATE (non-fatal)', {
+          itemId: data.id,
+          error: conflictClearError
+        })
+      }
 
       return true
     } catch (error) {
