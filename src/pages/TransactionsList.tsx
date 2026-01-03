@@ -10,6 +10,8 @@ import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, CLIENT_OWES_COMPANY
 import { useAccount } from '@/contexts/AccountContext'
 import { projectTransactionDetail, projectTransactionImport, projectTransactionNew } from '@/utils/routes'
 import { budgetCategoriesService } from '@/services/budgetCategoriesService'
+import { hydrateProjectTransactionsCache } from '@/utils/hydrationHelpers'
+import { getGlobalQueryClient } from '@/utils/queryClient'
 
 // Canonical transaction title for display only
 const getCanonicalTransactionTitle = (transaction: TransactionType): string => {
@@ -110,9 +112,29 @@ export default function TransactionsList({ projectId: propProjectId, transaction
       // Only load if transactions were not passed in props
       if (!propTransactions) {
         try {
-          const data = await transactionService.getTransactions(currentAccountId, projectId)
-          setTransactions(data)
-          setupSubscription(data)
+          // First, try to hydrate from offlineStore to React Query cache
+          // This ensures optimistic transactions created offline are available
+          try {
+            await hydrateProjectTransactionsCache(getGlobalQueryClient(), currentAccountId, projectId)
+          } catch (error) {
+            console.warn('Failed to hydrate project transactions cache (non-fatal):', error)
+          }
+
+          // Check React Query cache first (for optimistic transactions created offline)
+          const queryClient = getGlobalQueryClient()
+          const cachedTransactions = queryClient.getQueryData<Transaction[]>(['project-transactions', currentAccountId, projectId])
+          
+          let transactionData: Transaction[] = []
+          if (cachedTransactions && cachedTransactions.length > 0) {
+            console.log('✅ Transactions found in React Query cache:', cachedTransactions.length)
+            transactionData = cachedTransactions
+          } else {
+            // If not in cache, fetch from service (which will check cache/offlineStore/network)
+            transactionData = await transactionService.getTransactions(currentAccountId, projectId)
+          }
+          
+          setTransactions(transactionData)
+          setupSubscription(transactionData)
         } catch (error) {
           console.error('Error loading transactions:', error)
           setTransactions([])

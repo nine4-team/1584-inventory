@@ -12,6 +12,8 @@ import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import { useAccount } from '@/contexts/AccountContext'
 import CategorySelect from '@/components/CategorySelect'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
+import { hydrateTransactionCache } from '@/utils/hydrationHelpers'
+import { getGlobalQueryClient } from '@/utils/queryClient'
 
 export default function EditBusinessInventoryTransaction() {
   const { projectId, transactionId } = useParams<{ projectId: string; transactionId: string }>()
@@ -114,10 +116,31 @@ export default function EditBusinessInventoryTransaction() {
       try {
         // Handle 'null' string placeholder for business inventory transactions (projectId is null)
         const actualProjectId = projectId === 'null' ? '' : (projectId || '')
-        const [projectsData, transactionData] = await Promise.all([
-          projectService.getProjects(currentAccountId),
-          transactionService.getTransaction(currentAccountId, actualProjectId, transactionId)
-        ])
+        
+        // First, try to hydrate from offlineStore to React Query cache
+        // This ensures optimistic transactions created offline are available
+        try {
+          await hydrateTransactionCache(getGlobalQueryClient(), currentAccountId, transactionId)
+        } catch (error) {
+          console.warn('Failed to hydrate transaction cache (non-fatal):', error)
+        }
+
+        // Check React Query cache first (for optimistic transactions created offline)
+        const queryClient = getGlobalQueryClient()
+        const cachedTransaction = queryClient.getQueryData<Transaction>(['transaction', currentAccountId, transactionId])
+        
+        let transactionData: Transaction | null = null
+        if (cachedTransaction) {
+          console.log('✅ Transaction found in React Query cache:', cachedTransaction.transactionId)
+          transactionData = cachedTransaction
+        }
+
+        // If not in cache, fetch from service (which will check cache/offlineStore/network)
+        if (!transactionData) {
+          transactionData = await transactionService.getTransaction(currentAccountId, actualProjectId, transactionId)
+        }
+
+        const projectsData = await projectService.getProjects(currentAccountId)
 
         setProjects(projectsData)
 

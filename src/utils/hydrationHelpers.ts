@@ -209,25 +209,27 @@ export async function hydrateProjectCache(
     await offlineStore.init()
     const cachedProject = await offlineStore.getProjectById(projectId)
     if (cachedProject) {
-      // Convert DBProject to Project format using projectService converter
-      const project = projectService._convertProjectFromDb({
+      // Convert DBProject to Project format - use all fields from cached project
+      const project: Project = {
         id: cachedProject.id,
-        account_id: accountId,
+        accountId: cachedProject.accountId,
         name: cachedProject.name,
-        description: cachedProject.description,
-        client_name: cachedProject.clientName,
+        description: cachedProject.description || '',
+        clientName: cachedProject.clientName || '',
         budget: cachedProject.budget,
-        design_fee: cachedProject.designFee,
-        main_image_url: cachedProject.mainImageUrl,
-        created_at: cachedProject.createdAt,
-        updated_at: cachedProject.updatedAt,
-        created_by: cachedProject.createdBy,
-        settings: undefined,
-        metadata: undefined,
-        item_count: 0,
-        transaction_count: 0,
-        total_value: 0
-      })
+        designFee: cachedProject.designFee,
+        budgetCategories: cachedProject.budgetCategories,
+        defaultCategoryId: cachedProject.defaultCategoryId || undefined,
+        mainImageUrl: cachedProject.mainImageUrl,
+        createdAt: new Date(cachedProject.createdAt),
+        updatedAt: new Date(cachedProject.updatedAt),
+        createdBy: cachedProject.createdBy || '',
+        settings: cachedProject.settings || undefined,
+        metadata: cachedProject.metadata || undefined,
+        itemCount: cachedProject.itemCount || 0,
+        transactionCount: cachedProject.transactionCount || 0,
+        totalValue: cachedProject.totalValue || 0
+      }
       // Prime the React Query cache
       queryClient.setQueryData(['project', accountId, projectId], project)
     }
@@ -335,5 +337,93 @@ export async function hydrateOptimisticProject(
   } catch (error) {
     console.warn('Failed to hydrate optimistic project into React Query cache:', error)
     // Don't throw - this is a performance optimization, not critical
+  }
+}
+
+/**
+ * Hydrate React Query cache for all projects from offlineStore
+ * This should be called before rendering project lists to prevent empty state flashes
+ */
+export async function hydrateProjectsListCache(
+  queryClient: QueryClient,
+  accountId: string
+): Promise<void> {
+  try {
+    await offlineStore.init()
+    const cachedProjects = await offlineStore.getProjects()
+    const accountProjects = cachedProjects
+      .filter(project => project.accountId === accountId)
+      .map(cachedProject => {
+        // Convert DBProject to Project format
+        return {
+          id: cachedProject.id,
+          accountId: cachedProject.accountId,
+          name: cachedProject.name,
+          description: cachedProject.description || '',
+          clientName: cachedProject.clientName || '',
+          budget: cachedProject.budget,
+          designFee: cachedProject.designFee,
+          budgetCategories: cachedProject.budgetCategories,
+          defaultCategoryId: cachedProject.defaultCategoryId || undefined,
+          mainImageUrl: cachedProject.mainImageUrl,
+          createdAt: new Date(cachedProject.createdAt),
+          updatedAt: new Date(cachedProject.updatedAt),
+          createdBy: cachedProject.createdBy || '',
+          settings: cachedProject.settings || undefined,
+          metadata: cachedProject.metadata || undefined,
+          itemCount: cachedProject.itemCount || 0,
+          transactionCount: cachedProject.transactionCount || 0,
+          totalValue: cachedProject.totalValue || 0
+        } as Project
+      })
+    
+    if (accountProjects.length > 0) {
+      // Prime the React Query cache
+      queryClient.setQueryData(['projects', accountId], accountProjects)
+    }
+  } catch (error) {
+    console.warn('Failed to hydrate projects list cache:', error)
+  }
+}
+
+/**
+ * Hydrate React Query cache for project transactions from offlineStore
+ * This should be called before rendering transaction lists to prevent empty state flashes
+ */
+export async function hydrateProjectTransactionsCache(
+  queryClient: QueryClient,
+  accountId: string,
+  projectId: string
+): Promise<void> {
+  try {
+    await offlineStore.init()
+    const cachedTransactions = await offlineStore.getTransactions()
+    const projectTxIds = cachedTransactions
+      .filter(tx => tx.accountId === accountId && tx.projectId === projectId)
+      .map(tx => tx.transactionId)
+    
+    if (projectTxIds.length === 0) return
+    
+    // Convert each cached transaction using the service helper
+    const { transactionService } = await import('../services/inventoryService')
+    const transactions: Transaction[] = []
+    
+    for (const txId of projectTxIds) {
+      try {
+        const { transaction } = await transactionService._getTransactionByIdOffline(accountId, txId)
+        if (transaction) {
+          transactions.push(transaction)
+        }
+      } catch (error) {
+        console.warn(`Failed to convert cached transaction ${txId}:`, error)
+      }
+    }
+    
+    if (transactions.length > 0) {
+      // Prime the React Query cache
+      queryClient.setQueryData(['project-transactions', accountId, projectId], transactions)
+    }
+  } catch (error) {
+    console.warn('Failed to hydrate project transactions cache:', error)
   }
 }

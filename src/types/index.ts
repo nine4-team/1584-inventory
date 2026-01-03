@@ -69,6 +69,7 @@ export interface Invitation {
 
 export interface Project {
   id: string;
+  accountId?: string;
   name: string;
   description: string;
   clientName: string;
@@ -82,6 +83,9 @@ export interface Project {
   createdBy: string;
   settings?: ProjectSettings;
   metadata?: ProjectMetadata;
+  itemCount?: number;
+  transactionCount?: number;
+  totalValue?: number;
 }
 
 // ProjectBudgetCategories maps category IDs to budget amounts

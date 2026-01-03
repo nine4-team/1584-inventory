@@ -67,16 +67,23 @@ interface DBTransaction {
 
 interface DBProject {
   id: string
+  accountId: string
   name: string
   description: string
   clientName: string
   budget?: number
   designFee?: number
-  defaultCategoryId?: string
+  budgetCategories?: Record<string, number>
+  defaultCategoryId?: string | null
   mainImageUrl?: string
   createdAt: string
   updatedAt: string
   createdBy: string
+  settings?: Record<string, any> | null
+  metadata?: Record<string, any> | null
+  itemCount?: number
+  transactionCount?: number
+  totalValue?: number
   version: number
   last_synced_at?: string
 }

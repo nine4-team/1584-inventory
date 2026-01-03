@@ -49,15 +49,23 @@ export class OfflineProjectService {
     // Convert project data to DB format
     const tempProject: DBProject = {
       id: projectId,
+      accountId,
       name: projectData.name || '',
       description: projectData.description || '',
       clientName: projectData.clientName || '',
       budget: projectData.budget,
       designFee: projectData.designFee,
+      budgetCategories: projectData.budgetCategories ?? {},
+      defaultCategoryId: projectData.defaultCategoryId ?? null,
       mainImageUrl: projectData.mainImageUrl,
       createdAt: timestamp,
       updatedAt: timestamp,
       createdBy: projectData.createdBy || '',
+      settings: projectData.settings ?? {},
+      metadata: projectData.metadata ?? {},
+      itemCount: projectData.itemCount ?? 0,
+      transactionCount: projectData.transactionCount ?? 0,
+      totalValue: projectData.totalValue ?? 0,
       version: 1,
       last_synced_at: null // Not synced yet
     }
@@ -148,7 +156,17 @@ export class OfflineProjectService {
         updates: {
           name: updates.name,
           budget: updates.budget,
-          description: updates.description
+          description: updates.description,
+          clientName: updates.clientName,
+          designFee: updates.designFee,
+          budgetCategories: updates.budgetCategories,
+          defaultCategoryId: updates.defaultCategoryId,
+          mainImageUrl: updates.mainImageUrl,
+          settings: updates.settings,
+          metadata: updates.metadata,
+          itemCount: updates.itemCount,
+          transactionCount: updates.transactionCount,
+          totalValue: updates.totalValue
         }
       }
     }
@@ -167,7 +185,14 @@ export class OfflineProjectService {
       ...(updates.clientName !== undefined && { clientName: updates.clientName }),
       ...(updates.budget !== undefined && { budget: updates.budget }),
       ...(updates.designFee !== undefined && { designFee: updates.designFee }),
+      ...(updates.budgetCategories !== undefined && { budgetCategories: updates.budgetCategories ?? {} }),
+      ...(updates.defaultCategoryId !== undefined && { defaultCategoryId: updates.defaultCategoryId ?? null }),
       ...(updates.mainImageUrl !== undefined && { mainImageUrl: updates.mainImageUrl }),
+      ...(updates.settings !== undefined && { settings: updates.settings ?? {} }),
+      ...(updates.metadata !== undefined && { metadata: updates.metadata ?? {} }),
+      ...(updates.itemCount !== undefined && { itemCount: updates.itemCount }),
+      ...(updates.transactionCount !== undefined && { transactionCount: updates.transactionCount }),
+      ...(updates.totalValue !== undefined && { totalValue: updates.totalValue }),
       updatedAt: timestamp,
       version: nextVersion
     }
@@ -203,11 +228,30 @@ export class OfflineProjectService {
       data: { id: projectId, accountId }
     }
 
-    const operationId = await operationQueue.add(operation, {
-      accountId,
-      version: existingProject.version ?? 1,
-      timestamp
-    })
+    let operationId: string
+    try {
+      operationId = await operationQueue.add(operation, {
+        accountId,
+        version: existingProject.version ?? 1,
+        timestamp
+      })
+    } catch (error) {
+      console.error('Failed to enqueue DELETE_PROJECT operation', {
+        accountId,
+        projectId,
+        error
+      })
+      throw error
+    }
+
+    try {
+      await offlineStore.deleteProject(projectId)
+    } catch (cleanupError) {
+      console.warn('Failed to purge project from offline store after enqueueing delete (non-fatal)', {
+        projectId,
+        cleanupError
+      })
+    }
 
     // Trigger immediate processing if online
     if (isNetworkOnline()) {

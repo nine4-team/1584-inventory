@@ -2,7 +2,7 @@ import { ArrowLeft, Save, X } from 'lucide-react'
 import { useParams, useLocation, useNavigate } from 'react-router-dom'
 import { useNavigationStack } from '@/contexts/NavigationStackContext'
 import { useState, useEffect, useRef, FormEvent, useMemo, useCallback } from 'react'
-import { TransactionFormData, TransactionValidationErrors, TransactionImage, TransactionItemFormData, TaxPreset } from '@/types'
+import { TransactionFormData, TransactionValidationErrors, TransactionImage, TransactionItemFormData, TaxPreset, Transaction } from '@/types'
 import { COMPANY_NAME, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { transactionService, projectService, unifiedItemsService } from '@/services/inventoryService'
 import { ImageUploadService, UploadProgress } from '@/services/imageService'
@@ -21,6 +21,8 @@ import TransactionItemsList from '@/components/TransactionItemsList'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { projectTransactionDetail, projectTransactions } from '@/utils/routes'
 import { getReturnToFromLocation, navigateToReturnToOrFallback } from '@/utils/navigationReturnTo'
+import { hydrateTransactionCache } from '@/utils/hydrationHelpers'
+import { getGlobalQueryClient } from '@/utils/queryClient'
 
 export default function EditTransaction() {
   const { id, projectId: routeProjectId, transactionId } = useParams<{ id?: string; projectId?: string; transactionId: string }>()
@@ -166,10 +168,31 @@ export default function EditTransaction() {
       }
 
       try {
-        const [transaction, project] = await Promise.all([
-          transactionService.getTransaction(currentAccountId, projectId, transactionId),
-          projectService.getProject(currentAccountId, projectId)
-        ])
+        // First, try to hydrate from offlineStore to React Query cache
+        // This ensures optimistic transactions created offline are available
+        try {
+          await hydrateTransactionCache(getGlobalQueryClient(), currentAccountId, transactionId)
+        } catch (error) {
+          console.warn('Failed to hydrate transaction cache (non-fatal):', error)
+        }
+
+        // Check React Query cache first (for optimistic transactions created offline)
+        const queryClient = getGlobalQueryClient()
+        const cachedTransaction = queryClient.getQueryData<Transaction>(['transaction', currentAccountId, transactionId])
+        
+        let transactionData: Transaction | null = null
+        if (cachedTransaction) {
+          console.log('✅ Transaction found in React Query cache:', cachedTransaction.transactionId)
+          transactionData = cachedTransaction
+        }
+
+        // If not in cache, fetch from service (which will check cache/offlineStore/network)
+        if (!transactionData) {
+          transactionData = await transactionService.getTransaction(currentAccountId, projectId, transactionId)
+        }
+
+        const project = await projectService.getProject(currentAccountId, projectId)
+        const transaction = transactionData
 
         if (project) {
           setProjectName(project.name)

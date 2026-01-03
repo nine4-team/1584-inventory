@@ -24,6 +24,8 @@ import { projectService } from '@/services/inventoryService'
 import { useAccount } from '@/contexts/AccountContext'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import ProjectForm from '@/components/ProjectForm'
+import { hydrateProjectCache } from '@/utils/hydrationHelpers'
+import { getGlobalQueryClient } from '@/utils/queryClient'
 import BudgetProgress from '@/components/ui/BudgetProgress'
 import { useToast } from '@/components/ui/ToastContext'
 import { Button } from '@/components/ui/Button'
@@ -114,6 +116,21 @@ export default function ProjectLayout() {
       stackedNavigateRef.current(projectsRoot())
     }
   }, [projectId])
+
+  // Hydrate project cache from offlineStore before rendering
+  useEffect(() => {
+    if (!projectId || !currentAccountId) return
+
+    const hydrate = async () => {
+      try {
+        await hydrateProjectCache(getGlobalQueryClient(), currentAccountId, projectId)
+      } catch (error) {
+        console.warn('Failed to hydrate project cache (non-fatal):', error)
+      }
+    }
+
+    hydrate()
+  }, [projectId, currentAccountId])
 
   const sectionPaths = useMemo(() => {
     if (!projectId) return null

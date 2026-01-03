@@ -102,6 +102,16 @@ export interface UpdateProjectOperation extends BaseOperation {
       name: string
       budget: number
       description: string
+      clientName: string
+      designFee: number
+      budgetCategories: Record<string, number>
+      defaultCategoryId: string | null
+      mainImageUrl: string | null
+      settings: Record<string, any>
+      metadata: Record<string, any>
+      itemCount: number
+      transactionCount: number
+      totalValue: number
     }>
   }
 }

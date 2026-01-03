@@ -1154,6 +1154,18 @@ class OperationQueue {
 
       if (error) throw error
 
+      try {
+        await offlineStore.deleteTransaction(data.id)
+        if (accountId) {
+          await offlineStore.deleteConflictsForTransactions(accountId, [data.id])
+        }
+      } catch (cleanupError) {
+        console.warn('Failed to purge transaction from offline store after server delete (non-fatal)', {
+          transactionId: data.id,
+          cleanupError
+        })
+      }
+
       return true
     } catch (error) {
       console.error('Failed to delete transaction:', error)
@@ -1184,8 +1196,14 @@ class OperationQueue {
           client_name: localProject.clientName ?? '',
           budget: localProject.budget ?? null,
           design_fee: localProject.designFee ?? null,
+          budget_categories: localProject.budgetCategories ?? {},
           default_category_id: localProject.defaultCategoryId ?? null,
           main_image_url: localProject.mainImageUrl ?? null,
+          settings: localProject.settings ?? {},
+          metadata: localProject.metadata ?? {},
+          item_count: localProject.itemCount ?? 0,
+          transaction_count: localProject.transactionCount ?? 0,
+          total_value: localProject.totalValue ?? 0,
           created_at: localProject.createdAt || new Date().toISOString(),
           updated_at: localProject.updatedAt || new Date().toISOString(),
           created_by: localProject.createdBy || updatedBy,
@@ -1200,13 +1218,20 @@ class OperationQueue {
       const cachedAt = new Date().toISOString()
       const dbProject: DBProject = {
         id: serverProject.id || data.id,
+        accountId: accountId || localProject.accountId,
         name: serverProject.name ?? localProject.name,
         description: serverProject.description ?? localProject.description ?? '',
         clientName: serverProject.client_name ?? localProject.clientName ?? '',
         budget: serverProject.budget ?? localProject.budget,
         designFee: serverProject.design_fee ?? localProject.designFee,
+        budgetCategories: serverProject.budget_categories ?? localProject.budgetCategories,
         defaultCategoryId: serverProject.default_category_id ?? localProject.defaultCategoryId,
         mainImageUrl: serverProject.main_image_url ?? localProject.mainImageUrl,
+        settings: serverProject.settings ?? localProject.settings,
+        metadata: serverProject.metadata ?? localProject.metadata,
+        itemCount: serverProject.item_count ?? localProject.itemCount,
+        transactionCount: serverProject.transaction_count ?? localProject.transactionCount,
+        totalValue: serverProject.total_value ?? localProject.totalValue,
         createdAt: serverProject.created_at ?? localProject.createdAt ?? cachedAt,
         updatedAt: serverProject.updated_at ?? localProject.updatedAt ?? cachedAt,
         createdBy: serverProject.created_by ?? localProject.createdBy ?? updatedBy,
@@ -1239,7 +1264,21 @@ class OperationQueue {
         ...localProject,
         ...(data.updates.name !== undefined && { name: data.updates.name }),
         ...(data.updates.budget !== undefined && { budget: data.updates.budget }),
-        ...(data.updates.description !== undefined && { description: data.updates.description }),
+        ...(data.updates.description !== undefined && { description: data.updates.description ?? '' }),
+        ...(data.updates.clientName !== undefined && { clientName: data.updates.clientName ?? '' }),
+        ...(data.updates.designFee !== undefined && { designFee: data.updates.designFee }),
+        ...(data.updates.budgetCategories !== undefined && {
+          budgetCategories: data.updates.budgetCategories ?? {}
+        }),
+        ...(data.updates.defaultCategoryId !== undefined && {
+          defaultCategoryId: data.updates.defaultCategoryId ?? null
+        }),
+        ...(data.updates.mainImageUrl !== undefined && { mainImageUrl: data.updates.mainImageUrl ?? null }),
+        ...(data.updates.settings !== undefined && { settings: data.updates.settings ?? {} }),
+        ...(data.updates.metadata !== undefined && { metadata: data.updates.metadata ?? {} }),
+        ...(data.updates.itemCount !== undefined && { itemCount: data.updates.itemCount }),
+        ...(data.updates.transactionCount !== undefined && { transactionCount: data.updates.transactionCount }),
+        ...(data.updates.totalValue !== undefined && { totalValue: data.updates.totalValue }),
         updatedAt: new Date().toISOString(),
         version: version
       }
@@ -1253,8 +1292,14 @@ class OperationQueue {
           client_name: updatedLocalProject.clientName ?? '',
           budget: updatedLocalProject.budget ?? null,
           design_fee: updatedLocalProject.designFee ?? null,
+          budget_categories: updatedLocalProject.budgetCategories ?? {},
           default_category_id: updatedLocalProject.defaultCategoryId ?? null,
           main_image_url: updatedLocalProject.mainImageUrl ?? null,
+          settings: updatedLocalProject.settings ?? {},
+          metadata: updatedLocalProject.metadata ?? {},
+          item_count: updatedLocalProject.itemCount ?? 0,
+          transaction_count: updatedLocalProject.transactionCount ?? 0,
+          total_value: updatedLocalProject.totalValue ?? 0,
           updated_at: updatedLocalProject.updatedAt || new Date().toISOString(),
           version: version
         })
@@ -1268,13 +1313,20 @@ class OperationQueue {
       const cachedAt = new Date().toISOString()
       const dbProject: DBProject = {
         id: serverProject.id || data.id,
+        accountId: accountId || updatedLocalProject.accountId,
         name: serverProject.name ?? updatedLocalProject.name,
         description: serverProject.description ?? updatedLocalProject.description ?? '',
         clientName: serverProject.client_name ?? updatedLocalProject.clientName ?? '',
         budget: serverProject.budget ?? updatedLocalProject.budget,
         designFee: serverProject.design_fee ?? updatedLocalProject.designFee,
+        budgetCategories: serverProject.budget_categories ?? updatedLocalProject.budgetCategories,
         defaultCategoryId: serverProject.default_category_id ?? updatedLocalProject.defaultCategoryId,
         mainImageUrl: serverProject.main_image_url ?? updatedLocalProject.mainImageUrl,
+        settings: serverProject.settings ?? updatedLocalProject.settings,
+        metadata: serverProject.metadata ?? updatedLocalProject.metadata,
+        itemCount: serverProject.item_count ?? updatedLocalProject.itemCount,
+        transactionCount: serverProject.transaction_count ?? updatedLocalProject.transactionCount,
+        totalValue: serverProject.total_value ?? updatedLocalProject.totalValue,
         createdAt: serverProject.created_at ?? updatedLocalProject.createdAt ?? cachedAt,
         updatedAt: serverProject.updated_at ?? updatedLocalProject.updatedAt ?? cachedAt,
         createdBy: serverProject.created_by ?? updatedLocalProject.createdBy ?? updatedBy,
@@ -1304,7 +1356,7 @@ class OperationQueue {
   }
 
   private async executeDeleteProject(operation: DeleteProjectOperation): Promise<boolean> {
-    const { data } = operation
+    const { data, accountId } = operation
 
     try {
       // Delete from server
@@ -1314,6 +1366,18 @@ class OperationQueue {
         .eq('id', data.id)
 
       if (error) throw error
+
+      try {
+        await offlineStore.deleteProject(data.id)
+        if (accountId) {
+          await offlineStore.deleteConflictsForProjects(accountId, [data.id])
+        }
+      } catch (cleanupError) {
+        console.warn('Failed to purge project from offline store after server delete (non-fatal)', {
+          projectId: data.id,
+          cleanupError
+        })
+      }
 
       return true
     } catch (error) {
@@ -1381,6 +1445,30 @@ class OperationQueue {
       version: op.version,
       ...(op as any).data ? { data: (op as any).data } : {}
     } as Operation))
+  }
+
+  async removeOperation(operationId: string): Promise<boolean> {
+    await this.init()
+
+    const index = this.queue.findIndex(op => op.id === operationId)
+
+    if (index === -1) {
+      try {
+        await offlineStore.deleteOperation(operationId)
+        return true
+      } catch (error) {
+        console.warn('Failed to delete operation from offline store during removal', {
+          operationId,
+          error
+        })
+        return false
+      }
+    }
+
+    this.queue.splice(index, 1)
+    await this.persistQueue()
+    this.emitQueueChange()
+    return true
   }
 
   async clearQueue(accountId?: string): Promise<void> {

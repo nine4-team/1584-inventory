@@ -12,6 +12,11 @@ export interface OfflineOperationResult {
   transactionId?: string
 }
 
+type CreatedChildItem = {
+  itemId?: string
+  operationId?: string
+}
+
 export class OfflineStorageError extends Error {
   constructor(message: string, public readonly cause?: unknown) {
     super(message)
@@ -124,7 +129,7 @@ export class OfflineTransactionService {
     }
 
     // Create child items if provided (delegate to offlineItemService)
-    const createdItemIds: string[] = []
+    const createdChildItems: CreatedChildItem[] = []
     if (items && items.length > 0) {
       try {
         for (const itemData of items) {
@@ -150,12 +155,17 @@ export class OfflineTransactionService {
             inventoryStatus: 'available',
             createdBy: transactionData.createdBy || ''
           })
-          if (itemResult.itemId) {
-            createdItemIds.push(itemResult.itemId)
-          }
+          createdChildItems.push({
+            itemId: itemResult.itemId,
+            operationId: itemResult.operationId
+          })
         }
 
         // Update transaction with created item IDs
+        const createdItemIds = createdChildItems
+          .map(child => child.itemId)
+          .filter((id): id is string => Boolean(id))
+
         tempTransaction.itemIds = createdItemIds
         await offlineStore.saveTransactions([tempTransaction])
       } catch (itemError) {
@@ -166,6 +176,7 @@ export class OfflineTransactionService {
         } catch (rollbackError) {
           console.warn('Failed to rollback transaction after item creation failure', rollbackError)
         }
+        await this.rollbackChildItems(createdChildItems)
         throw itemError
       }
     }
@@ -195,6 +206,7 @@ export class OfflineTransactionService {
       } catch (rollbackError) {
         console.warn('Unable to roll back optimistic transaction after queue failure', rollbackError)
       }
+      await this.rollbackChildItems(createdChildItems)
       throw error
     }
 
@@ -344,11 +356,31 @@ export class OfflineTransactionService {
       data: { id: transactionId, accountId }
     }
 
-    const operationId = await operationQueue.add(operation, {
-      accountId,
-      version: existingTransaction.version ?? 1,
-      timestamp
-    })
+    let operationId: string
+    try {
+      operationId = await operationQueue.add(operation, {
+        accountId,
+        version: existingTransaction.version ?? 1,
+        timestamp
+      })
+    } catch (error) {
+      console.error('Failed to enqueue DELETE_TRANSACTION operation', {
+        accountId,
+        transactionId,
+        error
+      })
+      throw error
+    }
+
+    // Remove from offline cache immediately so UI no longer surfaces ghost entries
+    try {
+      await offlineStore.deleteTransaction(transactionId)
+    } catch (cleanupError) {
+      console.warn('Failed to purge transaction from offline store after enqueueing delete (non-fatal)', {
+        transactionId,
+        cleanupError
+      })
+    }
 
     // Trigger immediate processing if online
     if (isNetworkOnline()) {
@@ -356,6 +388,36 @@ export class OfflineTransactionService {
     }
 
     return { operationId, wasQueued: true, transactionId }
+  }
+
+  private async rollbackChildItems(children: CreatedChildItem[]): Promise<void> {
+    if (!children.length) {
+      return
+    }
+
+    for (const child of children) {
+      if (child.itemId) {
+        try {
+          await offlineStore.deleteItem(child.itemId)
+        } catch (error) {
+          console.warn('Failed to delete optimistic child item during rollback', {
+            itemId: child.itemId,
+            error
+          })
+        }
+      }
+
+      if (child.operationId) {
+        try {
+          await operationQueue.removeOperation(child.operationId)
+        } catch (error) {
+          console.warn('Failed to remove queued child item operation during rollback', {
+            operationId: child.operationId,
+            error
+          })
+        }
+      }
+    }
   }
 }
 

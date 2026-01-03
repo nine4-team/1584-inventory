@@ -206,16 +206,23 @@ function mapSupabaseProjectToOfflineRecord(row: any): DBProject {
   const converted = convertTimestamps(row)
   return {
     id: converted.id,
+    accountId: converted.account_id,
     name: converted.name || '',
     description: converted.description || '',
     clientName: converted.client_name || '',
     budget: converted.budget !== undefined && converted.budget !== null ? Number(converted.budget) : undefined,
     designFee: converted.design_fee !== undefined && converted.design_fee !== null ? Number(converted.design_fee) : undefined,
-    // default_category_id removed - default category is now account-wide preset
+    budgetCategories: converted.budget_categories || undefined,
+    defaultCategoryId: converted.default_category_id ?? null,
     mainImageUrl: converted.main_image_url || undefined,
     createdAt: converted.created_at,
     updatedAt: converted.updated_at,
     createdBy: converted.created_by || '',
+    settings: converted.settings || undefined,
+    metadata: converted.metadata || undefined,
+    itemCount: converted.item_count ?? 0,
+    transactionCount: converted.transaction_count ?? 0,
+    totalValue: converted.total_value !== undefined && converted.total_value !== null ? Number(converted.total_value) : undefined,
     version: converted.version ?? 1,
     last_synced_at: new Date().toISOString()
   }

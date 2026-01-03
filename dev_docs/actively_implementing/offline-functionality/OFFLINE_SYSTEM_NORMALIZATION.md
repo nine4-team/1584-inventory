@@ -1,5 +1,29 @@
 # Offline System Normalization Plan
 
+## 🔥 Immediate Remediation Issues
+
+Use this section to track the regressions introduced during the initial implementation pass. Each item needs an owner + fix before we mark the corresponding workstream complete.
+
+1. **Offline deletes leave ghost records in IndexedDB** ✅ **FIXED 2026‑01‑02**  
+   - `offlineTransactionService.deleteTransaction` / `offlineProjectService.deleteProject` now purge the cached entity as soon as the delete is queued so optimistic lists stop resurfacing ghosts.  
+   - `operationQueue.executeDeleteTransaction` / `executeDeleteProject` delete the server record, remove the local IndexedDB entry, and clear related conflicts to keep queues clean.  
+   - **Follow-up:** add regression tests that create → delete offline and verify `offlineStore.get*ById` returns `null` after sync (tracked in testing checklist).
+
+2. **Project payloads drop budget/settings metadata when replayed online** ✅ **FIXED 2026‑01‑02**  
+   - `DBProject` now includes `accountId`, `budgetCategories`, `defaultCategoryId`, `settings`, `metadata`, counts, and totals so the offline cache mirrors production.  
+   - `offlineProjectService.create/update` persists the full record, including derived counts, and queue payloads carry the entire update set.  
+   - `operationQueue.executeCreate/UpdateProject` hydrates from IndexedDB, sends every field to Supabase, and saves the server echo back into `offlineStore`.  
+   - **Follow-up:** add Vitest coverage for offline project create/edit flows with custom budget allocations + metadata (see Testing section).
+
+3. **Offline transaction create does not roll back child items on failure** ✅ **FIXED 2026‑01‑02**  
+   - `offlineTransactionService.createTransaction` now tracks every child `offlineItemService.createItem` result (item + operation IDs) and rolls them back if a later item fails or if queueing the parent transaction throws.  
+   - Rollback removes the optimistic child items from `offlineStore` and calls the new `operationQueue.removeOperation` helper so we do not leave orphaned queue entries that reference a transaction that never existed.
+
+4. **Doc status vs. code reality mismatch** ✅ **FIXED 2026‑01‑02**  
+   - The “Current State Analysis” now reflects that transactions and projects ship with the same offline primitives as items, and explicitly calls out the remaining hydration/test gaps so the roadmap mirrors code reality instead of labeling the features as “missing.”
+
+Add more bullets here as we discover additional regressions.
+
 ## Purpose
 This document captures the established offline patterns discovered through code analysis and provides a roadmap for normalizing offline functionality across all entities (items, transactions, projects) in the application.
 
@@ -30,8 +54,8 @@ This document captures the established offline patterns discovered through code 
 - [x] Add offline-first branching with network gating
 
 ### Phase 3: Operation Queue & Conflict Hygiene ✅ **COMPLETE**
-- [x] Extend operation typings for transactions/projects
-- [x] Implement queue executors for transaction/project operations
+- [x] Extend operation typings for transactions/projects (project updates now include metadata/budget/default category fields)
+- [x] Implement queue executors for transaction/project operations (delete executors purge IndexedDB + conflicts after Supabase success)
 - [x] Expand conflict tracking beyond items
 - [x] Add conflict detectors for transactions/projects
 
@@ -40,10 +64,11 @@ This document captures the established offline patterns discovered through code 
 - [x] Update detail/edit pages for cache-first reads
 - [x] Update list queries to follow cache-first order
 
-### Phase 5: UI Resilience & Testing ✅ **COMPLETE**
+### Phase 5: UI Resilience & Testing ✅ **COMPLETE** _(test refresh pending)_
 - [x] Integrate `useOfflinePrerequisites` into forms
 - [x] Add inline banners and disabled states
-- [x] Add automated tests
+- [x] Add React Query hydration to all transaction/project detail/edit/list pages
+- [ ] Add automated tests (new offline delete + project metadata regressions still to cover)
 - [x] Manual QA checklist
 
 **Files Created/Modified:**
@@ -74,23 +99,26 @@ Items have complete offline support following a well-established pattern:
 - `src/services/operationQueue.ts` - sync queue execution
 - `src/services/offlineStore.ts` - IndexedDB persistence
 
-### ❌ Missing Offline Support: Transactions
+### ✅ Offline CRUD Path: Transactions
 
 **Current Implementation:**
-- `transactionService.createTransaction` (line 1470) - Direct Supabase calls, no offline check
-- `transactionService.updateTransaction` (line 1603) - Direct Supabase calls, no offline check  
-- `transactionService.deleteTransaction` (line 1722) - Direct Supabase calls, no offline check
+- `transactionService.create/update/delete` (see `src/services/inventoryService.ts`) now hydrates `offlineStore`, gates on `isNetworkOnline()`, and delegates to `offlineTransactionService` when offline or when Supabase rejects.  
+- `offlineTransactionService` persists the full transaction payload (metadata, counts, child item IDs) before queueing, validates cached categories/tax presets, and now rolls back optimistic child items + their queued operations if anything fails mid-flight.  
+- `operationQueue.executeCreate/Update/DeleteTransaction` replays full records from IndexedDB, clears conflicts, and replays any queued child item operations once the parent sync succeeds.
+- React Query hydration helpers (`hydrateTransactionCache`, `hydrateProjectTransactionsCache`) are integrated into detail/edit/list pages for cache-first loading.
 
-**Impact:** Users cannot create, edit, or delete transactions while offline.
+**Remaining Gaps:**
+- Automated regression coverage for offline transaction flows is still pending (see "Testing & diagnostics" section).
 
-### ❌ Missing Offline Support: Projects
+### ✅ Offline CRUD Path: Projects
 
 **Current Implementation:**
-- `projectService.createProject` (line 505) - Direct Supabase calls, no offline check
-- `projectService.updateProject` (line 537) - Direct Supabase calls, no offline check
-- `projectService.deleteProject` (line 565) - Direct Supabase calls, no offline check
+- `projectService.create/update/delete` mirrors the offline-first gating used for items/transactions and shares the metadata prerequisite checks so forms never submit without cached budgets/settings.  
+- `offlineProjectService` stores derived counts/settings/totals so queue executors can replay full records, and delete executors purge IndexedDB + conflicts immediately.  
+- Queue executors hydrate from IndexedDB before syncing to Supabase and clear `project` conflicts once the server accepts the change set.
 
-**Impact:** Users cannot create, edit, or delete projects while offline.
+**Remaining Gaps:**
+- We still owe integration/unit coverage for offline project CRUD and hydration flows (see "Testing & diagnostics" section).
 
 ## Established Patterns (Code-Backed)
 
@@ -462,29 +490,38 @@ export function detectTransactionConflict(local: Transaction, remote: Transactio
 - [ ] Add background hydration / manual refresh UI for the metadata caches.
 - [ ] Block offline mutations (with actionable messaging) when validation data is missing.
 
-### Transactions
-- [ ] Create `offlineTransactionService.ts` with optimistic ID generation, dependency validation, and rollback.
-- [ ] Ensure offline transaction creates also queue their child items via `offlineItemService`.
-- [ ] Update `transactionService.create/update/delete` to hydrate caches, gate on network state, delegate to offline services, and fall back gracefully on Supabase errors.
-- [ ] Implement queue executors for transaction operations and replay previously queued child-item operations once a transaction syncs.
-- [ ] Extend React Query hydration helpers and detail/edit views for transactions.
+### Transactions ✅ **COMPLETE**
+- [x] Create `offlineTransactionService.ts` with optimistic ID generation, dependency validation, and rollback.
+- [x] Ensure offline transaction creates also queue their child items via `offlineItemService`.
+- [x] Update `transactionService.create/update/delete` to hydrate caches, gate on network state, delegate to offline services, and fall back gracefully on Supabase errors.
+- [x] Implement queue executors for transaction operations and replay previously queued child-item operations once a transaction syncs.
+- [x] Extend React Query hydration helpers and detail/edit views for transactions.
 
-### Projects
-- [ ] Create `offlineProjectService.ts` with parity to the item/transaction services.
-- [ ] Update `projectService.create/update/delete` to follow the offline-first branching and metadata validation rules.
-- [ ] Implement queue executors for project operations.
-- [ ] Add React Query hydration helpers and project detail/edit cache checks.
+### Projects ✅ **COMPLETE**
+- [x] Create `offlineProjectService.ts` with parity to the item/transaction services (now persists budget categories, metadata, counts, totals).
+- [x] Update `projectService.create/update/delete` to follow the offline-first branching and metadata validation rules.
+- [x] Implement queue executors for project operations (create/update/delete replay full records and clear conflicts).
+- [x] Add React Query hydration helpers and project detail/edit cache checks.
 
 ### Operation queue & conflicts
-- [ ] Define typed payloads for transaction/project operations in `src/types/operations.ts`.
-- [ ] Update `operationQueue` to support the new payloads, executors, and `inferAccountId` rules.
-- [ ] Introduce an `entityType`-aware conflict model plus detectors for transactions/projects, and clear those conflicts after successful syncs.
-- [ ] Verify / migrate IndexedDB stores and indexes required for the new entities.
+- [x] Define typed payloads for transaction/project operations in `src/types/operations.ts` (project updates now include metadata/default category info).
+- [x] Update `operationQueue` to support the new payloads, executors, and `inferAccountId` rules (delete executors now purge offline cache + conflicts).
+- [x] Introduce an `entityType`-aware conflict model plus detectors for transactions/projects, and clear those conflicts after successful syncs.
+- [ ] Verify / migrate IndexedDB stores and indexes required for the new entities (follow-up: new project fields/indexes).
 
-### Read surfaces & UI hydration
-- [ ] Add `hydrateTransactionCache`, `hydrateProjectCache`, `hydrateOptimisticTransaction`, and `hydrateOptimisticProject`.
-- [ ] Update transaction/project list + detail pages to follow the cache → offlineStore → network order.
-- [ ] Make offline mutations update React Query caches immediately so optimistic records stay visible.
+### Read surfaces & UI hydration ✅ **COMPLETE**
+- [x] Add `hydrateTransactionCache`, `hydrateProjectCache`, `hydrateOptimisticTransaction`, and `hydrateOptimisticProject`.
+- [x] Update transaction/project list + detail pages to follow the cache → offlineStore → network order.
+- [x] Make offline mutations update React Query caches immediately so optimistic records stay visible.
+
+**Files Modified:**
+- `src/utils/hydrationHelpers.ts` - Added `hydrateTransactionCache`, `hydrateProjectCache`, `hydrateOptimisticTransaction`, `hydrateOptimisticProject`, `hydrateProjectsListCache`, `hydrateProjectTransactionsCache`
+- `src/pages/EditTransaction.tsx` - Added cache-first hydration before loading transaction
+- `src/pages/TransactionDetail.tsx` - Already had hydration (verified)
+- `src/pages/EditBusinessInventoryTransaction.tsx` - Added cache-first hydration
+- `src/pages/ProjectLayout.tsx` - Added project cache hydration
+- `src/pages/Projects.tsx` - Added projects list cache hydration
+- `src/pages/TransactionsList.tsx` - Added project transactions cache hydration
 
 ### Testing & diagnostics
 - [ ] Expand offline UX (banners, retry buttons, telemetry) to mention transaction/project queue state and missing prerequisites.
@@ -494,10 +531,10 @@ export function detectTransactionConflict(local: Transaction, remote: Transactio
 ### Testing
 - [ ] Test transaction creation offline
 - [ ] Test transaction editing offline
-- [ ] Test transaction deletion offline
-- [ ] Test project creation offline
-- [ ] Test project editing offline
-- [ ] Test project deletion offline
+- [ ] Test transaction deletion offline (verify IndexedDB + conflicts purge immediately)
+- [ ] Test project creation offline (full metadata/budget replication)
+- [ ] Test project editing offline (budget categories + counts stay in sync)
+- [ ] Test project deletion offline (verify IndexedDB + conflicts purge immediately)
 - [ ] Test sync when coming back online
 - [ ] Test conflict resolution for transactions/projects
 - [ ] Test React Query cache hydration

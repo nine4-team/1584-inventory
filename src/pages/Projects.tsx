@@ -10,6 +10,8 @@ import ProjectForm from '@/components/ProjectForm'
 import BudgetProgress from '@/components/ui/BudgetProgress'
 import ContextLink from '@/components/ContextLink'
 import { projectItems } from '@/utils/routes'
+import { hydrateProjectsListCache } from '@/utils/hydrationHelpers'
+import { getGlobalQueryClient } from '@/utils/queryClient'
 
 export default function Projects() {
   const { buildContextUrl } = useNavigationContext()
@@ -79,7 +81,27 @@ export default function Projects() {
         console.log('🔍 Projects - Loading projects for account:', currentAccountId)
         setIsLoadingData(true)
         try {
-          const projectsData = await projectService.getProjects(currentAccountId)
+          // First, try to hydrate from offlineStore to React Query cache
+          // This ensures optimistic projects created offline are available
+          try {
+            await hydrateProjectsListCache(getGlobalQueryClient(), currentAccountId)
+          } catch (error) {
+            console.warn('Failed to hydrate projects list cache (non-fatal):', error)
+          }
+
+          // Check React Query cache first (for optimistic projects created offline)
+          const queryClient = getGlobalQueryClient()
+          const cachedProjects = queryClient.getQueryData<Project[]>(['projects', currentAccountId])
+          
+          let projectsData: Project[] = []
+          if (cachedProjects && cachedProjects.length > 0) {
+            console.log('✅ Projects found in React Query cache:', cachedProjects.length)
+            projectsData = cachedProjects
+          } else {
+            // If not in cache, fetch from service (which will check cache/offlineStore/network)
+            projectsData = await projectService.getProjects(currentAccountId)
+          }
+          
           console.log('🔍 Projects - Loaded', projectsData.length, 'projects')
           setProjects(projectsData)
           await loadTransactionsForProjects(projectsData)
