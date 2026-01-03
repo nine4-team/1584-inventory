@@ -11,6 +11,19 @@ import { OfflineContextError } from './operationQueue'
 import type { Item, Project, FilterOptions, PaginationOptions, Transaction, TransactionItemFormData, TransactionCompleteness, CompletenessStatus, ItemImage } from '@/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
+// Lazy import to avoid circular dependencies
+let getGlobalQueryClient: (() => any) | null = null
+function tryGetQueryClient() {
+  try {
+    if (!getGlobalQueryClient) {
+      getGlobalQueryClient = require('@/utils/queryClient').getGlobalQueryClient
+    }
+    return getGlobalQueryClient()
+  } catch {
+    return null
+  }
+}
+
 type SharedRealtimeEntry<T> = {
   channel: RealtimeChannel
   callbacks: Set<(payload: T[]) => void>
@@ -2248,11 +2261,18 @@ export const unifiedItemsService = {
     try {
       await offlineStore.init()
       const cached = await offlineStore.getItemById(itemId)
-      if (!cached) return null
-      if (cached.accountId && cached.accountId !== accountId) return null
+      if (!cached) {
+        console.debug('[getItemById] Item not found in offlineStore:', itemId)
+        return null
+      }
+      if (cached.accountId && cached.accountId !== accountId) {
+        console.debug('[getItemById] Item accountId mismatch:', { itemId, cachedAccountId: cached.accountId, requestedAccountId: accountId })
+        return null
+      }
+      console.debug('[getItemById] Found item in offlineStore:', itemId)
       return this._convertOfflineItem(cached)
     } catch (error) {
-      console.warn('Failed to read offline item:', error)
+      console.warn('[getItemById] Failed to read offline item:', error)
       return null
     }
   },
@@ -4278,6 +4298,21 @@ export const unifiedItemsService = {
 
   // Helper function to get item by ID (account-scoped)
   async getItemById(accountId: string, itemId: string): Promise<Item | null> {
+    // First, check React Query cache (for optimistic items created offline)
+    try {
+      const queryClient = tryGetQueryClient()
+      if (queryClient) {
+        const cachedItem = queryClient.getQueryData<Item>(['item', accountId, itemId])
+        if (cachedItem) {
+          console.debug('[getItemById] Found item in React Query cache:', itemId)
+          return cachedItem
+        }
+      }
+    } catch (error) {
+      // QueryClient might not be initialized yet, continue to other sources
+      console.debug('[getItemById] React Query cache check failed (non-fatal):', error)
+    }
+
     const online = isNetworkOnline()
     if (online) {
       try {

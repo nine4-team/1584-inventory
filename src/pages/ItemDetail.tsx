@@ -21,6 +21,8 @@ import { projectItemEdit, projectItems, projectTransactionDetail } from '@/utils
 import { Combobox } from '@/components/ui/Combobox'
 import { supabase } from '@/services/supabase'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
+import { getGlobalQueryClient } from '@/utils/queryClient'
+import { hydrateItemCache } from '@/utils/hydrationHelpers'
 
 export default function ItemDetail({ itemId: propItemId, projectId: propProjectId, onClose }: { itemId?: string; projectId?: string; onClose?: () => void } = {}) {
   const { id, projectId: routeProjectId, itemId } = useParams<{ id?: string; projectId?: string; itemId?: string }>()
@@ -90,6 +92,38 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
         setIsLoadingItem(true)
         try {
           if (!currentAccountId) return
+          
+          // First, try to hydrate from offlineStore to React Query cache
+          // This ensures optimistic items created offline are available
+          try {
+            await hydrateItemCache(getGlobalQueryClient(), currentAccountId, actualItemId)
+          } catch (error) {
+            console.warn('Failed to hydrate item cache (non-fatal):', error)
+          }
+
+          // Check React Query cache first (for optimistic items created offline)
+          const queryClient = getGlobalQueryClient()
+          const cachedItem = queryClient.getQueryData<Item>(['item', currentAccountId, actualItemId])
+          
+          if (cachedItem) {
+            console.log('✅ Item found in React Query cache:', cachedItem.itemId)
+            setItem(cachedItem)
+            if (isBusinessInventoryItem) {
+              setProjectName('Business Inventory')
+            } else if (projectId) {
+              // Still fetch project name
+              try {
+                const project = await projectService.getProject(currentAccountId, projectId)
+                if (project) {
+                  setProjectName(project.name)
+                }
+              } catch (error) {
+                console.warn('Failed to fetch project name:', error)
+              }
+            }
+            setIsLoadingItem(false)
+            return
+          }
           
           if (isBusinessInventoryItem) {
             console.log('📦 Fetching business inventory item (no project context)...')
