@@ -1,5 +1,6 @@
 import { operationQueue } from './operationQueue'
 import { registerBackgroundSync, notifySyncStart, notifySyncComplete, notifySyncError } from './serviceWorker'
+import { isNetworkOnline } from './networkStatusService'
 
 type SyncTrigger = 'init' | 'online' | 'visibility' | 'manual' | 'retry' | 'interval' | 'network' | 'queue-change'
 
@@ -38,7 +39,7 @@ class SyncScheduler {
     if (!this.unsubscribeQueueListener) {
       this.unsubscribeQueueListener = operationQueue.subscribe(() => {
         this.notify()
-        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        if (!isNetworkOnline()) {
           registerBackgroundSync().catch(() => {
             // Ignore unsupported environments
           })

@@ -403,7 +403,7 @@ export default function EditTransaction() {
         // Create new items using the same batch infrastructure as new transactions
         let createdItemIds: string[] = []
         if (newItems.length > 0) {
-          createdItemIds = await Promise.all(
+          const creationResults = await Promise.all(
             newItems.map(async (item) => {
               const itemData = {
                 ...item,
@@ -423,9 +423,11 @@ export default function EditTransaction() {
                 space: item.space || '',
                 disposition: 'purchased'
               }
-              return await unifiedItemsService.createItem(currentAccountId, itemData)
+              const result = await unifiedItemsService.createItem(currentAccountId, itemData)
+              return result.itemId
             })
           )
+          createdItemIds = creationResults
           console.log('Created new items:', createdItemIds)
 
           // Update the item IDs in our local state (map temp IDs to real IDs)

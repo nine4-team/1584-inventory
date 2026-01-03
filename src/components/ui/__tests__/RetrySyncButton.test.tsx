@@ -5,12 +5,14 @@ import { RetrySyncButton } from '../RetrySyncButton'
 const retrySyncMocks = vi.hoisted(() => ({
   triggerManualSync: vi.fn(),
   requestForegroundSync: vi.fn(),
-  getQueueLength: vi.fn()
+  getSnapshot: vi.fn(),
+  subscribe: vi.fn()
 }))
 
 vi.mock('@/services/operationQueue', () => ({
   operationQueue: {
-    getQueueLength: retrySyncMocks.getQueueLength
+    getSnapshot: retrySyncMocks.getSnapshot,
+    subscribe: retrySyncMocks.subscribe
   }
 }))
 
@@ -24,7 +26,17 @@ vi.mock('@/services/syncScheduler', () => ({
 
 describe('RetrySyncButton', () => {
   beforeEach(() => {
-    retrySyncMocks.getQueueLength.mockReturnValue(0)
+    retrySyncMocks.getSnapshot.mockReturnValue({
+      accountId: null,
+      length: 0,
+      operations: [],
+      lastEnqueueAt: null,
+      lastOfflineEnqueueAt: null,
+      lastEnqueueError: null,
+      backgroundSyncAvailable: null,
+      backgroundSyncReason: null
+    })
+    retrySyncMocks.subscribe.mockImplementation(() => () => {})
     retrySyncMocks.triggerManualSync.mockResolvedValue(undefined)
     retrySyncMocks.requestForegroundSync.mockResolvedValue(undefined)
   })
@@ -34,10 +46,37 @@ describe('RetrySyncButton', () => {
   })
 
   it('renders pending count when queue has operations', () => {
-    retrySyncMocks.getQueueLength.mockReturnValue(3)
+    retrySyncMocks.getSnapshot.mockReturnValue({
+      accountId: null,
+      length: 3,
+      operations: [],
+      lastEnqueueAt: null,
+      lastOfflineEnqueueAt: null,
+      lastEnqueueError: null,
+      backgroundSyncAvailable: null,
+      backgroundSyncReason: null
+    })
     render(<RetrySyncButton />)
 
     expect(screen.getByText('(3 pending)')).toBeInTheDocument()
+  })
+
+  it('shows warning when background sync is unavailable', () => {
+    retrySyncMocks.getSnapshot.mockReturnValue({
+      accountId: null,
+      length: 0,
+      operations: [],
+      lastEnqueueAt: null,
+      lastOfflineEnqueueAt: null,
+      lastEnqueueError: null,
+      backgroundSyncAvailable: false,
+      backgroundSyncReason: 'no-controller'
+    })
+    render(<RetrySyncButton />)
+
+    expect(
+      screen.getByText(/Background sync failed — reload to activate the service worker/i)
+    ).toBeInTheDocument()
   })
 
   it('triggers manual sync flows on click', async () => {

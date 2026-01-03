@@ -20,6 +20,7 @@ import { useAccount } from '@/contexts/AccountContext'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
 import { useNetworkState } from '@/hooks/useNetworkState'
+import { hydrateOptimisticItem } from '@/utils/hydrationHelpers'
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import TransactionAudit from '@/components/ui/TransactionAudit'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
@@ -218,6 +219,8 @@ export default function TransactionDetail() {
   }, [itemRecords, itemsInTransaction])
   const [isAddingItem, setIsAddingItem] = useState(false)
   const { showError, showSuccess } = useToast()
+  const { showOfflineSaved } = useOfflineFeedback()
+  const { isOnline } = useNetworkState()
   const { buildContextUrl, getBackDestination } = useNavigationContext()
 
   // Navigation context logic
@@ -874,16 +877,20 @@ export default function TransactionDetail() {
         disposition: normalizeDisposition(disposition)
       }
 
-      const wasOffline = !isOnline
-      const itemId = await unifiedItemsService.createItem(currentAccountId, itemData)
+      const createResult = await unifiedItemsService.createItem(currentAccountId, itemData)
+      const itemId = createResult.itemId
+
+      // Hydrate optimistic item into React Query cache immediately
+      await hydrateOptimisticItem(currentAccountId, itemId, itemData)
+
       await uploadItemImages(itemId, item)
 
       await refreshTransactionItems()
       await refreshRealtimeAfterWrite()
       setIsAddingItem(false)
       
-      if (wasOffline) {
-        showOfflineSaved(null)
+      if (createResult.mode === 'offline') {
+        showOfflineSaved(createResult.operationId)
       } else {
         showSuccess('Item added successfully')
       }

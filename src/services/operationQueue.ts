@@ -2,8 +2,21 @@ import { Operation, CreateItemOperation, UpdateItemOperation, DeleteItemOperatio
 import { offlineStore, type DBOperation, type DBItem } from './offlineStore'
 import { supabase, getCurrentUser } from './supabase'
 import { conflictDetector } from './conflictDetector'
-import { registerBackgroundSync, notifySyncComplete, notifySyncStart } from './serviceWorker'
-import { initOfflineContext, getOfflineContext, subscribeToOfflineContext, type OfflineContextValue } from './offlineContext'
+import {
+  registerBackgroundSync,
+  notifySyncComplete,
+  notifySyncStart,
+  type BackgroundSyncRegistrationResult
+} from './serviceWorker'
+import {
+  initOfflineContext,
+  getOfflineContext,
+  subscribeToOfflineContext,
+  type OfflineContextValue,
+  getLastKnownUserId
+} from './offlineContext'
+import type { ConflictItem } from '../types/conflicts'
+import { isNetworkOnline } from './networkStatusService'
 
 type OperationInput = Omit<Operation, 'id' | 'timestamp' | 'retryCount' | 'accountId' | 'updatedBy' | 'version'>
 
@@ -17,9 +30,21 @@ export interface OperationQueueSnapshot {
   accountId: string | null
   length: number
   operations: Operation[]
+  lastEnqueueAt: string | null
+  lastOfflineEnqueueAt: string | null
+  lastEnqueueError: string | null
+  backgroundSyncAvailable: boolean | null
+  backgroundSyncReason: string | null
 }
 
 type QueueListener = (snapshot: OperationQueueSnapshot) => void
+
+export class OfflineContextError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'OfflineContextError'
+  }
+}
 
 class OperationQueue {
   private queue: Operation[] = []
@@ -30,6 +55,12 @@ class OperationQueue {
   private initPromise: Promise<void> | null = null
   private legacyImports = new Set<string>()
   private queueListeners = new Set<QueueListener>()
+  private lastResolvedUserId: string | null = null
+  private lastEnqueueAt: string | null = null
+  private lastOfflineEnqueueAt: string | null = null
+  private lastEnqueueError: string | null = null
+  private backgroundSyncAvailable: boolean | null = null
+  private backgroundSyncReason: string | null = null
 
   async init(): Promise<void> {
     if (this.initialized) {
@@ -73,63 +104,127 @@ class OperationQueue {
   async add(operation: OperationInput, metadata: OperationMetadataOverride = {}): Promise<string> {
     await this.init()
 
-    if (!this.context) {
-      this.context = getOfflineContext()
-    }
-
-    const [currentUser, contextSnapshot] = await Promise.all([
-      getCurrentUser().catch(() => null),
-      Promise.resolve(this.context)
-    ])
-
-    const resolvedAccountId =
-      metadata.accountId ?? this.inferAccountId(operation) ?? contextSnapshot?.accountId
-
-    if (!resolvedAccountId) {
-      throw new Error('Cannot queue operation until account context is available')
-    }
-
-    if (contextSnapshot?.accountId && contextSnapshot.accountId !== resolvedAccountId) {
-      throw new Error('Attempted to queue operation for a different account than the active context')
-    }
-
-    if (this.queue.length > 0 && this.queue[0].accountId !== resolvedAccountId) {
-      throw new Error('Operation queue already contains changes for a different account')
-    }
-
-    const resolvedUpdatedBy = currentUser?.id ?? contextSnapshot?.userId
-    if (!resolvedUpdatedBy) {
-      throw new Error('User must be authenticated to queue operations')
-    }
-
-    const resolvedTimestamp = metadata.timestamp ?? new Date().toISOString()
-    const resolvedVersion = metadata.version ?? 1
-    const operationId = crypto.randomUUID()
-    const fullOperation = {
-      ...operation,
-      id: operationId,
-      timestamp: resolvedTimestamp,
-      retryCount: 0,
-      accountId: resolvedAccountId,
-      updatedBy: resolvedUpdatedBy,
-      version: resolvedVersion
-    } as Operation
-
-    this.queue.push(fullOperation)
-    await this.persistQueue()
-    this.emitQueueChange()
-
     try {
-      await registerBackgroundSync()
+      if (!this.context) {
+        this.context = getOfflineContext()
+      }
+
+      const contextSnapshot = this.context
+      const resolvedAccountId =
+        metadata.accountId ?? this.inferAccountId(operation) ?? contextSnapshot?.accountId
+
+      if (!resolvedAccountId) {
+        throw new OfflineContextError('Cannot queue operation until account context is available')
+      }
+
+      if (contextSnapshot?.accountId && contextSnapshot.accountId !== resolvedAccountId) {
+        throw new OfflineContextError('Attempted to queue operation for a different account than the active context')
+      }
+
+      if (this.queue.length > 0 && this.queue[0].accountId !== resolvedAccountId) {
+        throw new OfflineContextError('Operation queue already contains changes for a different account')
+      }
+
+      let resolvedUpdatedBy =
+        contextSnapshot?.userId ??
+        this.lastResolvedUserId ??
+        getLastKnownUserId()
+      const usedCachedUser = Boolean(resolvedUpdatedBy)
+
+      if (!resolvedUpdatedBy) {
+        // Emit structured log when cached context is missing
+        const logData = {
+          accountId: resolvedAccountId,
+          operationType: operation.type,
+          hasContextSnapshot: Boolean(contextSnapshot),
+          hasLastResolvedUserId: Boolean(this.lastResolvedUserId),
+          hasLastKnownUserId: Boolean(getLastKnownUserId()),
+          isOnline: isNetworkOnline()
+        }
+        
+        if (isNetworkOnline()) {
+          console.warn('[operationQueue] cached user context missing, falling back to getCurrentUser', logData)
+          try {
+            const currentUser = await getCurrentUser()
+            resolvedUpdatedBy = currentUser?.id ?? null
+            if (resolvedUpdatedBy) {
+              console.info('[operationQueue] successfully resolved user from getCurrentUser', {
+                accountId: resolvedAccountId,
+                userId: resolvedUpdatedBy,
+                operationType: operation.type
+              })
+            } else {
+              console.warn('[operationQueue] getCurrentUser returned null user', logData)
+            }
+          } catch (error) {
+            console.error('[operationQueue] failed to fetch authenticated user for operation queue', {
+              ...logData,
+              error: error instanceof Error ? error.message : String(error)
+            })
+          }
+        } else {
+          console.error('[operationQueue] cached user context missing while offline, cannot queue operation', logData)
+          throw new OfflineContextError('Sign in before working offline so we can attribute queued work.')
+        }
+      }
+
+      if (!resolvedUpdatedBy) {
+        throw new OfflineContextError('Unable to determine user for queued operation. Please refresh or sign in again.')
+      }
+
+      const resolvedTimestamp = metadata.timestamp ?? new Date().toISOString()
+      const resolvedVersion = metadata.version ?? 1
+      const operationId = crypto.randomUUID()
+      const offlineEnqueue = !isNetworkOnline()
+      const fullOperation = {
+        ...operation,
+        id: operationId,
+        timestamp: resolvedTimestamp,
+        retryCount: 0,
+        accountId: resolvedAccountId,
+        updatedBy: resolvedUpdatedBy,
+        version: resolvedVersion
+      } as Operation
+
+      this.lastResolvedUserId = resolvedUpdatedBy
+      this.lastEnqueueAt = resolvedTimestamp
+      if (offlineEnqueue) {
+        this.lastOfflineEnqueueAt = resolvedTimestamp
+      }
+      this.lastEnqueueError = null
+
+      if (usedCachedUser && import.meta.env.DEV) {
+        console.info('[operationQueue] using cached user context for enqueue', {
+          accountId: resolvedAccountId,
+          userId: resolvedUpdatedBy,
+          operationType: operation.type
+        })
+      }
+
+      if (offlineEnqueue && import.meta.env.DEV) {
+        console.info('[operationQueue] queued operation while offline', {
+          accountId: resolvedAccountId,
+          operationId,
+          operationType: operation.type
+        })
+      }
+
+      this.queue.push(fullOperation)
+      await this.persistQueue()
+      this.emitQueueChange()
+      this.ensureBackgroundSyncRegistration()
+
+      if (isNetworkOnline()) {
+        void this.processQueue()
+      }
+
+      return operationId
     } catch (error) {
-      console.warn('Background sync registration failed:', error)
+      const message = error instanceof Error ? error.message : 'Failed to enqueue operation'
+      this.lastEnqueueError = message
+      this.emitQueueChange()
+      throw error
     }
-
-    if (navigator.onLine) {
-      void this.processQueue()
-    }
-
-    return operationId
   }
 
   private inferAccountId(operation: OperationInput): string | undefined {
@@ -262,7 +357,7 @@ class OperationQueue {
   async processQueue(): Promise<void> {
     await this.init()
 
-    if (this.isProcessing || this.queue.length === 0 || !navigator.onLine) {
+    if (this.isProcessing || this.queue.length === 0 || !isNetworkOnline()) {
       return
     }
 
@@ -334,6 +429,7 @@ class OperationQueue {
 
         // Notify sync completion if queue is now empty
         if (this.queue.length === 0) {
+          this.lastOfflineEnqueueAt = null // Clear offline enqueue timestamp when queue is empty
           notifySyncComplete({ pendingOperations: 0 })
         }
 
@@ -343,12 +439,19 @@ class OperationQueue {
         // Check for conflicts before retrying
         // Conflicts are detected and stored in IndexedDB by conflictDetector.detectConflicts
         // The UI (ConflictResolutionView) will load and display them
-        const projectId = this.getProjectIdFromOperation(operation)
+        const projectId = await this.resolveProjectId(operation)
         if (projectId) {
           const conflicts = await conflictDetector.detectConflicts(projectId)
-          if (conflicts.length > 0) {
-            console.warn('Conflicts detected during sync, marking operation as blocked:', conflicts)
-            operation.lastError = `Conflicts detected (${conflicts.length} item(s)) - please resolve conflicts in the UI`
+          if (this.shouldBlockOperation(operation, conflicts)) {
+            const targetItemId = this.getOperationTargetItemId(operation)
+            const blockingConflicts = conflicts.filter(conflict => conflict.id === targetItemId)
+            console.warn('Conflicts detected for operation, marking as blocked', {
+              operationId: operation.id,
+              conflictingItems: blockingConflicts.map(conflict => conflict.id)
+            })
+            operation.lastError = targetItemId
+              ? `Conflicts detected for item ${targetItemId}`
+              : 'Conflicts detected - please resolve before retrying'
             operation.retryCount = 5 // Mark as permanently failed due to conflicts
             await this.persistQueue()
             this.emitQueueChange() // Notify UI that queue state changed
@@ -390,11 +493,14 @@ class OperationQueue {
       // Check for conflicts before executing
       // Conflicts are detected and stored in IndexedDB by conflictDetector.detectConflicts
       // The UI (ConflictResolutionView) will load and display them
-      const projectId = this.getProjectIdFromOperation(operation)
+      const projectId = await this.resolveProjectId(operation)
       if (projectId) {
         const conflicts = await conflictDetector.detectConflicts(projectId)
-        if (conflicts.length > 0) {
-          console.warn('Conflicts detected, blocking operation execution:', conflicts)
+        if (this.shouldBlockOperation(operation, conflicts)) {
+          console.warn('Conflicts detected for queued operation, delaying execution', {
+            operationId: operation.id,
+            conflictingItems: conflicts.map(conflict => conflict.id)
+          })
           // Conflicts are already stored in IndexedDB by conflictDetector
           // UI will surface them via ConflictResolutionView
           return false
@@ -422,16 +528,32 @@ class OperationQueue {
     switch (operation.type) {
       case 'CREATE_ITEM':
         return (operation as CreateItemOperation).data.projectId
-      case 'UPDATE_ITEM':
-        // UPDATE_ITEM doesn't have projectId in the current operation structure
-        // We'll need to look up the item to get projectId, but for now skip conflict detection
-        return null
-      case 'DELETE_ITEM':
-        // DELETE_ITEM doesn't have projectId in the current operation structure
-        // We'll need to look up the item to get projectId, but for now skip conflict detection
-        return null
       default:
         return null
+    }
+  }
+
+  private async resolveProjectId(operation: Operation): Promise<string | null> {
+    const directProjectId = this.getProjectIdFromOperation(operation)
+    if (directProjectId) {
+      return directProjectId
+    }
+
+    const targetItemId = this.getOperationTargetItemId(operation)
+    if (!targetItemId) {
+      return null
+    }
+
+    try {
+      const localItem = await offlineStore.getItemById(targetItemId)
+      return localItem?.projectId ?? null
+    } catch (error) {
+      console.warn('Failed to resolve projectId for operation from offline store', {
+        operationId: operation.id,
+        targetItemId,
+        error
+      })
+      return null
     }
   }
 
@@ -537,6 +659,35 @@ class OperationQueue {
       console.error('Failed to create item on server:', error)
       return false
     }
+  }
+
+  private getOperationTargetItemId(operation: Operation): string | null {
+    switch (operation.type) {
+      case 'CREATE_ITEM':
+      case 'UPDATE_ITEM':
+      case 'DELETE_ITEM':
+        return operation.data.id
+      default:
+        return null
+    }
+  }
+
+  private shouldBlockOperation(operation: Operation, conflicts: ConflictItem[]): boolean {
+    if (conflicts.length === 0) {
+      return false
+    }
+
+    // CREATE_ITEM operations cannot conflict until after insertion succeeds
+    if (operation.type === 'CREATE_ITEM') {
+      return false
+    }
+
+    const targetItemId = this.getOperationTargetItemId(operation)
+    if (!targetItemId) {
+      return false
+    }
+
+    return conflicts.some(conflict => conflict.id === targetItemId)
   }
 
   private async executeUpdateItem(operation: UpdateItemOperation): Promise<boolean> {
@@ -712,7 +863,12 @@ class OperationQueue {
     return {
       accountId: this.getActiveAccountId(),
       length: this.queue.length,
-      operations: [...this.queue]
+      operations: [...this.queue],
+      lastEnqueueAt: this.lastEnqueueAt,
+      lastOfflineEnqueueAt: this.lastOfflineEnqueueAt,
+      lastEnqueueError: this.lastEnqueueError,
+      backgroundSyncAvailable: this.backgroundSyncAvailable,
+      backgroundSyncReason: this.backgroundSyncReason
     }
   }
 
@@ -734,6 +890,7 @@ class OperationQueue {
     await this.init()
     const previousAccountId = this.queue[0]?.accountId ?? this.context?.accountId
     this.queue = []
+    this.lastOfflineEnqueueAt = null // Clear offline enqueue timestamp when queue is cleared
     const targetAccountId = accountId ?? previousAccountId
 
     try {
@@ -772,6 +929,46 @@ class OperationQueue {
 
   private getActiveAccountId(): string | null {
     return this.queue[0]?.accountId ?? this.context?.accountId ?? null
+  }
+
+  private ensureBackgroundSyncRegistration(): void {
+    if (typeof window === 'undefined') {
+      return
+    }
+    
+    // Fire-and-forget: don't block operationQueue.add on background sync registration
+    // This ensures operations can be queued even if service worker isn't ready
+    void registerBackgroundSync()
+      .then(result => {
+        this.captureBackgroundSyncStatus(result)
+      })
+      .catch(error => {
+        const message = error instanceof Error ? error.message : 'register-error'
+        this.captureBackgroundSyncStatus({
+          enabled: false,
+          supported: false,
+          reason: message
+        })
+      })
+  }
+
+  private captureBackgroundSyncStatus(result: BackgroundSyncRegistrationResult): void {
+    const nextAvailable = result.enabled
+    const nextReason = result.enabled ? null : (result.reason ?? (result.supported ? 'unknown' : 'unsupported'))
+
+    if (this.backgroundSyncAvailable === nextAvailable && this.backgroundSyncReason === nextReason) {
+      return
+    }
+
+    if (import.meta.env.DEV && nextAvailable === false && nextReason) {
+      console.warn('[operationQueue] background sync unavailable', {
+        reason: nextReason
+      })
+    }
+
+    this.backgroundSyncAvailable = nextAvailable
+    this.backgroundSyncReason = nextReason
+    this.emitQueueChange()
   }
 }
 

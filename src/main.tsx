@@ -7,6 +7,8 @@ import './index.css'
 import { AuthProvider } from './contexts/AuthContext'
 import { NavigationStackProvider } from './contexts/NavigationStackContext'
 import { setGlobalQueryClient } from './utils/queryClient'
+import { registerSW } from 'virtual:pwa-register'
+import { isNetworkOnline } from './services/networkStatusService'
 
 // Create a client
 const queryClient = new QueryClient({
@@ -17,7 +19,7 @@ const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
       retry: (failureCount, error) => {
         // Don't retry on network errors when offline
-        if (!navigator.onLine && failureCount >= 1) return false
+        if (!isNetworkOnline() && failureCount >= 1) return false
         return failureCount < 3
       },
     },
@@ -40,3 +42,32 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     </AuthProvider>
   </React.StrictMode>,
 )
+
+const registerCustomServiceWorker = (): void => {
+  if (import.meta.env.MODE === 'test') {
+    return
+  }
+
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+    return
+  }
+
+  if (!('serviceWorker' in navigator)) {
+    return
+  }
+
+  registerSW({
+    immediate: true,
+    onRegisteredSW(swUrl, registration) {
+      if (import.meta.env.DEV) {
+        const scope = registration?.scope ?? swUrl
+        console.info('[sw] custom service worker registered', scope)
+      }
+    },
+    onRegisterError(error) {
+      console.error('[sw] custom service worker registration failed', error)
+    }
+  })
+}
+
+registerCustomServiceWorker()

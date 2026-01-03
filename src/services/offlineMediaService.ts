@@ -1,4 +1,5 @@
 import { offlineStore } from './offlineStore'
+import { isNetworkOnline } from './networkStatusService'
 
 export class OfflineMediaService {
   private readonly MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB per file
@@ -100,7 +101,7 @@ export class OfflineMediaService {
     const mediaId = await this.saveMediaFile(accountId, itemId, file)
 
     // If offline, mark for later upload
-    const isOnline = navigator.onLine
+    const isOnline = isNetworkOnline()
     if (!isOnline) {
       // Store upload intent for when we come back online
       await this.markForUpload(mediaId, {

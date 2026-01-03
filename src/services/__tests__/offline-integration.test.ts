@@ -463,7 +463,7 @@ describe('Offline Integration Tests', () => {
       }
 
       // Create item via unifiedItemsService (should delegate to offlineItemService)
-      const itemId = await unifiedItemsService.createItem(TEST_ACCOUNT_ID, itemData)
+      const result = await unifiedItemsService.createItem(TEST_ACCOUNT_ID, itemData)
 
       // Verify operation is queued
       expect(operationQueue.getQueueLength()).toBe(1)
@@ -478,8 +478,10 @@ describe('Offline Integration Tests', () => {
       expect(cachedItem?.accountId).toBe(TEST_ACCOUNT_ID)
       expect(cachedItem?.projectId).toBe('proj-123')
 
-      // Verify itemId is a temp ID (starts with 'temp-')
-      expect(itemId).toMatch(/^temp-/)
+      // Verify offline branch returned metadata
+      expect(result.mode).toBe('offline')
+      expect(result.itemId).toMatch(/^I-/)
+      expect(result.operationId).toBeDefined()
     })
 
     it('should persist queue across app reloads', async () => {

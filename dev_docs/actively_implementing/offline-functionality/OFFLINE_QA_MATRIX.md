@@ -4,6 +4,14 @@ This document provides a comprehensive testing checklist for offline functionali
 
 ## Test Environment Setup
 
+### Automation Coverage (2026-01-02)
+
+| Scenario | Coverage | Notes |
+| --- | --- | --- |
+| Offline item creation (Add Item / unifiedItemsService) | ✅ Automated (`offline-integration.test.ts`) | Verifies offline enqueue, IndexedDB cache, and absence of Supabase calls when offline. |
+| Operation queue context handling | ✅ Automated (`operationQueue.test.ts`) | Ensures cached offline context bypasses auth calls and missing context errors bubble immediately. |
+| Network timeout handling | ✅ Automated (`networkStatusService.test.ts`) | Validates `withNetworkTimeout` abort behavior for slow Supabase calls. |
+
 ### Prerequisites
 - Chrome DevTools Network tab (to simulate offline mode)
 - Multiple browser tabs/windows (for conflict scenarios)

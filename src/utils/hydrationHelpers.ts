@@ -103,3 +103,73 @@ export async function hydrateBusinessInventoryCache(
     console.warn('Failed to hydrate business inventory cache:', error)
   }
 }
+
+/**
+ * Hydrate optimistic item into React Query cache immediately after creation
+ * This makes the item appear in lists before sync completes
+ * 
+ * @param accountId - Account ID
+ * @param itemId - Optimistic item ID
+ * @param itemData - Item data that was just created
+ */
+export async function hydrateOptimisticItem(
+  accountId: string,
+  itemId: string,
+  itemData: Omit<Item, 'itemId' | 'dateCreated' | 'lastUpdated'>
+): Promise<void> {
+  try {
+    const { getGlobalQueryClient } = await import('./queryClient')
+    const queryClient = getGlobalQueryClient()
+    
+    // Convert itemData to full Item format
+    const now = new Date().toISOString()
+    const optimisticItem: Item = {
+      ...itemData,
+      itemId,
+      accountId,
+      dateCreated: itemData.dateCreated || now,
+      lastUpdated: itemData.lastUpdated || now,
+    }
+    
+    // Update single item cache
+    queryClient.setQueryData(['item', accountId, itemId], optimisticItem)
+    
+    // Update project items cache if projectId exists
+    if (itemData.projectId) {
+      queryClient.setQueryData(['project-items', accountId, itemData.projectId], (old: Item[] | undefined) => {
+        if (!old) return [optimisticItem]
+        // Check if item already exists (shouldn't happen, but be safe)
+        const exists = old.some(item => item.itemId === itemId)
+        if (exists) {
+          return old.map(item => item.itemId === itemId ? optimisticItem : item)
+        }
+        return [optimisticItem, ...old]
+      })
+    } else {
+      // Update business inventory cache if no projectId
+      queryClient.setQueryData(['business-inventory', accountId], (old: Item[] | undefined) => {
+        if (!old) return [optimisticItem]
+        const exists = old.some(item => item.itemId === itemId)
+        if (exists) {
+          return old.map(item => item.itemId === itemId ? optimisticItem : item)
+        }
+        return [optimisticItem, ...old]
+      })
+    }
+    
+    // Update transaction items cache if transactionId exists
+    if (itemData.transactionId) {
+      queryClient.setQueryData(['transaction-items', accountId, itemData.transactionId], (old: Item[] | undefined) => {
+        if (!old) return [optimisticItem]
+        const exists = old.some(item => item.itemId === itemId)
+        if (exists) {
+          return old.map(item => item.itemId === itemId ? optimisticItem : item)
+        }
+        return [optimisticItem, ...old]
+      })
+    }
+  } catch (error) {
+    console.warn('Failed to hydrate optimistic item into React Query cache:', error)
+    // Don't throw - this is a performance optimization, not critical
+  }
+}

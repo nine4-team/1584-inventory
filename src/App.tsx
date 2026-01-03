@@ -9,6 +9,7 @@ import { ProjectRealtimeProvider } from './contexts/ProjectRealtimeContext'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import { NetworkStatus } from './components/NetworkStatus'
 import { SyncStatus } from './components/SyncStatus'
+import { BackgroundSyncErrorNotifier } from './components/BackgroundSyncErrorNotifier'
 import { StorageQuotaWarning } from './components/ui/StorageQuotaWarning'
 import { offlineStore } from './services/offlineStore'
 import { operationQueue } from './services/operationQueue'
@@ -22,13 +23,19 @@ const withRouteSuspense = (element: ReactNode, fallback?: ReactNode) => (
 function App() {
   useEffect(() => {
     // Initialize offline store and operation queue on app startup
+    // This ensures offlineContext is hydrated before offline-first screens render
     const initOfflineServices = async () => {
       try {
+        // Initialize offline context first - this is critical for offline-first screens
+        const { initOfflineContext } = await import('./services/offlineContext')
+        await initOfflineContext()
+        console.log('[App] Offline context initialized')
+
         await offlineStore.init()
-        console.log('Offline store initialized')
+        console.log('[App] Offline store initialized')
 
         await operationQueue.init()
-        console.log('Operation queue initialized')
+        console.log('[App] Operation queue initialized')
 
         await initSyncScheduler()
 
@@ -36,13 +43,13 @@ function App() {
         try {
           const cleanedCount = await offlineMediaService.cleanupExpiredMedia()
           if (cleanedCount > 0) {
-            console.log(`Cleaned up ${cleanedCount} expired media files`)
+            console.log(`[App] Cleaned up ${cleanedCount} expired media files`)
           }
         } catch (error) {
-          console.error('Failed to cleanup expired media:', error)
+          console.error('[App] Failed to cleanup expired media:', error)
         }
       } catch (error) {
-        console.error('Failed to initialize offline services:', error)
+        console.error('[App] Failed to initialize offline services:', error)
       }
     }
 
@@ -56,6 +63,7 @@ function App() {
           <ToastProvider>
             <NetworkStatus />
             <SyncStatus />
+            <BackgroundSyncErrorNotifier />
             <div className="fixed top-16 left-0 right-0 z-40 px-4 pt-2">
               <StorageQuotaWarning />
             </div>

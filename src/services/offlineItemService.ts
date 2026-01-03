@@ -3,21 +3,29 @@ import { supabase } from './supabase'
 import { operationQueue } from './operationQueue'
 import type { Item } from '../types'
 import type { Operation } from '../types/operations'
+import { isNetworkOnline } from './networkStatusService'
 
 export interface OfflineOperationResult {
   operationId: string
   wasQueued: boolean
+  itemId?: string
+}
+
+export class OfflineStorageError extends Error {
+  constructor(message: string, public readonly cause?: unknown) {
+    super(message)
+    this.name = 'OfflineStorageError'
+  }
+}
+
+export class OfflineQueueUnavailableError extends OfflineStorageError {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause)
+    this.name = 'OfflineQueueUnavailableError'
+  }
 }
 
 export class OfflineItemService {
-  private isOnline = navigator.onLine
-
-  constructor() {
-    // Listen for network changes
-    window.addEventListener('online', () => this.isOnline = true)
-    window.addEventListener('offline', () => this.isOnline = false)
-  }
-
   async getItemsByProject(
     accountId: string,
     projectId: string,
@@ -26,7 +34,7 @@ export class OfflineItemService {
   ): Promise<Item[]> {
     // Offline-aware query: try network first, fall back to cache
     try {
-      if (this.isOnline) {
+      if (isNetworkOnline()) {
         // Fetch from Supabase
         const { data, error } = await supabase
           .from('items')
@@ -96,34 +104,19 @@ export class OfflineItemService {
     accountId: string,
     itemData: Omit<Item, 'itemId' | 'dateCreated' | 'lastUpdated'>
   ): Promise<OfflineOperationResult> {
-    await offlineStore.init().catch(() => {})
-    
-    // Hydrate from offlineStore first to get any existing optimistic state
-    const existingItems = await offlineStore.getAllItems().catch(() => [])
-    
+    try {
+      await offlineStore.init()
+    } catch (error) {
+      console.error('Offline storage unavailable during createItem:', error)
+      throw new OfflineQueueUnavailableError(
+        'Offline storage is unavailable. Please refresh or try again online.',
+        error
+      )
+    }
+
     const timestamp = new Date().toISOString()
     const itemId = `I-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
     const qrKey = itemData.qrKey || `QR-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
-    
-    // Convert Item to operation format
-    // Note: operationQueue.executeCreateItem expects simplified data, but we'll store full itemData
-    const operation: Omit<Operation, 'id' | 'timestamp' | 'retryCount' | 'accountId' | 'updatedBy' | 'version'> = {
-      type: 'CREATE_ITEM',
-      data: {
-        id: itemId, // item_id (business identifier) - must be provided
-        accountId,
-        projectId: itemData.projectId || '',
-        name: itemData.name || '',
-        description: itemData.description,
-        purchasePrice: itemData.purchasePrice // Include actual purchase price
-      }
-    }
-
-    const operationId = await operationQueue.add(operation, {
-      accountId,
-      version: 1,
-      timestamp
-    })
 
     // Optimistically update local store with full item data
     const tempItem: DBItem = {
@@ -162,14 +155,66 @@ export class OfflineItemService {
       last_synced_at: null // Not synced yet
     }
 
-    await offlineStore.saveItems([tempItem])
+    try {
+      await offlineStore.saveItems([tempItem])
+      console.debug('Persisted optimistic offline item before queueing create', {
+        itemId,
+        projectId: tempItem.projectId
+      })
+    } catch (error) {
+      console.error('Failed to cache optimistic item before queueing CREATE operation', error)
+      throw new OfflineQueueUnavailableError(
+        'Unable to cache the item for offline sync. Free some storage or retry online.',
+        error
+      )
+    }
+
+    // Convert Item to operation format
+    // Note: operationQueue.executeCreateItem expects simplified data, but we'll store full itemData
+    const operation: Omit<Operation, 'id' | 'timestamp' | 'retryCount' | 'accountId' | 'updatedBy' | 'version'> = {
+      type: 'CREATE_ITEM',
+      data: {
+        id: itemId, // item_id (business identifier) - must be provided
+        accountId,
+        projectId: itemData.projectId || '',
+        name: itemData.name || '',
+        description: itemData.description,
+        purchasePrice: itemData.purchasePrice // Include actual purchase price
+      }
+    }
+
+    let operationId: string
+    try {
+      operationId = await operationQueue.add(operation, {
+        accountId,
+        version: 1,
+        timestamp
+      })
+    } catch (error) {
+      console.error('Failed to enqueue CREATE_ITEM operation after caching optimistic data', error)
+      // Attempt to roll back local cache entry so we do not keep orphaned items
+      try {
+        await offlineStore.deleteItem(itemId)
+      } catch (rollbackError) {
+        console.warn('Unable to roll back optimistic item after queue failure', rollbackError)
+      }
+      throw error
+    }
 
     // Trigger immediate processing if online
-    if (navigator.onLine) {
+    if (isNetworkOnline()) {
       operationQueue.processQueue()
     }
 
-    return { operationId, wasQueued: true }
+    if (import.meta.env.DEV) {
+      console.info('[offlineItemService] queued CREATE_ITEM for offline sync', {
+        accountId,
+        itemId,
+        operationId
+      })
+    }
+
+    return { operationId, wasQueued: true, itemId }
   }
 
   /**
@@ -248,11 +293,11 @@ export class OfflineItemService {
     await offlineStore.saveItems([optimisticItem])
 
     // Trigger immediate processing if online
-    if (navigator.onLine) {
+    if (isNetworkOnline()) {
       operationQueue.processQueue()
     }
 
-    return { operationId, wasQueued: true }
+    return { operationId, wasQueued: true, itemId }
   }
 
   /**
@@ -287,11 +332,11 @@ export class OfflineItemService {
     // React Query invalidation handle this when sync completes.
 
     // Trigger immediate processing if online
-    if (navigator.onLine) {
+    if (isNetworkOnline()) {
       operationQueue.processQueue()
     }
 
-    return { operationId, wasQueued: true }
+    return { operationId, wasQueued: true, itemId }
   }
 
   private convertDbItemToItem(dbItem: DBItem): Item {

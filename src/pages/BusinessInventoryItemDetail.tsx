@@ -57,12 +57,13 @@ export default function BusinessInventoryItemDetail() {
 
       // Create a new item with similar data but new ID
       const { itemId: originalItemId, dateCreated, lastUpdated, ...itemData } = originalItem
-      return await unifiedItemsService.createItem(currentAccountId, {
+      const result = await unifiedItemsService.createItem(currentAccountId, {
         ...itemData,
         inventoryStatus: 'available',
         projectId: null,
         disposition: 'inventory' // Business inventory duplicates should always stay inventory
       })
+      return result.itemId
     }
   })
 

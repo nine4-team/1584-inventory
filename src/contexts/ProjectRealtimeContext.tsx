@@ -3,6 +3,7 @@ import { useAccount } from './AccountContext'
 import type { Item, Project, Transaction } from '@/types'
 import { lineageService } from '@/services/lineageService'
 import { projectService, transactionService, unifiedItemsService } from '@/services/inventoryService'
+import { isNetworkOnline } from '@/services/networkStatusService'
 
 type ProjectRealtimeTelemetry = {
   activeChannelCount: number
@@ -474,6 +475,19 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
         return
       }
 
+      // Guard: don't initialize projects while offline
+      if (!isNetworkOnline()) {
+        console.warn(`ProjectRealtimeProvider: Skipping initialization of project ${projectId} while offline`)
+        setEntry(projectId, entry => ({
+          ...entry,
+          isLoading: false,
+          error: 'Network unavailable',
+          initialized: false, // Keep false so it retries when we come back online
+        }))
+        initializingRef.current[projectId] = false
+        return
+      }
+
       setEntry(projectId, entry => ({
         ...entry,
         isLoading: true,
@@ -533,6 +547,11 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
   )
 
   useEffect(() => {
+    // Don't attempt initialization while offline to prevent infinite loops
+    if (!isNetworkOnline()) {
+      return
+    }
+    
     Object.entries(snapshots).forEach(([projectId, entry]) => {
       if (entry.refCount > 0 && !entry.initialized && !initializingRef.current[projectId]) {
         void initializeProject(projectId)

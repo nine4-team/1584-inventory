@@ -21,13 +21,26 @@ export function RetrySyncButton({
   label = 'Retry sync',
   showPendingCount = true
 }: RetrySyncButtonProps) {
-  const [pendingCount, setPendingCount] = useState(() => operationQueue.getQueueLength())
+  const initialSnapshot = operationQueue.getSnapshot()
+  const [pendingCount, setPendingCount] = useState(initialSnapshot.length)
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [lastOfflineEnqueueAt, setLastOfflineEnqueueAt] = useState<string | null>(null)
+  const [lastEnqueueError, setLastEnqueueError] = useState<string | null>(null)
+  const [backgroundSyncAvailable, setBackgroundSyncAvailable] = useState<boolean | null>(
+    initialSnapshot.backgroundSyncAvailable ?? null
+  )
+  const [backgroundSyncReason, setBackgroundSyncReason] = useState<string | null>(
+    initialSnapshot.backgroundSyncReason ?? null
+  )
 
   useEffect(() => {
     const unsubscribe = operationQueue.subscribe(snapshot => {
       setPendingCount(snapshot.length)
+      setLastOfflineEnqueueAt(snapshot.lastOfflineEnqueueAt)
+      setLastEnqueueError(snapshot.lastEnqueueError)
+      setBackgroundSyncAvailable(snapshot.backgroundSyncAvailable)
+      setBackgroundSyncReason(snapshot.backgroundSyncReason)
     })
     return () => unsubscribe()
   }, [])
@@ -68,7 +81,44 @@ export function RetrySyncButton({
           <span className="text-xs font-normal text-gray-600">({pendingCount} pending)</span>
         )}
       </Button>
-      {error && <p className="text-xs text-red-600">{error}</p>}
+      {lastOfflineEnqueueAt && pendingCount > 0 && (
+        <p className="text-xs text-amber-600">
+          Offline save queued at {formatQueueTimestamp(lastOfflineEnqueueAt)}
+        </p>
+      )}
+      {backgroundSyncAvailable === false && (
+        <p className="text-xs text-amber-600">
+          {formatBackgroundSyncWarning(backgroundSyncReason)}
+        </p>
+      )}
+      {(error || lastEnqueueError) && (
+        <p className="text-xs text-red-600">
+          {error ?? lastEnqueueError}
+        </p>
+      )}
     </div>
   )
+}
+
+function formatQueueTimestamp(timestamp: string): string {
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) {
+    return timestamp
+  }
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function formatBackgroundSyncWarning(reason: string | null): string {
+  switch (reason) {
+    case 'no-controller':
+      return 'Background sync failed — reload to activate the service worker.'
+    case 'ready-timeout':
+      return 'Background sync failed to initialize — keep Ledger open to sync.'
+    case 'unsupported':
+      return 'Background sync unsupported in this browser. Keep Ledger open to sync.'
+    default:
+      return reason
+        ? `Background sync unavailable (${reason}). Keep Ledger open or retry manually.`
+        : 'Background sync unavailable. Keep Ledger open or retry manually.'
+  }
 }

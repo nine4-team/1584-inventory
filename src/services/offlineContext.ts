@@ -110,6 +110,10 @@ export function getOfflineContext(): OfflineContextValue | null {
   return cachedContext
 }
 
+export function getLastKnownUserId(): string | null {
+  return partialState.userId ?? cachedContext?.userId ?? null
+}
+
 export async function updateOfflineContext(partial: { userId?: string | null; accountId?: string | null }): Promise<void> {
   if ('userId' in partial) {
     partialState.userId = partial.userId ?? null

@@ -5,6 +5,9 @@ import { getTaxPresetById } from './taxPresetsService'
 import { CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { lineageService } from './lineageService'
 import { offlineStore, type DBItem, type DBTransaction, type DBProject } from './offlineStore'
+import { isNetworkOnline, withNetworkTimeout, NetworkTimeoutError } from './networkStatusService'
+import { OfflineQueueUnavailableError } from './offlineItemService'
+import { OfflineContextError } from './operationQueue'
 import type { Item, Project, FilterOptions, PaginationOptions, Transaction, TransactionItemFormData, TransactionCompleteness, CompletenessStatus, ItemImage } from '@/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
@@ -13,6 +16,10 @@ type SharedRealtimeEntry<T> = {
   callbacks: Set<(payload: T[]) => void>
   data: T[]
 }
+
+export type CreateItemResult =
+  | { mode: 'online'; itemId: string }
+  | { mode: 'offline'; itemId: string; operationId: string }
 
 const CANONICAL_TRANSACTION_PREFIXES = ['INV_PURCHASE_', 'INV_SALE_', 'INV_TRANSFER_'] as const
 
@@ -32,11 +39,6 @@ function syncProjectItemsRealtimeSnapshot(accountId: string, projectId: string, 
   if (!entry) return
   // Keep realtime cache aligned with server-truth so future events diff correctly.
   entry.data = [...nextItems]
-}
-
-const isBrowserOnline = () => {
-  if (typeof navigator === 'undefined') return true
-  return navigator.onLine
 }
 
 async function cacheItemsOffline(rows: any[]) {
@@ -74,41 +76,43 @@ async function cacheProjectsOffline(rows: any[]) {
 
 function mapSupabaseItemToOfflineRecord(row: any): DBItem {
   const converted = convertTimestamps(row)
+  const nowIso = new Date().toISOString()
+
   return {
-    itemId: converted.item_id || converted.id,
+    itemId: converted.item_id ?? converted.id,
     accountId: converted.account_id,
     projectId: converted.project_id ?? null,
     transactionId: converted.transaction_id ?? null,
     previousProjectTransactionId: converted.previous_project_transaction_id ?? null,
     previousProjectId: converted.previous_project_id ?? null,
-    name: converted.name || undefined,
-    description: converted.description || '',
-    source: converted.source || '',
-    sku: converted.sku || '',
-    price: converted.price || undefined,
-    purchasePrice: converted.purchase_price || undefined,
-    projectPrice: converted.project_price || undefined,
-    marketValue: converted.market_value || undefined,
-    paymentMethod: converted.payment_method || '',
-    disposition: converted.disposition || undefined,
-    notes: converted.notes || undefined,
-    space: converted.space || undefined,
-    qrKey: converted.qr_key || '',
+    name: converted.name ?? undefined,
+    description: converted.description ?? '',
+    source: converted.source ?? '',
+    sku: converted.sku ?? '',
+    price: converted.price ?? undefined,
+    purchasePrice: converted.purchase_price ?? undefined,
+    projectPrice: converted.project_price ?? undefined,
+    marketValue: converted.market_value ?? undefined,
+    paymentMethod: converted.payment_method ?? '',
+    disposition: converted.disposition ?? undefined,
+    notes: converted.notes ?? undefined,
+    space: converted.space ?? undefined,
+    qrKey: converted.qr_key ?? '',
     bookmark: converted.bookmark ?? false,
-    dateCreated: converted.date_created || converted.created_at || new Date().toISOString(),
-    lastUpdated: converted.last_updated || converted.updated_at || new Date().toISOString(),
-    createdAt: converted.created_at || converted.date_created || new Date().toISOString(),
+    dateCreated: converted.date_created ?? converted.created_at ?? nowIso,
+    lastUpdated: converted.last_updated ?? converted.updated_at ?? nowIso,
+    createdAt: converted.created_at ?? converted.date_created ?? nowIso,
     images: Array.isArray(converted.images) ? converted.images : [],
-    taxRatePct: converted.tax_rate_pct ? Number(converted.tax_rate_pct) : undefined,
-    taxAmountPurchasePrice: converted.tax_amount_purchase_price || undefined,
-    taxAmountProjectPrice: converted.tax_amount_project_price || undefined,
-    createdBy: converted.created_by || undefined,
-    inventoryStatus: converted.inventory_status || undefined,
-    businessInventoryLocation: converted.business_inventory_location || undefined,
+    taxRatePct: converted.tax_rate_pct != null ? Number(converted.tax_rate_pct) : undefined,
+    taxAmountPurchasePrice: converted.tax_amount_purchase_price ?? undefined,
+    taxAmountProjectPrice: converted.tax_amount_project_price ?? undefined,
+    createdBy: converted.created_by ?? undefined,
+    inventoryStatus: converted.inventory_status ?? undefined,
+    businessInventoryLocation: converted.business_inventory_location ?? undefined,
     originTransactionId: converted.origin_transaction_id ?? null,
     latestTransactionId: converted.latest_transaction_id ?? null,
     version: converted.version ?? 1,
-    last_synced_at: new Date().toISOString()
+    last_synced_at: nowIso
   }
 }
 
@@ -693,14 +697,38 @@ async function _enrichTransactionsWithProjectNames(
 
   // Batch fetch all projects
   const projectMap = new Map<string, string>()
-  try {
-    const projects = await projectService.getProjects(accountId)
+  
+  // Use provided projects if available
+  if (projects && projects.length > 0) {
     projects.forEach(project => {
       projectMap.set(project.id, project.name)
     })
-  } catch (error) {
-    console.warn('Failed to fetch projects for transaction enrichment:', error)
-    // Continue without enrichment rather than failing
+  } else {
+    // Only fetch from network if online
+    if (isNetworkOnline()) {
+      try {
+        const fetchedProjects = await projectService.getProjects(accountId)
+        fetchedProjects.forEach(project => {
+          projectMap.set(project.id, project.name)
+        })
+      } catch (error) {
+        console.warn('Failed to fetch projects for transaction enrichment:', error)
+        // Continue without enrichment rather than failing
+      }
+    } else {
+      // Offline: try to use cached projects from offlineStore
+      try {
+        await offlineStore.init()
+        const cachedProjects = await offlineStore.getProjects()
+        cachedProjects.forEach(project => {
+          // Convert DBProject to Project format for name lookup
+          projectMap.set(project.id, project.name)
+        })
+      } catch (error) {
+        console.warn('Failed to load cached projects for transaction enrichment:', error)
+        // Continue without enrichment rather than failing
+      }
+    }
   }
 
   // Enrich transactions with project names
@@ -879,7 +907,7 @@ export const transactionService = {
   },
   // Get transactions for a project (account-scoped)
   async getTransactions(accountId: string, projectId: string): Promise<Transaction[]> {
-    const online = isBrowserOnline()
+    const online = isNetworkOnline()
     if (online) {
       try {
         await ensureAuthenticatedForDatabase()
@@ -910,7 +938,7 @@ export const transactionService = {
       return []
     }
 
-    const online = isBrowserOnline()
+    const online = isNetworkOnline()
     if (online) {
       try {
         await ensureAuthenticatedForDatabase()
@@ -937,7 +965,7 @@ export const transactionService = {
 
   // Get single transaction (account-scoped)
   async getTransaction(accountId: string, _projectId: string, transactionId: string): Promise<Transaction | null> {
-    const online = isBrowserOnline()
+    const online = isNetworkOnline()
     if (online) {
       try {
         await ensureAuthenticatedForDatabase()
@@ -973,7 +1001,7 @@ export const transactionService = {
 
   // Get transaction by ID across all projects (for business inventory) - account-scoped
   async getTransactionById(accountId: string, transactionId: string): Promise<{ transaction: Transaction | null; projectId: string | null }> {
-    const online = isBrowserOnline()
+    const online = isNetworkOnline()
     if (online) {
       try {
         await ensureAuthenticatedForDatabase()
@@ -2261,7 +2289,7 @@ export const unifiedItemsService = {
     filters?: FilterOptions,
     pagination?: PaginationOptions
   ): Promise<Item[]> {
-    const online = isBrowserOnline()
+    const online = isNetworkOnline()
     if (online) {
       try {
         await ensureAuthenticatedForDatabase()
@@ -2437,7 +2465,7 @@ export const unifiedItemsService = {
     filters?: { status?: string; searchQuery?: string },
     pagination?: PaginationOptions
   ): Promise<Item[]> {
-    const online = isBrowserOnline()
+    const online = isNetworkOnline()
     if (online) {
       try {
         await ensureAuthenticatedForDatabase()
@@ -2539,76 +2567,112 @@ export const unifiedItemsService = {
   },
 
   // Create new item (account-scoped) - offline-aware orchestrator
-  async createItem(accountId: string, itemData: Omit<Item, 'itemId' | 'dateCreated' | 'lastUpdated'>): Promise<string> {
-    // Check network state and hydrate from offlineStore first
-    const online = isBrowserOnline()
+  async createItem(accountId: string, itemData: Omit<Item, 'itemId' | 'dateCreated' | 'lastUpdated'>): Promise<CreateItemResult> {
+    // Generate optimistic ID upfront so we always have one, even if operations fail
+    const optimisticItemId = `I-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
     
+    const queueOfflineCreate = async (reason: 'offline' | 'fallback' | 'timeout'): Promise<CreateItemResult> => {
+      try {
+        const { offlineItemService } = await import('./offlineItemService')
+        const result = await offlineItemService.createItem(accountId, itemData)
+        if (import.meta.env.DEV) {
+          console.info('[unifiedItemsService] createItem queued for offline processing', {
+            accountId,
+            itemId: result.itemId,
+            operationId: result.operationId,
+            reason
+          })
+        }
+        return {
+          mode: 'offline',
+          itemId: result.itemId ?? optimisticItemId,
+          operationId: result.operationId
+        }
+      } catch (error) {
+        // Propagate typed errors that the UI should handle (user needs to sign in, storage unavailable, etc.)
+        if (error instanceof OfflineQueueUnavailableError || error instanceof OfflineContextError) {
+          // Still include optimistic ID in error for UI reference, but throw the error
+          console.error('[unifiedItemsService] typed error during offline queue, propagating', {
+            accountId,
+            itemId: optimisticItemId,
+            reason,
+            errorType: error.constructor.name,
+            errorMessage: error.message
+          })
+          throw error
+        }
+        
+        // For unexpected errors, return optimistic result so UI can still show feedback
+        // This ensures deterministic UI messaging even when unexpected errors occur
+        const fallbackOperationId = `op-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+        console.error('[unifiedItemsService] unexpected error during offline queue, returning optimistic result', {
+          accountId,
+          itemId: optimisticItemId,
+          reason,
+          error: error instanceof Error ? error.message : String(error),
+          errorType: error instanceof Error ? error.constructor.name : typeof error
+        })
+        return {
+          mode: 'offline',
+          itemId: optimisticItemId,
+          operationId: fallbackOperationId
+        }
+      }
+    }
+
     // Hydrate from offlineStore before attempting Supabase operations
     try {
       await offlineStore.init()
-      // Pre-hydrate any existing optimistic state
-      const existingItems = await offlineStore.getAllItems().catch(() => [])
+      await offlineStore.getAllItems().catch(() => [])
     } catch (e) {
       console.warn('Failed to hydrate from offlineStore:', e)
     }
 
-    // If offline, delegate to offlineItemService
-    if (!online) {
-      const { offlineItemService } = await import('./offlineItemService')
-      const result = await offlineItemService.createItem(accountId, itemData)
-      // Return a temporary ID that will be replaced when sync completes
-      // The offlineItemService creates a temp ID internally
-      const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
-      return tempId
+    if (!isNetworkOnline()) {
+      return queueOfflineCreate('offline')
     }
 
-    // Online: try Supabase first, fall back to offline if it fails
     try {
       await ensureAuthenticatedForDatabase()
 
       const now = new Date()
-      // Generate a unique item_id (using timestamp + random string format like the original)
-      const itemId = `I-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
+      // Use the pre-generated optimistic ID for consistency
+      const itemId = optimisticItemId
       const qrKey = `QR-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
 
-      // Convert camelCase itemData to database format
       const dbItem = this._convertItemToDb({
         ...itemData,
         itemId,
         qrKey: itemData.qrKey || qrKey
       } as Item)
-      
-      // Set dateCreated and lastUpdated separately since they're omitted from the type
+
       dbItem.date_created = toDateOnlyString(now)
       dbItem.last_updated = now.toISOString()
-
-      // Set account_id and timestamps
       dbItem.account_id = accountId
       dbItem.created_at = now.toISOString()
       if (!dbItem.date_created) dbItem.date_created = toDateOnlyString(now)
       if (!dbItem.last_updated) dbItem.last_updated = now.toISOString()
       if (!dbItem.inventory_status) dbItem.inventory_status = 'available'
 
-      // If item is being created with a transaction_id but missing tax_rate_pct,
-      // attempt to read the transaction and inherit its tax_rate_pct.
       try {
         if (dbItem.transaction_id && dbItem.tax_rate_pct === null) {
-          const { data: txData } = await supabase
-            .from('transactions')
-            .select('tax_rate_pct')
-            .eq('account_id', accountId)
-            .eq('transaction_id', dbItem.transaction_id)
-            .single()
+          await withNetworkTimeout(async () => {
+            const { data: txData } = await supabase
+              .from('transactions')
+              .select('tax_rate_pct')
+              .eq('account_id', accountId)
+              .eq('transaction_id', dbItem.transaction_id)
+              .single()
 
-          if (txData && txData.tax_rate_pct !== undefined && txData.tax_rate_pct !== null) {
-            dbItem.tax_rate_pct = txData.tax_rate_pct
-          }
+            if (txData && txData.tax_rate_pct !== undefined && txData.tax_rate_pct !== null) {
+              dbItem.tax_rate_pct = txData.tax_rate_pct
+            }
+          })
         }
       } catch (e) {
         console.warn('Failed to inherit tax_rate_pct when creating item:', e)
       }
 
-      // Compute derived tax amounts (store as two-decimal strings). Treat empty/null prices as 0.
       const computeTaxString = (priceStr: string | null | undefined, ratePct: number | undefined | null) => {
         const priceNum = parseFloat(priceStr || '0')
         const rate = (ratePct !== undefined && ratePct !== null) ? (Number(ratePct) / 100) : 0
@@ -2619,11 +2683,12 @@ export const unifiedItemsService = {
       dbItem.tax_amount_purchase_price = computeTaxString(dbItem.purchase_price, dbItem.tax_rate_pct)
       dbItem.tax_amount_project_price = computeTaxString(dbItem.project_price, dbItem.tax_rate_pct)
 
-      const { error } = await supabase
-        .from('items')
-        .insert(dbItem)
-
-      if (error) throw error
+      await withNetworkTimeout(async () => {
+        const { error } = await supabase
+          .from('items')
+          .insert(dbItem)
+        if (error) throw error
+      })
 
       try {
         if (dbItem.transaction_id) {
@@ -2633,7 +2698,6 @@ export const unifiedItemsService = {
         console.warn('Failed to sync transaction item_ids after createItem:', e)
       }
 
-      // If this item was created attached to a transaction, adjust that transaction's derived sum and recompute
       try {
         if (dbItem.transaction_id) {
           const txId = dbItem.transaction_id
@@ -2653,21 +2717,21 @@ export const unifiedItemsService = {
         console.warn('Failed to notifyTransactionChanged after creating item (sync path):', e)
       }
 
-      return itemId
+      return { mode: 'online', itemId }
     } catch (error) {
-      // Network request failed - fall back to offline queue
+      if (error instanceof NetworkTimeoutError) {
+        console.warn('Supabase insert timed out, queuing item for offline sync.')
+        return queueOfflineCreate('timeout')
+      }
       console.warn('Failed to create item online, falling back to offline queue:', error)
-      const { offlineItemService } = await import('./offlineItemService')
-      const result = await offlineItemService.createItem(accountId, itemData)
-      const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
-      return tempId
+      return queueOfflineCreate('fallback')
     }
   },
 
   // Update item (account-scoped) - offline-aware orchestrator
   async updateItem(accountId: string, itemId: string, updates: Partial<Item>): Promise<void> {
     // Check network state and hydrate from offlineStore first
-    const online = isBrowserOnline()
+    const online = isNetworkOnline()
     
     // Hydrate from offlineStore before attempting Supabase operations
     try {
@@ -2857,7 +2921,7 @@ export const unifiedItemsService = {
   // Delete item (account-scoped) - offline-aware orchestrator
   async deleteItem(accountId: string, itemId: string): Promise<void> {
     // Check network state and hydrate from offlineStore first
-    const online = isBrowserOnline()
+    const online = isNetworkOnline()
     
     // Hydrate from offlineStore before attempting Supabase operations
     try {
@@ -2929,7 +2993,7 @@ export const unifiedItemsService = {
 
   // Get items for a transaction (by transaction_id) (account-scoped)
   async getItemsForTransaction(accountId: string, _projectId: string, transactionId: string): Promise<Item[]> {
-    const online = isBrowserOnline()
+    const online = isNetworkOnline()
     if (online) {
       try {
         await ensureAuthenticatedForDatabase()
@@ -4214,7 +4278,7 @@ export const unifiedItemsService = {
 
   // Helper function to get item by ID (account-scoped)
   async getItemById(accountId: string, itemId: string): Promise<Item | null> {
-    const online = isBrowserOnline()
+    const online = isNetworkOnline()
     if (online) {
       try {
         await ensureAuthenticatedForDatabase()

@@ -37,7 +37,13 @@ export default defineConfig({
       strategies: 'injectManifest',
       srcDir: 'public',
       filename: 'sw-custom.js',
-      registerType: process.env.NODE_ENV === 'production' ? 'autoUpdate' : null,
+      // Registration handled manually via virtual:pwa-register helper
+      registerType: 'autoUpdate',
+      injectRegister: null,
+      devOptions: {
+        enabled: true,
+        type: 'module'
+      },
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg', 'index.html'],
       manifest: {
         name: '1584 Design Inventory & Transactions',

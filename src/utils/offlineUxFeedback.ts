@@ -12,9 +12,10 @@ export interface OfflineOperationResult {
 
 /**
  * Get the standard offline save message
+ * Uses clear language to indicate item is queued, not fully saved
  */
 export function getOfflineSaveMessage(): string {
-  return 'Saved offline · will sync automatically'
+  return 'Item queued for sync · will be saved when online'
 }
 
 /**

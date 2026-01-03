@@ -6,12 +6,7 @@ import { useRealtimeConnectionStatus } from '@/hooks/useRealtimeConnectionStatus
 import { useProjectRealtimeOverview } from '@/contexts/ProjectRealtimeContext'
 import { subscribeToSyncScheduler, getSyncSchedulerSnapshot, type SyncSchedulerSnapshot } from '@/services/syncScheduler'
 import { RetrySyncButton } from './ui/RetrySyncButton'
-
-const syncSourceLabels: Record<string, string> = {
-  'background-sync': 'Background',
-  manual: 'Manual',
-  foreground: 'Foreground'
-}
+import { useNetworkState } from '@/hooks/useNetworkState'
 
 export function SyncStatus() {
   const [queueLength, setQueueLength] = useState(0)
@@ -24,6 +19,7 @@ export function SyncStatus() {
   )
   const { realtimeStatus, lastDisconnectedAt } = useRealtimeConnectionStatus()
   const { snapshots } = useProjectRealtimeOverview()
+  const { isOnline } = useNetworkState()
   const now = Date.now()
 
   const telemetryEntries = useMemo(() => {
@@ -161,15 +157,19 @@ export function SyncStatus() {
       case 'error':
         return `Sync error: ${combinedError}`
       case 'syncing':
-        return backgroundSyncActive ? 'Background sync running…' : 'Syncing changes…'
+        return 'Syncing changes…'
       case 'queue':
+        // Show user-friendly message based on network status
+        if (!isOnline) {
+          return 'Changes will sync when you\'re back online'
+        }
         return `${effectivePendingCount} change${effectivePendingCount === 1 ? '' : 's'} pending`
-      case 'waiting': {
-        const seconds = schedulerSnapshot.nextRunAt
-          ? Math.max(0, Math.ceil((schedulerSnapshot.nextRunAt - Date.now()) / 1000))
-          : 0
-        return `${effectivePendingCount} change${effectivePendingCount === 1 ? '' : 's'} pending — retrying in ${seconds}s`
-      }
+      case 'waiting':
+        // Simplified message - don't show countdown timer in main message
+        if (!isOnline) {
+          return 'Changes will sync when you\'re back online'
+        }
+        return `${effectivePendingCount} change${effectivePendingCount === 1 ? '' : 's'} pending`
       default:
         return 'Sync status unavailable'
     }
@@ -196,11 +196,7 @@ export function SyncStatus() {
         <div className="flex items-center gap-2">
           {statusIcon}
 
-          <span>
-            {lastSyncSource && statusVariant !== 'queue'
-              ? `[${syncSourceLabels[lastSyncSource] ?? lastSyncSource}] ${statusMessage}`
-              : statusMessage}
-          </span>
+          <span>{statusMessage}</span>
 
           {effectivePendingCount > 0 && statusVariant !== 'syncing' && (
             <RetrySyncButton className="ml-2" size="sm" showPendingCount />

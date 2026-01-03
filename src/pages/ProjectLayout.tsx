@@ -30,6 +30,7 @@ import { Button } from '@/components/ui/Button'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
+import { isNetworkOnline } from '@/services/networkStatusService'
 import {
   projectBudget,
   projectClientSummary,
@@ -214,18 +215,28 @@ export default function ProjectLayout() {
   }
 
   if (error) {
+    const isOfflineError = error === 'Network unavailable' || !isNetworkOnline()
+    
     return (
       <div className="text-center py-12">
         <div className="mx-auto h-12 w-12 text-red-400">⚠️</div>
-        <h3 className="mt-2 text-sm font-medium text-gray-900">Error Loading Project</h3>
-        <p className="mt-1 text-sm text-gray-500">{error}</p>
+        <h3 className="mt-2 text-sm font-medium text-gray-900">
+          {isOfflineError ? 'Offline' : 'Error Loading Project'}
+        </h3>
+        <p className="mt-1 text-sm text-gray-500">
+          {isOfflineError 
+            ? 'You\'re currently offline. The project will load automatically when you reconnect.'
+            : error}
+        </p>
         <div className="mt-6 flex justify-center space-x-3">
-          <button
-            onClick={retryLoadProject}
-            className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700"
-          >
-            Try Again
-          </button>
+          {!isOfflineError && (
+            <button
+              onClick={retryLoadProject}
+              className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700"
+            >
+              Try Again
+            </button>
+          )}
           <ContextBackLink
             fallback={backDestination}
             className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"

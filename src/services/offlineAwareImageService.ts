@@ -1,6 +1,6 @@
 import { ImageUploadService } from './imageService'
 import { offlineMediaService } from './offlineMediaService'
-import { useNetworkState } from '../hooks/useNetworkState'
+import { isNetworkOnline } from './networkStatusService'
 
 /**
  * Offline-aware image upload service that queues uploads when offline
@@ -17,7 +17,7 @@ export class OfflineAwareImageService {
     accountId: string,
     onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void
   ): Promise<{ url: string; fileName: string; size: number; mimeType: string }> {
-    const isOnline = navigator.onLine
+    const isOnline = isNetworkOnline()
 
     if (!isOnline) {
       // Store offline and queue for upload
