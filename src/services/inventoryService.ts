@@ -1816,7 +1816,7 @@ export const transactionService = {
       // Validate category_id belongs to account if provided
       if (dbTransaction.category_id) {
         const { data: category, error: categoryError } = await supabase
-          .from('budget_categories')
+          .from('vw_budget_categories')
           .select('id, account_id')
           .eq('id', dbTransaction.category_id)
           .eq('account_id', accountId)
@@ -2013,7 +2013,7 @@ export const transactionService = {
       // Validate category_id belongs to account if provided
       if (dbUpdates.category_id !== undefined && dbUpdates.category_id !== null) {
         const { data: category, error: categoryError } = await supabase
-          .from('budget_categories')
+          .from('vw_budget_categories')
           .select('id, account_id')
           .eq('id', dbUpdates.category_id)
           .eq('account_id', accountId)

@@ -28,10 +28,11 @@ export async function cacheBudgetCategoriesOffline(accountId: string): Promise<v
     }
 
     // Fetch directly from Supabase to avoid circular dependency
+    // Use view that reads from embedded categories in account_presets
     await ensureAuthenticatedForDatabase()
     
     const { data, error } = await supabase
-      .from('budget_categories')
+      .from('vw_budget_categories')
       .select('*')
       .eq('account_id', accountId)
       .eq('is_archived', false)

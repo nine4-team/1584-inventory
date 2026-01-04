@@ -21,6 +21,22 @@ vi.mock('../databaseService', () => ({
   ensureAuthenticatedForDatabase: vi.fn().mockResolvedValue(undefined)
 }))
 
+// Mock networkStatusService
+vi.mock('../networkStatusService', () => ({
+  isNetworkOnline: vi.fn().mockReturnValue(true)
+}))
+
+// Mock accountPresetsService
+vi.mock('../accountPresetsService', () => ({
+  getBudgetCategoryOrder: vi.fn().mockResolvedValue([])
+}))
+
+// Mock offlineMetadataService
+vi.mock('../offlineMetadataService', () => ({
+  cacheBudgetCategoriesOffline: vi.fn().mockResolvedValue(undefined),
+  getCachedBudgetCategories: vi.fn().mockResolvedValue([])
+}))
+
 // Import after mocks are set up
 import { budgetCategoriesService } from '../budgetCategoriesService'
 import * as supabaseModule from '../supabase'
@@ -37,9 +53,26 @@ const createMockCategory = (overrides?: Partial<any>) => ({
   ...overrides
 })
 
+// Helper to create RPC response format (JSONB object)
+const createRpcCategoryResponse = (overrides?: Partial<any>) => ({
+  id: 'test-category-id',
+  account_id: 'test-account-id',
+  name: 'Test Category',
+  slug: 'test-category',
+  is_archived: false,
+  metadata: null,
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+  ...overrides
+})
+
 describe('budgetCategoriesService', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Ensure rpc is mocked
+    if (!supabaseModule.supabase.rpc) {
+      (supabaseModule.supabase as any).rpc = vi.fn()
+    }
   })
 
   describe('getCategories', () => {
@@ -48,14 +81,22 @@ describe('budgetCategoriesService', () => {
         createMockCategory({ id: 'cat-1', name: 'Category 1' }),
         createMockCategory({ id: 'cat-2', name: 'Category 2' })
       ]
-      const mockQueryBuilder = createMockSupabaseClient().from('budget_categories')
       
-      vi.mocked(supabaseModule.supabase.from).mockReturnValue({
-        ...mockQueryBuilder,
+      const queryChain: any = {
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
         order: vi.fn().mockResolvedValue({ data: mockCategories, error: null })
-      } as any)
+      }
+      
+      // Make the chain awaitable
+      queryChain.then = (onResolve?: (value: any) => any) => {
+        return Promise.resolve({ data: mockCategories, error: null }).then(onResolve)
+      }
+      queryChain.catch = (onReject?: (error: any) => any) => {
+        return Promise.resolve({ data: mockCategories, error: null }).catch(onReject)
+      }
+      
+      vi.mocked(supabaseModule.supabase.from).mockReturnValue(queryChain as any)
 
       const categories = await budgetCategoriesService.getCategories('test-account-id')
       expect(categories).toHaveLength(2)
@@ -68,24 +109,20 @@ describe('budgetCategoriesService', () => {
         createMockCategory({ id: 'cat-1', name: 'Active Category', is_archived: false }),
         createMockCategory({ id: 'cat-2', name: 'Archived Category', is_archived: true })
       ]
-      const mockQueryBuilder = createMockSupabaseClient().from('budget_categories')
+      const filteredCategories = mockCategories.filter(c => !c.is_archived)
       
-      let queryChain: any = {
+      const queryChain: any = {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockImplementation((field, value) => {
-          if (field === 'is_archived') {
-            // Simulate filtering archived
-            return {
-              ...queryChain,
-              order: vi.fn().mockResolvedValue({ 
-                data: mockCategories.filter(c => !c.is_archived), 
-                error: null 
-              })
-            }
-          }
-          return queryChain
-        }),
-        order: vi.fn().mockResolvedValue({ data: mockCategories.filter(c => !c.is_archived), error: null })
+        eq: vi.fn().mockReturnThis(),
+        order: vi.fn().mockResolvedValue({ data: filteredCategories, error: null })
+      }
+      
+      // Make the chain awaitable
+      queryChain.then = (onResolve?: (value: any) => any) => {
+        return Promise.resolve({ data: filteredCategories, error: null }).then(onResolve)
+      }
+      queryChain.catch = (onReject?: (error: any) => any) => {
+        return Promise.resolve({ data: filteredCategories, error: null }).catch(onReject)
       }
 
       vi.mocked(supabaseModule.supabase.from).mockReturnValue(queryChain as any)
@@ -101,46 +138,52 @@ describe('budgetCategoriesService', () => {
         createMockCategory({ id: 'cat-1', name: 'Active Category', is_archived: false }),
         createMockCategory({ id: 'cat-2', name: 'Archived Category', is_archived: true })
       ]
-      const mockQueryBuilder = createMockSupabaseClient().from('budget_categories')
       
-      vi.mocked(supabaseModule.supabase.from).mockReturnValue({
-        ...mockQueryBuilder,
+      const queryChain: any = {
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
         order: vi.fn().mockResolvedValue({ data: mockCategories, error: null })
-      } as any)
+      }
+      
+      // Make the chain awaitable
+      queryChain.then = (onResolve?: (value: any) => any) => {
+        return Promise.resolve({ data: mockCategories, error: null }).then(onResolve)
+      }
+      queryChain.catch = (onReject?: (error: any) => any) => {
+        return Promise.resolve({ data: mockCategories, error: null }).catch(onReject)
+      }
+      
+      vi.mocked(supabaseModule.supabase.from).mockReturnValue(queryChain as any)
 
       const categories = await budgetCategoriesService.getCategories('test-account-id', true)
       expect(categories).toHaveLength(2)
     })
 
     it('should enforce account_id scoping', async () => {
-      const mockQueryBuilder = createMockSupabaseClient().from('budget_categories')
-      
-      vi.mocked(supabaseModule.supabase.from).mockReturnValue({
-        ...mockQueryBuilder,
+      let accountIdCalled = false
+      const queryChain: any = {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockImplementation((field, value) => {
-          expect(field).toBe('account_id')
-          expect(value).toBe('test-account-id')
-          return {
-            ...mockQueryBuilder,
-            eq: vi.fn().mockReturnThis(),
-            order: vi.fn().mockResolvedValue({ data: [], error: null })
+        eq: vi.fn().mockImplementation((field: string, value: any) => {
+          if (field === 'account_id') {
+            accountIdCalled = true
+            expect(value).toBe('test-account-id')
           }
+          return queryChain
         }),
         order: vi.fn().mockResolvedValue({ data: [], error: null })
-      } as any)
+      }
+      
+      vi.mocked(supabaseModule.supabase.from).mockReturnValue(queryChain as any)
 
       await budgetCategoriesService.getCategories('test-account-id')
-      // Test passes if eq('account_id', ...) was called
+      expect(accountIdCalled).toBe(true)
     })
   })
 
   describe('getCategory', () => {
     it('should return a single category by ID', async () => {
       const mockCategory = createMockCategory()
-      const mockQueryBuilder = createMockSupabaseClient().from('budget_categories')
+      const mockQueryBuilder = createMockSupabaseClient().from('vw_budget_categories')
       
       vi.mocked(supabaseModule.supabase.from).mockReturnValue({
         ...mockQueryBuilder,
@@ -157,7 +200,7 @@ describe('budgetCategoriesService', () => {
 
     it('should return null when category not found', async () => {
       const notFoundError = createNotFoundError()
-      const mockQueryBuilder = createMockSupabaseClient().from('budget_categories')
+      const mockQueryBuilder = createMockSupabaseClient().from('vw_budget_categories')
       
       vi.mocked(supabaseModule.supabase.from).mockReturnValue({
         ...mockQueryBuilder,
@@ -172,25 +215,21 @@ describe('budgetCategoriesService', () => {
 
     it('should enforce account_id scoping', async () => {
       const mockCategory = createMockCategory()
-      const mockQueryBuilder = createMockSupabaseClient().from('budget_categories')
       
       let accountIdCalled = false
-      vi.mocked(supabaseModule.supabase.from).mockReturnValue({
-        ...mockQueryBuilder,
+      const queryChain: any = {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockImplementation((field, value) => {
+        eq: vi.fn().mockImplementation((field: string, value: any) => {
           if (field === 'account_id') {
             accountIdCalled = true
             expect(value).toBe('test-account-id')
           }
-          return {
-            ...mockQueryBuilder,
-            eq: vi.fn().mockReturnThis(),
-            single: vi.fn().mockResolvedValue({ data: mockCategory, error: null })
-          }
+          return queryChain
         }),
         single: vi.fn().mockResolvedValue({ data: mockCategory, error: null })
-      } as any)
+      }
+      
+      vi.mocked(supabaseModule.supabase.from).mockReturnValue(queryChain as any)
 
       await budgetCategoriesService.getCategory('test-account-id', 'test-category-id')
       expect(accountIdCalled).toBe(true)
@@ -198,15 +237,12 @@ describe('budgetCategoriesService', () => {
   })
 
   describe('createCategory', () => {
-    it('should create a new category', async () => {
-      const mockCategory = createMockCategory()
-      const mockQueryBuilder = createMockSupabaseClient().from('budget_categories')
+    it('should create a new category via RPC', async () => {
+      const mockRpcResponse = createRpcCategoryResponse({ name: 'New Category' })
       
-      vi.mocked(supabaseModule.supabase.from).mockReturnValue({
-        ...mockQueryBuilder,
-        insert: vi.fn().mockReturnThis(),
-        select: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: mockCategory, error: null })
+      vi.mocked(supabaseModule.supabase.rpc).mockResolvedValue({
+        data: mockRpcResponse,
+        error: null
       } as any)
 
       const category = await budgetCategoriesService.createCategory(
@@ -214,76 +250,63 @@ describe('budgetCategoriesService', () => {
         'New Category'
       )
       expect(category).toBeTruthy()
-      expect(category.name).toBe('Test Category')
+      expect(category.name).toBe('New Category')
       expect(category.accountId).toBe('test-account-id')
-    })
-
-    it('should normalize slug', async () => {
-      const mockCategory = createMockCategory({ slug: 'new-category' })
-      const mockQueryBuilder = createMockSupabaseClient().from('budget_categories')
       
-      let insertedData: any = null
-      vi.mocked(supabaseModule.supabase.from).mockReturnValue({
-        ...mockQueryBuilder,
-        insert: vi.fn().mockImplementation((data) => {
-          insertedData = data
-          return {
-            ...mockQueryBuilder,
-            select: vi.fn().mockReturnThis(),
-            single: vi.fn().mockResolvedValue({ data: mockCategory, error: null })
-          }
-        }),
-        select: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: mockCategory, error: null })
-      } as any)
-
-      await budgetCategoriesService.createCategory(
-        'test-account-id',
-        'New Category Name'
-      )
-      expect(insertedData.slug).toBe('new-category-slug')
+      // Verify RPC was called with correct parameters
+      expect(supabaseModule.supabase.rpc).toHaveBeenCalledWith('rpc_upsert_budget_category', {
+        p_account_id: 'test-account-id',
+        p_category_id: null,
+        p_name: 'New Category',
+        p_slug: null,
+        p_metadata: null,
+        p_is_archived: false
+      })
     })
 
     it('should throw error if name is empty', async () => {
       await expect(
-        budgetCategoriesService.createCategory('test-account-id', '', 'slug')
+        budgetCategoriesService.createCategory('test-account-id', '')
       ).rejects.toThrow('Category name is required')
     })
-
-    // slug is generated internally now; no slug validation via public API
   })
 
   describe('updateCategory', () => {
-    it('should update a category', async () => {
+    it('should update a category via RPC', async () => {
       const existingCategory = createMockCategory({ name: 'Old Name' })
-      const updatedCategory = createMockCategory({ name: 'New Name' })
-      const mockQueryBuilder = createMockSupabaseClient().from('budget_categories')
+      const updatedRpcResponse = createRpcCategoryResponse({ name: 'New Name' })
       
-      // Mock getCategory call
-      vi.mocked(supabaseModule.supabase.from).mockImplementation((table) => {
-        if (table === 'budget_categories') {
-          return {
-            ...mockQueryBuilder,
-            select: vi.fn().mockReturnThis(),
-            eq: vi.fn().mockReturnThis(),
-            single: vi.fn()
-              .mockResolvedValueOnce({ data: existingCategory, error: null }) // getCategory call
-              .mockResolvedValueOnce({ data: updatedCategory, error: null }), // update call
-            update: vi.fn().mockReturnThis()
-          } as any
-        }
-        return mockQueryBuilder as any
-      })
+      // Mock getCategory call (reads from view)
+      const mockQueryBuilder = createMockSupabaseClient().from('vw_budget_categories')
+      vi.mocked(supabaseModule.supabase.from).mockReturnValue({
+        ...mockQueryBuilder,
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: existingCategory, error: null })
+      } as any)
+      
+      // Mock RPC call for update
+      vi.mocked(supabaseModule.supabase.rpc).mockResolvedValue({
+        data: updatedRpcResponse,
+        error: null
+      } as any)
 
       const category = await budgetCategoriesService.updateCategory('test-account-id', 'test-category-id', {
         name: 'New Name'
       })
       expect(category.name).toBe('New Name')
+      
+      // Verify RPC was called
+      expect(supabaseModule.supabase.rpc).toHaveBeenCalledWith('rpc_upsert_budget_category', expect.objectContaining({
+        p_account_id: 'test-account-id',
+        p_category_id: 'test-category-id',
+        p_name: 'New Name'
+      }))
     })
 
     it('should throw error if category not found', async () => {
       const notFoundError = createNotFoundError()
-      const mockQueryBuilder = createMockSupabaseClient().from('budget_categories')
+      const mockQueryBuilder = createMockSupabaseClient().from('vw_budget_categories')
       
       vi.mocked(supabaseModule.supabase.from).mockReturnValue({
         ...mockQueryBuilder,
@@ -299,14 +322,13 @@ describe('budgetCategoriesService', () => {
 
     it('should throw error if name is empty', async () => {
       const existingCategory = createMockCategory()
-      const mockQueryBuilder = createMockSupabaseClient().from('budget_categories')
+      const mockQueryBuilder = createMockSupabaseClient().from('vw_budget_categories')
       
       vi.mocked(supabaseModule.supabase.from).mockReturnValue({
         ...mockQueryBuilder,
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: existingCategory, error: null }),
-        update: vi.fn().mockReturnThis()
+        single: vi.fn().mockResolvedValue({ data: existingCategory, error: null })
       } as any)
 
       await expect(
@@ -316,36 +338,39 @@ describe('budgetCategoriesService', () => {
   })
 
   describe('archiveCategory', () => {
-    it('should archive a category', async () => {
+    it('should archive a category via RPC', async () => {
       const existingCategory = createMockCategory({ is_archived: false })
-      const archivedCategory = createMockCategory({ is_archived: true })
-      const mockQueryBuilder = createMockSupabaseClient().from('budget_categories')
+      const archivedRpcResponse = createRpcCategoryResponse({ is_archived: true })
       
-      // Mock getCategory and archive call
-      vi.mocked(supabaseModule.supabase.from).mockImplementation((table) => {
-        if (table === 'budget_categories') {
-          return {
-            ...mockQueryBuilder,
-            select: vi.fn().mockReturnThis(),
-            eq: vi.fn().mockReturnThis(),
-            single: vi.fn()
-              .mockResolvedValueOnce({ data: existingCategory, error: null }) // getCategory call
-              .mockResolvedValueOnce({ data: archivedCategory, error: null }), // archive call
-            update: vi.fn().mockReturnThis()
-          } as any
-        }
-        return mockQueryBuilder as any
-      })
+      // Mock getCategory call
+      const mockQueryBuilder = createMockSupabaseClient().from('vw_budget_categories')
+      vi.mocked(supabaseModule.supabase.from).mockReturnValue({
+        ...mockQueryBuilder,
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: existingCategory, error: null })
+      } as any)
+      
+      // Mock RPC call for archive
+      vi.mocked(supabaseModule.supabase.rpc).mockResolvedValue({
+        data: archivedRpcResponse,
+        error: null
+      } as any)
 
       const category = await budgetCategoriesService.archiveCategory('test-account-id', 'test-category-id')
       expect(category.isArchived).toBe(true)
+      
+      // Verify RPC was called
+      expect(supabaseModule.supabase.rpc).toHaveBeenCalledWith('rpc_archive_budget_category', {
+        p_account_id: 'test-account-id',
+        p_category_id: 'test-category-id',
+        p_is_archived: true
+      })
     })
-
-    // archiving no longer prevents archival when referenced by transactions
 
     it('should throw error if category not found', async () => {
       const notFoundError = createNotFoundError()
-      const mockQueryBuilder = createMockSupabaseClient().from('budget_categories')
+      const mockQueryBuilder = createMockSupabaseClient().from('vw_budget_categories')
       
       vi.mocked(supabaseModule.supabase.from).mockReturnValue({
         ...mockQueryBuilder,
@@ -361,49 +386,56 @@ describe('budgetCategoriesService', () => {
   })
 
   describe('unarchiveCategory', () => {
-    it('should unarchive a category', async () => {
+    it('should unarchive a category via RPC', async () => {
       const archivedCategory = createMockCategory({ is_archived: true })
-      const unarchivedCategory = createMockCategory({ is_archived: false })
-      const mockQueryBuilder = createMockSupabaseClient().from('budget_categories')
+      const unarchivedRpcResponse = createRpcCategoryResponse({ is_archived: false })
       
+      // Mock getCategory call
+      const mockQueryBuilder = createMockSupabaseClient().from('vw_budget_categories')
       vi.mocked(supabaseModule.supabase.from).mockReturnValue({
         ...mockQueryBuilder,
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
-        single: vi.fn()
-          .mockResolvedValueOnce({ data: archivedCategory, error: null }) // getCategory call
-          .mockResolvedValueOnce({ data: unarchivedCategory, error: null }), // unarchive call
-        update: vi.fn().mockReturnThis()
+        single: vi.fn().mockResolvedValue({ data: archivedCategory, error: null })
+      } as any)
+      
+      // Mock RPC call for unarchive
+      vi.mocked(supabaseModule.supabase.rpc).mockResolvedValue({
+        data: unarchivedRpcResponse,
+        error: null
       } as any)
 
       const category = await budgetCategoriesService.unarchiveCategory('test-account-id', 'test-category-id')
       expect(category.isArchived).toBe(false)
+      
+      // Verify RPC was called
+      expect(supabaseModule.supabase.rpc).toHaveBeenCalledWith('rpc_archive_budget_category', {
+        p_account_id: 'test-account-id',
+        p_category_id: 'test-category-id',
+        p_is_archived: false
+      })
     })
   })
 
   describe('getTransactionCount', () => {
     it('should return transaction count for a category', async () => {
-      const mockQueryBuilder = createMockSupabaseClient().from('transactions')
-      
-      vi.mocked(supabaseModule.supabase.from).mockReturnValue({
-        ...mockQueryBuilder,
+      let callCount = 0
+      const queryChain: any = {
         select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        then: vi.fn().mockResolvedValue({ count: 5, error: null })
-      } as any)
+        eq: vi.fn().mockImplementation((field: string, value: any) => {
+          callCount++
+          // The second eq() call (category_id) should return the promise
+          if (callCount === 2) {
+            return Promise.resolve({ count: 5, error: null })
+          }
+          return queryChain
+        })
+      }
+      
+      vi.mocked(supabaseModule.supabase.from).mockReturnValue(queryChain as any)
 
-      // Mock the count property
-      const mockResponse = { count: 5, error: null }
-      vi.mocked(supabaseModule.supabase.from).mockReturnValue({
-        ...mockQueryBuilder,
-        select: vi.fn().mockReturnValue(mockResponse),
-        eq: vi.fn().mockReturnThis()
-      } as any)
-
-      // Since select with count returns a different shape, we need to mock it properly
       const count = await budgetCategoriesService.getTransactionCount('test-account-id', 'test-category-id')
-      // The actual implementation uses count: 'exact', head: true which returns { count, error }
-      expect(count).toBeGreaterThanOrEqual(0) // At least returns a number
+      expect(count).toBe(5)
     })
   })
 
@@ -411,12 +443,13 @@ describe('budgetCategoriesService', () => {
     it('should archive multiple categories successfully', async () => {
       const category1 = createMockCategory({ id: 'cat-1', is_archived: false })
       const category2 = createMockCategory({ id: 'cat-2', is_archived: false })
-      const archived1 = createMockCategory({ id: 'cat-1', is_archived: true })
-      const archived2 = createMockCategory({ id: 'cat-2', is_archived: true })
-      const mockQueryBuilder = createMockSupabaseClient().from('budget_categories')
+      const archived1 = createRpcCategoryResponse({ id: 'cat-1', is_archived: true })
+      const archived2 = createRpcCategoryResponse({ id: 'cat-2', is_archived: true })
       
+      // Mock getCategory calls (reads from view)
+      const mockQueryBuilder = createMockSupabaseClient().from('vw_budget_categories')
       vi.mocked(supabaseModule.supabase.from).mockImplementation((table) => {
-        if (table === 'budget_categories') {
+        if (table === 'vw_budget_categories') {
           return {
             ...mockQueryBuilder,
             select: vi.fn().mockReturnThis(),
@@ -424,58 +457,45 @@ describe('budgetCategoriesService', () => {
             single: vi.fn()
               .mockResolvedValueOnce({ data: category1, error: null })
               .mockResolvedValueOnce({ data: category2, error: null })
-              .mockResolvedValueOnce({ data: archived1, error: null })
-              .mockResolvedValueOnce({ data: archived2, error: null }),
-            update: vi.fn().mockReturnThis()
-          } as any
-        }
-        if (table === 'transactions') {
-          return {
-            ...mockQueryBuilder,
-            select: vi.fn().mockReturnThis(),
-            eq: vi.fn().mockReturnThis(),
-            in: vi.fn().mockResolvedValue({ data: [], error: null }) // No transactions
           } as any
         }
         return mockQueryBuilder as any
       })
+      
+      // Mock RPC calls for archive
+      vi.mocked(supabaseModule.supabase.rpc)
+        .mockResolvedValueOnce({ data: archived1, error: null } as any)
+        .mockResolvedValueOnce({ data: archived2, error: null } as any)
 
       const result = await budgetCategoriesService.bulkArchiveCategories('test-account-id', ['cat-1', 'cat-2'])
       expect(result.successful).toHaveLength(2)
       expect(result.failed).toHaveLength(0)
     })
 
-    it('should report failures for categories with transactions', async () => {
+    it('should report failures for categories that cannot be archived', async () => {
       const category1 = createMockCategory({ id: 'cat-1' })
       const category2 = createMockCategory({ id: 'cat-2' })
-      const mockQueryBuilder = createMockSupabaseClient().from('budget_categories')
       
+      // Mock getCategory calls
+      const mockQueryBuilder = createMockSupabaseClient().from('vw_budget_categories')
       vi.mocked(supabaseModule.supabase.from).mockImplementation((table) => {
-        if (table === 'budget_categories') {
+        if (table === 'vw_budget_categories') {
           return {
             ...mockQueryBuilder,
             select: vi.fn().mockReturnThis(),
             eq: vi.fn().mockReturnThis(),
             single: vi.fn()
               .mockResolvedValueOnce({ data: category1, error: null })
-              .mockResolvedValueOnce({ data: category2, error: null }),
-            update: vi.fn().mockReturnThis()
-          } as any
-        }
-        if (table === 'transactions') {
-          // Return transactions for cat-1, none for cat-2
-          return {
-            ...mockQueryBuilder,
-            select: vi.fn().mockReturnThis(),
-            eq: vi.fn().mockReturnThis(),
-            in: vi.fn().mockResolvedValue({ 
-              data: [{ category_id: 'cat-1' }], // cat-1 has transactions
-              error: null 
-            })
+              .mockResolvedValueOnce({ data: category2, error: null })
           } as any
         }
         return mockQueryBuilder as any
       })
+      
+      // Mock RPC calls - first fails, second succeeds
+      vi.mocked(supabaseModule.supabase.rpc)
+        .mockResolvedValueOnce({ data: null, error: { message: 'Archive failed' } } as any)
+        .mockResolvedValueOnce({ data: createRpcCategoryResponse({ id: 'cat-2', is_archived: true }), error: null } as any)
 
       const result = await budgetCategoriesService.bulkArchiveCategories('test-account-id', ['cat-1', 'cat-2'])
       expect(result.successful).toContain('cat-2')
@@ -484,4 +504,3 @@ describe('budgetCategoriesService', () => {
     })
   })
 })
-
