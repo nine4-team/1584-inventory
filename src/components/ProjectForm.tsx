@@ -27,6 +27,7 @@ interface ProjectFormProps {
 export default function ProjectForm({ onSubmit, onCancel, isLoading = false, initialData }: ProjectFormProps) {
   const { currentAccountId } = useAccount()
   const isEditing = Boolean(initialData?.name)
+  const { isReady, blockingReason } = useOfflinePrerequisiteGate()
 
   const [availableCategories, setAvailableCategories] = useState<BudgetCategory[]>([])
   const [categoriesLoading, setCategoriesLoading] = useState(true)

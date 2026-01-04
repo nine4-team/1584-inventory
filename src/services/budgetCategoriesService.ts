@@ -434,6 +434,107 @@ export const budgetCategoriesService = {
     }
 
     return { successful, failed }
+  },
+
+  /**
+   * Ensure default budget categories exist for an account
+   * Creates the four required default categories if they don't exist:
+   * - Furnishings
+   * - Install
+   * - Design Fee
+   * - Storage & Receiving
+   * This function is idempotent and safe to call multiple times.
+   * @param accountId - The account ID to ensure defaults for
+   * @returns Promise that resolves when defaults are ensured
+   */
+  async ensureDefaultBudgetCategories(accountId: string): Promise<void> {
+    if (!accountId) {
+      console.warn('[budgetCategoriesService] Cannot ensure defaults: accountId is required')
+      return
+    }
+
+    try {
+      // Get existing non-archived categories
+      const existingCategories = await this.getCategories(accountId, false, { mode: 'auto' })
+      
+      // Define the four required default categories
+      const defaultCategories = [
+        { name: 'Furnishings', slug: 'furnishings' },
+        { name: 'Install', slug: 'install' },
+        { name: 'Design Fee', slug: 'design-fee' },
+        { name: 'Storage & Receiving', slug: 'storage-receiving' }
+      ]
+
+      // Check which defaults are missing
+      const existingSlugs = new Set(existingCategories.map(cat => cat.slug))
+      const missingCategories = defaultCategories.filter(
+        def => !existingSlugs.has(def.slug)
+      )
+
+      // Create missing categories
+      if (missingCategories.length > 0) {
+        console.log(
+          `[budgetCategoriesService] Creating ${missingCategories.length} default categories for account ${accountId}`
+        )
+        
+        let furnishingsCategoryId: string | null = null
+
+        for (const category of missingCategories) {
+          try {
+            const created = await this.createCategory(
+              accountId,
+              category.name,
+              { is_default: true }
+            )
+            
+            // Track furnishings category ID for setting as default
+            if (category.slug === 'furnishings') {
+              furnishingsCategoryId = created.id
+            }
+            
+            console.log(
+              `[budgetCategoriesService] Created default category: ${category.name} (${created.id})`
+            )
+          } catch (error) {
+            // Log error but continue with other categories
+            console.error(
+              `[budgetCategoriesService] Failed to create default category ${category.name}:`,
+              error
+            )
+          }
+        }
+
+        // Set Furnishings as the default category if we created it and no default is set
+        if (furnishingsCategoryId) {
+          try {
+            const { getDefaultCategory, setDefaultCategory } = await import('./accountPresetsService')
+            const currentDefault = await getDefaultCategory(accountId)
+            if (!currentDefault) {
+              await setDefaultCategory(accountId, furnishingsCategoryId)
+              console.log(
+                `[budgetCategoriesService] Set Furnishings as default category for account ${accountId}`
+              )
+            }
+          } catch (error) {
+            // Non-fatal: default category setting failed
+            console.warn(
+              `[budgetCategoriesService] Failed to set default category:`,
+              error
+            )
+          }
+        }
+      } else {
+        console.log(
+          `[budgetCategoriesService] All default categories already exist for account ${accountId}`
+        )
+      }
+    } catch (error) {
+      // Log error but don't throw - this is a best-effort operation
+      console.error(
+        `[budgetCategoriesService] Failed to ensure default categories for account ${accountId}:`,
+        error
+      )
+    }
   }
 }
 

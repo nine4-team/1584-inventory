@@ -101,6 +101,11 @@ export async function getAccountPresets(accountId: string): Promise<AccountPrese
  */
 export async function upsertAccountPresets(accountId: string, updates: Partial<AccountPresets>): Promise<void> {
   await ensureAuthenticatedForDatabase()
+  
+  // Check if this is a new row (for seeding default categories)
+  const existing = await getAccountPresets(accountId)
+  const isNewRow = existing === null
+  
   const payload: any = {
     account_id: accountId,
     updated_at: new Date().toISOString()
@@ -115,6 +120,17 @@ export async function upsertAccountPresets(accountId: string, updates: Partial<A
   if (error) throw error
 
   await updateCachedAccountPresets(accountId, updates)
+  
+  // If this is a new row, ensure default budget categories are created
+  if (isNewRow) {
+    try {
+      const { budgetCategoriesService } = await import('./budgetCategoriesService')
+      await budgetCategoriesService.ensureDefaultBudgetCategories(accountId)
+    } catch (err) {
+      console.warn(`[accountPresetsService] Failed to create default budget categories for account ${accountId}:`, err)
+      // Don't throw - presets creation succeeded, category seeding can be retried later
+    }
+  }
 }
 
 export async function getDefaultCategory(accountId: string): Promise<string | null> {
@@ -143,13 +159,73 @@ export async function getBudgetCategoryOrder(accountId: string): Promise<string[
  * @param categoryIds - Array of category IDs in the desired order
  */
 export async function setBudgetCategoryOrder(accountId: string, categoryIds: string[]): Promise<void> {
-  const ap = await getAccountPresets(accountId)
-  const currentPresets = ap?.presets || {}
-  const updatedPresets = {
-    ...currentPresets,
-    budget_category_order: categoryIds
+  await mergeAccountPresetsSection(accountId, 'budget_category_order', categoryIds)
+}
+
+/**
+ * Merge a specific section into account_presets.presets atomically.
+ * This ensures sibling keys (e.g., budget_categories) are preserved when updating other sections.
+ * 
+ * @param accountId - The account ID
+ * @param section - The section name (e.g., 'tax_presets', 'vendor_defaults')
+ * @param payload - The JSON payload to merge into the section
+ * @returns The updated section value
+ */
+export async function mergeAccountPresetsSection(
+  accountId: string,
+  section: string,
+  payload: any
+): Promise<any> {
+  await ensureAuthenticatedForDatabase()
+  
+  const { data, error } = await supabase.rpc('rpc_merge_account_presets_section', {
+    p_account_id: accountId,
+    p_section: section,
+    p_payload: payload
+  })
+  
+  if (error) throw error
+  
+  // Invalidate cache and refresh it
+  const updated = await getAccountPresets(accountId)
+  if (updated) {
+    await cacheAccountPresets(accountId, updated)
   }
-  await upsertAccountPresets(accountId, { presets: updatedPresets })
+  
+  return data
+}
+
+/**
+ * Initialize a preset section with defaults only if it's missing.
+ * Safe to call multiple times without overwriting existing data.
+ * 
+ * @param accountId - The account ID
+ * @param section - The section name (e.g., 'tax_presets', 'vendor_defaults')
+ * @param defaults - The default JSON payload to use if section is missing
+ * @returns The section value (either existing or newly initialized)
+ */
+export async function ensurePresetSection(
+  accountId: string,
+  section: string,
+  defaults: any
+): Promise<any> {
+  await ensureAuthenticatedForDatabase()
+  
+  const { data, error } = await supabase.rpc('rpc_initialize_presets_section_if_absent', {
+    p_account_id: accountId,
+    p_section: section,
+    p_default: defaults
+  })
+  
+  if (error) throw error
+  
+  // Invalidate cache and refresh it
+  const updated = await getAccountPresets(accountId)
+  if (updated) {
+    await cacheAccountPresets(accountId, updated)
+  }
+  
+  return data
 }
 
 

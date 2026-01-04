@@ -1,5 +1,5 @@
 import { TRANSACTION_SOURCES } from '@/constants/transactionSources'
-import { getAccountPresets, upsertAccountPresets } from './accountPresetsService'
+import { getAccountPresets, mergeAccountPresetsSection } from './accountPresetsService'
 import { isNetworkOnline } from './networkStatusService'
 import { getCachedVendorDefaults, cacheVendorDefaultsOffline } from './offlineMetadataService'
 
@@ -63,18 +63,14 @@ export async function getVendorDefaults(accountId: string): Promise<VendorDefaul
       return { slots }
     }
 
-    // Initialize vendor defaults from TRANSACTION_SOURCES if missing
+    // If missing, return defaults without writing (no write-on-read)
+    // The section will be initialized when user explicitly saves vendor defaults
     const initialStoredSlots: Array<string | null> = TRANSACTION_SOURCES.slice(0, 10).map(name => name)
     while (initialStoredSlots.length < 10) initialStoredSlots.push(null)
-    try {
-      await upsertAccountPresets(accountId, { presets: { vendor_defaults: initialStoredSlots } })
-    } catch (err) {
-      console.warn('Failed to initialize vendor_defaults in account_presets:', err)
-    }
     const initialSlots = initialStoredSlots.map(s => (s ? { id: s, name: s } : { id: null, name: null }))
     
     cacheVendorDefaultsOffline(accountId, initialStoredSlots).catch(err => {
-      console.warn('[vendorDefaultsService] Failed to cache initialized vendor defaults:', err)
+      console.warn('[vendorDefaultsService] Failed to cache vendor defaults:', err)
     })
     
     return { slots: initialSlots }
@@ -166,8 +162,9 @@ export async function updateVendorDefaults(
       // Reject any non-string/non-null input to enforce no backwards compatibility
       throw new Error('Slots must be plain strings or null (legacy object formats are not supported)')
     })
-    // Persist exclusively to canonical account_presets
-    await upsertAccountPresets(accountId, { presets: { vendor_defaults: storedSlots } })
+    // Persist exclusively to canonical account_presets using merge
+    // This ensures budget_categories and other sections are preserved
+    await mergeAccountPresetsSection(accountId, 'vendor_defaults', storedSlots)
     console.log('Vendor defaults updated successfully (account_presets)')
     
     // Update cache after successful update
