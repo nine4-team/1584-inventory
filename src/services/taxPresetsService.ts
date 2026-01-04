@@ -27,7 +27,7 @@ export async function getTaxPresets(accountId: string): Promise<TaxPreset[]> {
 
       // Background cache refresh when online
       if (isNetworkOnline()) {
-        cacheTaxPresetsOffline(accountId).catch((error) => {
+        cacheTaxPresetsOffline(accountId, { presets }).catch((error) => {
           // Don't fail the request if caching fails
           console.warn('[taxPresetsService] Background cache refresh failed:', error)
         })
@@ -42,7 +42,7 @@ export async function getTaxPresets(accountId: string): Promise<TaxPreset[]> {
 
     // Background cache refresh when online
     if (isNetworkOnline()) {
-      cacheTaxPresetsOffline(accountId).catch((error) => {
+      cacheTaxPresetsOffline(accountId, { presets }).catch((error) => {
         // Don't fail the request if caching fails
         console.warn('[taxPresetsService] Background cache refresh failed:', error)
       })
@@ -100,7 +100,7 @@ export async function updateTaxPresets(accountId: string, presets: TaxPreset[]):
 
     // Update offline cache when online
     if (isNetworkOnline()) {
-      cacheTaxPresetsOffline(accountId).catch((error) => {
+      cacheTaxPresetsOffline(accountId, { presets }).catch((error) => {
         // Don't fail the update if caching fails
         console.warn('[taxPresetsService] Failed to update offline cache:', error)
       })

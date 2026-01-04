@@ -30,6 +30,7 @@ import BudgetProgress from '@/components/ui/BudgetProgress'
 import { useToast } from '@/components/ui/ToastContext'
 import { Button } from '@/components/ui/Button'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
+import { useSyncError } from '@/hooks/useSyncError'
 import { CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { isNetworkOnline } from '@/services/networkStatusService'
@@ -82,6 +83,7 @@ const resolveSectionFromPath = (pathname: string, projectId?: string): ProjectSe
 
 export default function ProjectLayout() {
   const { projectId } = useParams<{ projectId: string }>()
+  const hasSyncError = useSyncError()
   const stackedNavigate = useStackedNavigate()
   const stackedNavigateRef = useRef(stackedNavigate)
   const location = useLocation()
@@ -317,7 +319,7 @@ export default function ProjectLayout() {
               <Trash2 className="h-4 w-4 mr-2" />
               Delete
             </button>
-            <RetrySyncButton size="sm" variant="secondary" />
+            {hasSyncError && <RetrySyncButton size="sm" variant="secondary" />}
           </div>
         </div>
 

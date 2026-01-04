@@ -11,6 +11,7 @@ import { TransactionSource } from '@/constants/transactionSources'
 import { Combobox } from '@/components/ui/Combobox'
 import ImagePreview from '@/components/ui/ImagePreview'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
+import { useSyncError } from '@/hooks/useSyncError'
 import { useAuth } from '../contexts/AuthContext'
 import { useAccount } from '../contexts/AccountContext'
 import { UserRole } from '../types'
@@ -39,6 +40,7 @@ const getCanonicalTransactionTitle = (transaction: Transaction): string => {
 export default function AddBusinessInventoryItem() {
   const navigate = useStackedNavigate()
   const location = useLocation()
+  const hasSyncError = useSyncError()
   const { hasRole } = useAuth()
   const { currentAccountId } = useAccount()
   const { showError, showSuccess } = useToast()
@@ -385,7 +387,7 @@ export default function AddBusinessInventoryItem() {
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back
           </ContextBackLink>
-          <RetrySyncButton size="sm" variant="secondary" />
+          {hasSyncError && <RetrySyncButton size="sm" variant="secondary" />}
         </div>
       </div>
 

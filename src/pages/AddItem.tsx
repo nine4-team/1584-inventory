@@ -17,6 +17,7 @@ import { Shield } from 'lucide-react'
 import { getUserFriendlyErrorMessage, getErrorAction } from '@/utils/imageUtils'
 import { useToast } from '@/components/ui/ToastContext'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
+import { useSyncError } from '@/hooks/useSyncError'
 import { DISPOSITION_OPTIONS, displayDispositionLabel } from '@/utils/dispositionUtils'
 import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
 import { OfflineQueueUnavailableError } from '@/services/offlineItemService'
@@ -392,7 +393,7 @@ export default function AddItem() {
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back
           </ContextBackLink>
-          <RetrySyncButton size="sm" variant="secondary" />
+          {hasSyncError && <RetrySyncButton size="sm" variant="secondary" />}
         </div>
 
       </div>

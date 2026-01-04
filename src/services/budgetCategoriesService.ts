@@ -73,7 +73,7 @@ export const budgetCategoriesService = {
       const ordered = await orderCategories(accountId, categories)
 
       if (!includeArchived) {
-        cacheBudgetCategoriesOffline(accountId).catch((error) => {
+        cacheBudgetCategoriesOffline(accountId, { categories: ordered }).catch((error) => {
           console.warn('[budgetCategoriesService] Background cache refresh failed:', error)
         })
       }

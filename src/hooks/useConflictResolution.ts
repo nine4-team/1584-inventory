@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { ConflictItem, Resolution } from '../types/conflicts'
 import { conflictDetector } from '../services/conflictDetector'
 import { conflictResolver } from '../services/conflictResolver'
@@ -9,40 +9,58 @@ export function useConflictResolution(accountId?: string, projectId?: string) {
   const [isResolving, setIsResolving] = useState(false)
   const [currentConflict, setCurrentConflict] = useState<ConflictItem | null>(null)
 
-  // Load stored conflicts from IndexedDB on mount
-  useEffect(() => {
-    if (accountId) {
-      loadStoredConflicts(accountId)
-    }
-  }, [accountId])
-
-  const loadStoredConflicts = async (accountId: string) => {
+  const loadStoredConflicts = useCallback(async (accountId: string, scopedProjectId?: string) => {
     try {
       const storedConflicts = await offlineStore.getConflicts(accountId, false)
-      const conflictItems: ConflictItem[] = storedConflicts.map(c => ({
-        id: c.itemId,
-        type: c.type,
-        field: c.field || 'unknown',
-        local: {
-          data: c.local.data as Record<string, unknown>,
-          timestamp: c.local.timestamp,
-          version: c.local.version
-        },
-        server: {
-          data: c.server.data as Record<string, unknown>,
-          timestamp: c.server.timestamp,
-          version: c.server.version
-        }
-      }))
+      const conflictItems: ConflictItem[] = storedConflicts
+        .map(conflict => {
+          const trimmedItemId =
+            typeof conflict.itemId === 'string' ? conflict.itemId.trim() : ''
+          return { conflict, trimmedItemId }
+        })
+        .filter(({ conflict, trimmedItemId }) => conflict.entityType === 'item' && trimmedItemId.length > 0)
+        .filter(({ conflict }) => {
+          if (!scopedProjectId) return true
+          return conflict.projectId === scopedProjectId
+        })
+        .map(({ conflict, trimmedItemId }) => ({
+          id: trimmedItemId,
+          entityType: 'item',
+          type: conflict.type,
+          field: conflict.field || 'unknown',
+          local: {
+            data: conflict.local.data as Record<string, unknown>,
+            timestamp: conflict.local.timestamp,
+            version: conflict.local.version
+          },
+          server: {
+            data: conflict.server.data as Record<string, unknown>,
+            timestamp: conflict.server.timestamp,
+            version: conflict.server.version
+          }
+        }))
       
       if (conflictItems.length > 0) {
         setConflicts(conflictItems)
         setCurrentConflict(conflictItems[0])
+      } else {
+        setConflicts([])
+        setCurrentConflict(null)
       }
     } catch (error) {
       console.error('Failed to load stored conflicts:', error)
     }
-  }
+  }, [])
+
+  // Load stored conflicts from IndexedDB on mount
+  useEffect(() => {
+    if (accountId) {
+      loadStoredConflicts(accountId, projectId)
+    } else {
+      setConflicts([])
+      setCurrentConflict(null)
+    }
+  }, [accountId, projectId, loadStoredConflicts])
 
   const detectConflicts = async (projectId: string) => {
     setIsResolving(true)
@@ -68,6 +86,13 @@ export function useConflictResolution(accountId?: string, projectId?: string) {
 
   const resolveCurrentConflict = async (resolution: Resolution) => {
     if (!currentConflict) return
+    if (currentConflict.entityType !== 'item') {
+      console.warn('Skipping conflict resolution for unsupported entity type', {
+        entityType: currentConflict.entityType,
+        conflictId: currentConflict.id
+      })
+      return
+    }
 
     try {
       await conflictResolver.applyResolution(currentConflict, resolution)
@@ -104,7 +129,7 @@ export function useConflictResolution(accountId?: string, projectId?: string) {
       // Resolve each unique item conflict
       for (const itemId of uniqueItemIds) {
         // Find the first conflict for this item
-        const conflictForItem = conflicts.find(c => c.id === itemId)
+        const conflictForItem = conflicts.find(c => c.id === itemId && c.entityType === 'item')
         if (!conflictForItem) continue
 
         try {
@@ -119,9 +144,10 @@ export function useConflictResolution(accountId?: string, projectId?: string) {
         }
       }
 
-      // Clear all conflicts from state
-      setConflicts([])
-      setCurrentConflict(null)
+      // Clear resolved conflicts from state while leaving any non-item conflicts for future handling
+      const remaining = conflicts.filter(c => c.entityType !== 'item')
+      setConflicts(remaining)
+      setCurrentConflict(remaining.length > 0 ? remaining[0] : null)
     } finally {
       setIsResolving(false)
     }

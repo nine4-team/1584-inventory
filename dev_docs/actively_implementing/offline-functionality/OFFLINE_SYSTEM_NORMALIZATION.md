@@ -24,6 +24,16 @@ Use this section to track the regressions introduced during the initial implemen
 
 Add more bullets here as we discover additional regressions.
 
+5. **Metadata warmers fire multiple times per boot** ✅ **FIXED 2026‑01‑04**  
+   - Guard rails added to `cacheBudgetCategoriesOffline`, `cacheTaxPresetsOffline`, and `cacheVendorDefaultsOffline` so they now accept pre-fetched data, diff against IndexedDB, and skip writes/network fetches when nothing changed.  
+   - `hydrateMetadataCaches` passes the `force` flag through (Retry Sync still hydrates) and vendor defaults now share the same debounce logic.  
+   - Result: no more duplicate fetches/log spam per mount while still writing whenever fresh metadata arrives from Supabase or form submissions.
+
+6. **Transaction detail conflicts fail to resolve** ✅ **FIXED 2026‑01‑04**  
+   - `offlineStore.getConflicts` now normalizes every record (backfills `itemId`/transactionId/projectId` by inspecting stored payloads and trimming keys) so legacy rows stop surfacing with blank identifiers.  
+   - `useConflictResolution` + `ConflictResolutionView` now trim IDs when hydrating conflicts, which keeps `resolveAllConflicts` from feeding undefined IDs into `conflictResolver.applyResolution`.  
+   - Result: “Resolve all” succeeds again and conflict entries are cleaned as they’re read from IndexedDB.
+
 ## Purpose
 This document captures the established offline patterns discovered through code analysis and provides a roadmap for normalizing offline functionality across all entities (items, transactions, projects) in the application.
 
@@ -541,6 +551,9 @@ export function detectTransactionConflict(local: Transaction, remote: Transactio
 - [ ] Test "not found" scenarios for optimistic entities
 
 ## Outstanding gaps (unaddressed)
+
+- [x] **Offline transaction edits overwritten on reconnect.** `operationQueue.getEntityIdsWithPendingWrites` now exposes the set of transaction IDs with queued `UPDATE`/`DELETE` work, and `cacheTransactionsOffline` skips writing those records back into IndexedDB when a network fetch completes. Result: the optimistic transaction stays intact until the queue replays and clears the pending operation.
+- [x] **Offline item edits overwritten on reconnect.** The same guard rails above now apply to items (and projects for parity): `cacheItemsOffline` consults the pending-write set before persisting Supabase payloads, so IndexedDB never overwrites an item that still has a queued update/delete. Queue executors continue to hydrate from the preserved offline copy, preventing stale server data from clobbering offline edits.
 
 - [x] Re-check every offline CRUD path (items, transactions, projects, lineage) for missing network gating so offline screens don't keep pinging Supabase when connectivity is gone. `AddTransaction` gating now mirrors the item/project forms and `CategorySelect` forces cache-only reads when offline so we no longer hit `account_presets` / `budget_categories` in airplane mode.
 - [x] Bridge offline mutations into our realtime snapshots. `ProjectRealtimeProvider` hydrates from IndexedDB when offline, registers `refreshFromIndexedDB` with the offline queue, and calls `unifiedItemsService.syncProjectItemsRealtimeCache` so optimistic writes appear in `ProjectLayout`/`InventoryList` without waiting for Supabase.

@@ -236,12 +236,7 @@ export class ConflictDetector {
 
     try {
       // Get local projects
-      const allLocalProjects = await offlineStore.getProjects()
-      const localProjects = allLocalProjects.filter(p => {
-        // Projects don't have accountId in DBProject, so we need to fetch from server
-        // For now, we'll compare all local projects
-        return true
-      })
+      const localProjects = await offlineStore.getProjects()
 
       // Get server projects
       const { data: serverProjects, error } = await supabase
@@ -297,7 +292,7 @@ export class ConflictDetector {
   ): Promise<void> {
     try {
       // Store conflict metadata in IndexedDB so UX persists after refresh
-      const conflictData: any = {
+      const conflictData: Parameters<typeof offlineStore.saveConflict>[0] = {
         entityType,
         accountId,
         projectId,
@@ -376,6 +371,7 @@ export class ConflictDetector {
       if (versionDiffers) {
         return {
           id: localItem.itemId,
+          entityType: 'item',
           local: {
             data: localItem,
             timestamp: localItem.lastUpdated,
@@ -394,6 +390,7 @@ export class ConflictDetector {
       if (timeDiffers) {
         return {
           id: localItem.itemId,
+          entityType: 'item',
           local: {
             data: localItem,
             timestamp: localItem.lastUpdated,
@@ -425,6 +422,7 @@ export class ConflictDetector {
       if (!this.valuesEqual(localValue, serverValue)) {
         return {
           id: localItem.itemId,
+          entityType: 'item',
           local: {
             data: localItem,
             timestamp: localItem.lastUpdated,
@@ -485,6 +483,7 @@ export class ConflictDetector {
       if (versionDiffers) {
         return {
           id: localTransaction.transactionId,
+          entityType: 'transaction',
           local: {
             data: localTransaction,
             timestamp: localTransaction.createdAt,
@@ -503,6 +502,7 @@ export class ConflictDetector {
       if (timeDiffers) {
         return {
           id: localTransaction.transactionId,
+          entityType: 'transaction',
           local: {
             data: localTransaction,
             timestamp: localTransaction.createdAt,
@@ -531,6 +531,7 @@ export class ConflictDetector {
       if (!this.valuesEqual(localValue, serverValue)) {
         return {
           id: localTransaction.transactionId,
+          entityType: 'transaction',
           local: {
             data: localTransaction,
             timestamp: localTransaction.createdAt,
@@ -591,6 +592,7 @@ export class ConflictDetector {
       if (versionDiffers) {
         return {
           id: localProject.id,
+          entityType: 'project',
           local: {
             data: localProject,
             timestamp: localProject.updatedAt,
@@ -609,6 +611,7 @@ export class ConflictDetector {
       if (timeDiffers) {
         return {
           id: localProject.id,
+          entityType: 'project',
           local: {
             data: localProject,
             timestamp: localProject.updatedAt,
@@ -637,6 +640,7 @@ export class ConflictDetector {
       if (!this.valuesEqual(localValue, serverValue)) {
         return {
           id: localProject.id,
+          entityType: 'project',
           local: {
             data: localProject,
             timestamp: localProject.updatedAt,
@@ -750,10 +754,12 @@ export class ConflictDetector {
 
     // Handle objects
     if (typeof a === 'object' && typeof b === 'object') {
-      const keysA = Object.keys(a)
-      const keysB = Object.keys(b)
+      const objA = a as Record<string, unknown>
+      const objB = b as Record<string, unknown>
+      const keysA = Object.keys(objA)
+      const keysB = Object.keys(objB)
       if (keysA.length !== keysB.length) return false
-      return keysA.every(key => this.valuesEqual((a as any)[key], (b as any)[key]))
+      return keysA.every(key => this.valuesEqual(objA[key], objB[key]))
     }
 
     // Primitive comparison

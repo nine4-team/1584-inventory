@@ -7,7 +7,7 @@ import { lineageService } from './lineageService'
 import { offlineStore, type DBItem, type DBTransaction, type DBProject } from './offlineStore'
 import { isNetworkOnline, withNetworkTimeout, NetworkTimeoutError } from './networkStatusService'
 import { OfflineQueueUnavailableError } from './offlineItemService'
-import { OfflineContextError } from './operationQueue'
+import { operationQueue, OfflineContextError } from './operationQueue'
 import type { Item, Project, FilterOptions, PaginationOptions, Transaction, TransactionItemFormData, TransactionCompleteness, CompletenessStatus, ItemImage } from '@/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
@@ -61,8 +61,12 @@ function syncProjectItemsRealtimeSnapshot(accountId: string, projectId: string, 
 async function cacheItemsOffline(rows: any[]) {
   if (!rows || rows.length === 0) return
   try {
+    const filteredRows = await filterRowsWithPendingWrites(rows, 'item', row => row?.item_id ?? row?.id ?? null)
+    if (filteredRows.length === 0) {
+      return
+    }
     await offlineStore.init()
-    const dbItems: DBItem[] = rows.map(mapSupabaseItemToOfflineRecord)
+    const dbItems: DBItem[] = filteredRows.map(mapSupabaseItemToOfflineRecord)
     await offlineStore.saveItems(dbItems)
   } catch (error) {
     console.warn('Failed to cache items offline:', error)
@@ -72,8 +76,16 @@ async function cacheItemsOffline(rows: any[]) {
 async function cacheTransactionsOffline(rows: any[]) {
   if (!rows || rows.length === 0) return
   try {
+    const filteredRows = await filterRowsWithPendingWrites(
+      rows,
+      'transaction',
+      row => row?.transaction_id ?? row?.id ?? null
+    )
+    if (filteredRows.length === 0) {
+      return
+    }
     await offlineStore.init()
-    const dbTransactions: DBTransaction[] = rows.map(mapSupabaseTransactionToOfflineRecord)
+    const dbTransactions: DBTransaction[] = filteredRows.map(mapSupabaseTransactionToOfflineRecord)
     await offlineStore.saveTransactions(dbTransactions)
   } catch (error) {
     console.warn('Failed to cache transactions offline:', error)
@@ -83,11 +95,48 @@ async function cacheTransactionsOffline(rows: any[]) {
 async function cacheProjectsOffline(rows: any[]) {
   if (!rows || rows.length === 0) return
   try {
+    const filteredRows = await filterRowsWithPendingWrites(rows, 'project', row => row?.id ?? null)
+    if (filteredRows.length === 0) {
+      return
+    }
     await offlineStore.init()
-    const dbProjects: DBProject[] = rows.map(mapSupabaseProjectToOfflineRecord)
+    const dbProjects: DBProject[] = filteredRows.map(mapSupabaseProjectToOfflineRecord)
     await offlineStore.saveProjects(dbProjects)
   } catch (error) {
     console.warn('Failed to cache projects offline:', error)
+  }
+}
+
+async function filterRowsWithPendingWrites<T>(
+  rows: T[],
+  entityType: 'item' | 'transaction' | 'project',
+  getId: (row: T) => string | null | undefined
+): Promise<T[]> {
+  try {
+    const pendingIds = await operationQueue.getEntityIdsWithPendingWrites(entityType)
+    if (pendingIds.size === 0) {
+      return rows
+    }
+
+    return rows.filter(row => {
+      const entityId = getId(row)
+      if (!entityId) {
+        return true
+      }
+      if (pendingIds.has(entityId)) {
+        if (import.meta.env.DEV) {
+          console.info('[cache] skipping offline persistence to preserve pending writes', {
+            entityType,
+            entityId
+          })
+        }
+        return false
+      }
+      return true
+    })
+  } catch (error) {
+    console.debug(`Unable to inspect pending ${entityType} writes before caching`, error)
+    return rows
   }
 }
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useConflictResolution } from '../hooks/useConflictResolution'
 import { ConflictModal } from './ConflictModal'
 import { offlineStore } from '../services/offlineStore'
@@ -43,13 +43,33 @@ export function ConflictResolutionView({ accountId, projectId, onConflictsResolv
   const loadStoredConflicts = async () => {
     try {
       const conflicts = await offlineStore.getConflicts(accountId, false)
-      const conflictItems: ConflictItem[] = conflicts.map(c => ({
-        id: c.itemId,
-        type: c.type,
-        field: c.field,
-        local: c.local,
-        server: c.server
-      }))
+      const conflictItems: ConflictItem[] = conflicts
+        .map(conflict => {
+          const trimmedItemId =
+            typeof conflict.itemId === 'string' ? conflict.itemId.trim() : ''
+          return { conflict, trimmedItemId }
+        })
+        .filter(({ conflict, trimmedItemId }) => conflict.entityType === 'item' && trimmedItemId.length > 0)
+        .filter(({ conflict }) => {
+          if (!projectId) return true
+          return conflict.projectId === projectId
+        })
+        .map(({ conflict, trimmedItemId }) => ({
+          id: trimmedItemId,
+          entityType: 'item',
+          type: conflict.type,
+          field: conflict.field || 'unknown',
+          local: {
+            data: conflict.local.data as Record<string, unknown>,
+            timestamp: conflict.local.timestamp,
+            version: conflict.local.version
+          },
+          server: {
+            data: conflict.server.data as Record<string, unknown>,
+            timestamp: conflict.server.timestamp,
+            version: conflict.server.version
+          }
+        }))
       setStoredConflicts(conflictItems)
     } catch (error) {
       console.error('Failed to load stored conflicts:', error)
@@ -83,7 +103,19 @@ export function ConflictResolutionView({ accountId, projectId, onConflictsResolv
     setShowModal(false)
   }
 
-  const allConflicts = [...detectedConflicts, ...storedConflicts]
+  const allConflicts = useMemo(() => {
+    const seen = new Set<string>()
+    const merged: ConflictItem[] = []
+
+    for (const conflict of [...detectedConflicts, ...storedConflicts]) {
+      const key = `${conflict.id}-${conflict.field}-${conflict.type}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      merged.push(conflict)
+    }
+
+    return merged
+  }, [detectedConflicts, storedConflicts])
   const hasAnyConflicts = allConflicts.length > 0
 
   if (isLoading) {
