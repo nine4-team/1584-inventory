@@ -1,12 +1,23 @@
 import { DEFAULT_TAX_PRESETS, TaxPreset } from '@/constants/taxPresets'
 import { getAccountPresets, upsertAccountPresets } from './accountPresetsService'
-import { cacheTaxPresetsOffline } from './offlineMetadataService'
+import { cacheTaxPresetsOffline, getCachedTaxPresets } from './offlineMetadataService'
 import { isNetworkOnline } from './networkStatusService'
 
 /**
  * Get tax presets from Postgres for an account, falling back to defaults if not found
  */
 export async function getTaxPresets(accountId: string): Promise<TaxPreset[]> {
+  const online = isNetworkOnline()
+
+  if (!online) {
+    const cached = await getCachedTaxPresets(accountId)
+    if (cached.length > 0) {
+      return cached
+    }
+    console.warn('[taxPresetsService] Tax presets cache is empty while offline. Falling back to defaults.')
+    return DEFAULT_TAX_PRESETS
+  }
+
   try {
     // Read canonical presets from account_presets
     const ap = await getAccountPresets(accountId)
@@ -44,6 +55,11 @@ export async function getTaxPresets(accountId: string): Promise<TaxPreset[]> {
     return presets
   } catch (error) {
     console.error('Error fetching tax presets from Postgres:', error)
+    const cached = await getCachedTaxPresets(accountId)
+    if (cached.length > 0) {
+      console.warn('[taxPresetsService] Returning cached tax presets after fetch failure')
+      return cached
+    }
     // Fallback to defaults on error
     return DEFAULT_TAX_PRESETS
   }

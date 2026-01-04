@@ -2,7 +2,7 @@ import { supabase } from './supabase'
 import { convertTimestamps, handleSupabaseError, ensureAuthenticatedForDatabase } from './databaseService'
 import { BudgetCategory } from '@/types'
 import { getBudgetCategoryOrder } from './accountPresetsService'
-import { cacheBudgetCategoriesOffline } from './offlineMetadataService'
+import { cacheBudgetCategoriesOffline, getCachedBudgetCategories } from './offlineMetadataService'
 import { isNetworkOnline } from './networkStatusService'
 
 /**
@@ -12,87 +12,81 @@ import { isNetworkOnline } from './networkStatusService'
  * Categories are scoped to accounts and can be archived (not hard deleted)
  * to preserve historical integrity.
  */
+type GetCategoriesOptions = {
+  mode?: 'auto' | 'cache-only'
+}
+
 export const budgetCategoriesService = {
   /**
    * Get all budget categories for an account
    * @param accountId - The account ID to fetch categories for
    * @param includeArchived - If true, includes archived categories (default: false)
+   * @param options - Allows forcing cache-only reads (no Supabase calls)
    * @returns Array of budget categories ordered by preset order (if set), otherwise alphabetically
    */
-  async getCategories(accountId: string, includeArchived: boolean = false): Promise<BudgetCategory[]> {
+  async getCategories(
+    accountId: string,
+    includeArchived: boolean = false,
+    options?: GetCategoriesOptions
+  ): Promise<BudgetCategory[]> {
+    const mode = options?.mode ?? 'auto'
+    const shouldForceCache = mode === 'cache-only'
+    const online = shouldForceCache ? false : isNetworkOnline()
+
+    if (!online) {
+      return filterArchivedCategories(
+        await loadCategoriesFromCache(accountId, { silent: mode !== 'cache-only' }),
+        includeArchived
+      )
+    }
+
     await ensureAuthenticatedForDatabase()
 
-    let query = supabase
-      .from('budget_categories')
-      .select('*')
-      .eq('account_id', accountId)
-
-    if (!includeArchived) {
-      query = query.eq('is_archived', false)
-    }
-
-    const { data, error } = await query
-
-    handleSupabaseError(error)
-
-    const categories = (data || []).map(category => {
-      const converted = convertTimestamps(category)
-      return {
-        id: converted.id,
-        accountId: converted.account_id,
-        name: converted.name,
-        slug: converted.slug,
-        isArchived: converted.is_archived || false,
-        metadata: converted.metadata || null,
-        createdAt: converted.created_at,
-        updatedAt: converted.updated_at
-      } as BudgetCategory
-    })
-
-    // Get preset order if available
     try {
-      const order = await getBudgetCategoryOrder(accountId)
-      if (order && order.length > 0) {
-        // Create a map for quick lookup
-        const categoryMap = new Map(categories.map(cat => [cat.id, cat]))
-        const orderedCategories: BudgetCategory[] = []
-        const seenIds = new Set<string>()
+      let query = supabase
+        .from('budget_categories')
+        .select('*')
+        .eq('account_id', accountId)
 
-        // Add categories in preset order
-        for (const categoryId of order) {
-          const category = categoryMap.get(categoryId)
-          if (category) {
-            orderedCategories.push(category)
-            seenIds.add(categoryId)
-          }
-        }
-
-        // Append any categories not in the order (new categories, etc.)
-        for (const category of categories) {
-          if (!seenIds.has(category.id)) {
-            orderedCategories.push(category)
-          }
-        }
-
-        return orderedCategories
+      if (!includeArchived) {
+        query = query.eq('is_archived', false)
       }
-    } catch (err) {
-      // If getting order fails, fall back to alphabetical sorting
-      console.warn('Failed to get budget category order, using alphabetical:', err)
-    }
 
-    // Fallback to alphabetical sorting by name
-    const sortedCategories = categories.sort((a, b) => a.name.localeCompare(b.name))
+      const { data, error } = await query
 
-    // Background cache refresh when online and not including archived
-    if (isNetworkOnline() && !includeArchived) {
-      cacheBudgetCategoriesOffline(accountId).catch((error) => {
-        // Don't fail the request if caching fails
-        console.warn('[budgetCategoriesService] Background cache refresh failed:', error)
+      handleSupabaseError(error)
+
+      const categories = (data || []).map(category => {
+        const converted = convertTimestamps(category)
+        return {
+          id: converted.id,
+          accountId: converted.account_id,
+          name: converted.name,
+          slug: converted.slug,
+          isArchived: converted.is_archived || false,
+          metadata: converted.metadata || null,
+          createdAt: converted.created_at,
+          updatedAt: converted.updated_at
+        } as BudgetCategory
       })
-    }
 
-    return sortedCategories
+      const ordered = await orderCategories(accountId, categories)
+
+      if (!includeArchived) {
+        cacheBudgetCategoriesOffline(accountId).catch((error) => {
+          console.warn('[budgetCategoriesService] Background cache refresh failed:', error)
+        })
+      }
+
+      return ordered
+    } catch (err) {
+      console.warn('[budgetCategoriesService] Falling back to cached categories after fetch failure:', err)
+      const cached = await loadCategoriesFromCache(accountId, { silent: true })
+      if (cached.length > 0) {
+        return filterArchivedCategories(cached, includeArchived)
+      }
+      throw err
+    }
   },
 
   /**
@@ -443,5 +437,56 @@ export const budgetCategoriesService = {
 
     return { successful, failed }
   }
+}
+
+async function orderCategories(accountId: string, categories: BudgetCategory[]): Promise<BudgetCategory[]> {
+  try {
+    const order = await getBudgetCategoryOrder(accountId)
+    if (order && order.length > 0) {
+      const categoryMap = new Map(categories.map(cat => [cat.id, cat]))
+      const orderedCategories: BudgetCategory[] = []
+      const seenIds = new Set<string>()
+
+      for (const categoryId of order) {
+        const category = categoryMap.get(categoryId)
+        if (category) {
+          orderedCategories.push(category)
+          seenIds.add(categoryId)
+        }
+      }
+
+      for (const category of categories) {
+        if (!seenIds.has(category.id)) {
+          orderedCategories.push(category)
+        }
+      }
+
+      return orderedCategories
+    }
+  } catch (err) {
+    console.warn('Failed to get budget category order, using alphabetical:', err)
+  }
+
+  return [...categories].sort((a, b) => a.name.localeCompare(b.name))
+}
+
+async function loadCategoriesFromCache(accountId: string, options?: { silent?: boolean }): Promise<BudgetCategory[]> {
+  const cached = await getCachedBudgetCategories(accountId)
+  if (!cached || cached.length === 0) {
+    if (!options?.silent) {
+      throw new Error(
+        'Budget categories cache is empty. Go online and tap Retry sync to warm the offline cache before using this screen offline.'
+      )
+    }
+    return []
+  }
+  return orderCategories(accountId, cached)
+}
+
+function filterArchivedCategories(categories: BudgetCategory[], includeArchived: boolean): BudgetCategory[] {
+  if (includeArchived) {
+    return categories
+  }
+  return categories.filter(cat => !cat.isArchived)
 }
 

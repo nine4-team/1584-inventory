@@ -3,6 +3,8 @@ import { budgetCategoriesService } from '@/services/budgetCategoriesService'
 import { BudgetCategory } from '@/types'
 import { useAccount } from '@/contexts/AccountContext'
 import { Combobox } from '@/components/ui/Combobox'
+import { useNetworkState } from '@/hooks/useNetworkState'
+import { useOfflinePrerequisiteGate } from './ui/OfflinePrerequisiteBanner'
 
 interface CategorySelectProps {
   value?: string
@@ -40,6 +42,8 @@ export default function CategorySelect({
   asDropdown = false
 }: CategorySelectProps) {
   const { currentAccountId, loading: accountLoading } = useAccount()
+  const { isOnline } = useNetworkState()
+  const { isReady: metadataReady, blockingReason } = useOfflinePrerequisiteGate()
   const [categories, setCategories] = useState<BudgetCategory[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -52,7 +56,8 @@ export default function CategorySelect({
       setLoadError(null)
       const loadedCategories = await budgetCategoriesService.getCategories(
         currentAccountId,
-        includeArchived
+        includeArchived,
+        isOnline ? undefined : { mode: 'cache-only' }
       )
       // Filter out archived categories on the frontend as a safety measure
       // This ensures archived categories never appear even if service returns them
@@ -66,7 +71,7 @@ export default function CategorySelect({
     } finally {
       setIsLoading(false)
     }
-  }, [currentAccountId, includeArchived])
+  }, [currentAccountId, includeArchived, isOnline])
 
   useEffect(() => {
     // Wait for account to finish loading
@@ -74,12 +79,20 @@ export default function CategorySelect({
       return
     }
 
-    if (currentAccountId) {
-      loadCategories()
-    } else {
+    if (!currentAccountId) {
       setIsLoading(false)
+      return
     }
-  }, [currentAccountId, accountLoading, loadCategories])
+
+    if (!metadataReady && !isOnline) {
+      setIsLoading(false)
+      setLoadError(blockingReason || 'Need offline metadata synced before editing categories offline.')
+      setCategories([])
+      return
+    }
+
+    loadCategories()
+  }, [currentAccountId, accountLoading, loadCategories, metadataReady, isOnline, blockingReason])
 
   const handleRadioChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const categoryId = e.target.value

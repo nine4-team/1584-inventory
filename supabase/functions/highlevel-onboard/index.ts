@@ -1,9 +1,12 @@
+// @ts-ignore: Deno ESM import
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.48.0'
 
 type HighLevelPayload = {
   email?: string
+  business_name?: string // OPTIONAL: Business/company name
   full_name?: string
   fullName?: string
+  contact_id?: string | number
   offer_id?: string
   payment_id?: string
   paymentId?: string
@@ -28,23 +31,23 @@ type OnboardingEventRow = {
   login_url: string | null
 }
 
-type SignatureVerification =
-  | { verified: true; strategy: 'hmac' }
-  | { verified: false; strategy: 'none' }
 
 const encoder = new TextEncoder()
 const SUPABASE_URL = requireEnv('SUPABASE_URL')
 const SUPABASE_SERVICE_ROLE_KEY = requireEnv('SUPABASE_SERVICE_ROLE_KEY')
 const APP_BASE_URL = stripTrailingSlash(requireEnv('APP_BASE_URL'))
+// @ts-ignore: Deno global
 const APP_LOGIN_URL = stripTrailingSlash(Deno.env.get('APP_LOGIN_URL') ?? APP_BASE_URL)
-const HL_HMAC_SECRET = Deno.env.get('HL_WEBHOOK_HMAC_SECRET')
+// @ts-ignore: Deno global
 const INVITER_USER_ID = Deno.env.get('ONBOARDING_INVITER_USER_ID') ?? null
+// @ts-ignore: Deno global
 const INVITE_EXPIRATION_DAYS = Number(Deno.env.get('ONBOARDING_INVITE_EXPIRATION_DAYS') ?? '7')
 
 const supabaseAdmin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false }
 })
 
+// @ts-ignore: Deno global
 Deno.serve(async req => {
   let activeEventId: string | null = null
   try {
@@ -63,11 +66,6 @@ Deno.serve(async req => {
       return jsonResponse({ error: 'Method not allowed' }, 405)
     }
 
-    const idempotencyKey = req.headers.get('Idempotency-Key')
-    if (!idempotencyKey) {
-      return jsonResponse({ error: 'Missing Idempotency-Key header' }, 400)
-    }
-
     const rawBody = await req.text()
     if (!rawBody) {
       return jsonResponse({ error: 'Empty request body' }, 400)
@@ -80,15 +78,36 @@ Deno.serve(async req => {
       return jsonResponse({ error: 'Invalid JSON payload' }, 400)
     }
 
-    const verification = await verifySignature(req.headers, rawBody)
-    if (!verification.verified) {
-      return jsonResponse({ error: 'Signature verification failed' }, 401)
+    const headerIdempotencyKey = extractString(req.headers.get('Idempotency-Key'))
+    const derivedIdempotencyKey = deriveIdempotencyKey(payload)
+    const idempotencyKey = headerIdempotencyKey ?? derivedIdempotencyKey
+    if (!idempotencyKey) {
+      return jsonResponse({ error: 'Missing Idempotency-Key header or contact_id field' }, 400)
+    }
+
+    // Check API key authentication
+    const authHeader = req.headers.get('Authorization')
+    // @ts-ignore: Deno global
+    const expectedApiKey = Deno.env.get('LEDGER_API_KEY')
+    if (!expectedApiKey || !authHeader || !authHeader.startsWith('Bearer ')) {
+      return jsonResponse({ error: 'Missing or invalid API key' }, 401)
+    }
+    const providedApiKey = authHeader.substring(7) // Remove 'Bearer ' prefix
+    if (providedApiKey !== expectedApiKey) {
+      return jsonResponse({ error: 'Invalid API key' }, 401)
     }
 
     const normalizedEmail = normalizeEmail(payload.email)
     if (!normalizedEmail) {
       return jsonResponse({ error: 'email is required' }, 422)
     }
+
+    const contactName = extractString(payload.full_name ?? payload.fullName)
+    if (!contactName) {
+      return jsonResponse({ error: 'full_name is required' }, 422)
+    }
+
+    const businessName = extractString(payload.business_name)
 
     const metadata = coerceRecord(payload.metadata)
     const paymentStatusRaw = extractString(payload.payment_status ?? payload.paymentStatus)
@@ -97,7 +116,6 @@ Deno.serve(async req => {
       ? Math.round(payload.amount)
       : null
     const currency = extractString(payload.currency)?.toUpperCase() ?? null
-    const fullName = extractString(payload.full_name ?? payload.fullName)
     const highLevelEventId = extractString(payload.highlevel_event_id ?? payload.highLevelEventId)
     const offerId = extractString(payload.offer_id)
     const paymentId = extractString(payload.payment_id ?? payload.paymentId)
@@ -118,47 +136,33 @@ Deno.serve(async req => {
       ? await updateEventForRetry(existingEvent.id, existingEvent.processing_attempts ?? null, {
         idempotency_key: idempotencyKey,
         payload,
-        metadata,
+        metadata: { ...metadata, business_name: businessName },
         buyer_email: normalizedEmail,
-        buyer_full_name: fullName,
+        buyer_full_name: contactName,
         offer_id: offerId,
         payment_id: paymentId,
         highlevel_event_id: highLevelEventId,
         payment_status: paymentStatusRaw,
         amount_cents: amountCents,
         currency,
-        hmac_verified: verification.strategy === 'hmac',
-        signature_strategy: verification.strategy
       })
       : await insertNewEvent({
         idempotency_key: idempotencyKey,
         payload,
-        metadata,
+        metadata: { ...metadata, business_name: businessName },
         buyer_email: normalizedEmail,
-        buyer_full_name: fullName,
+        buyer_full_name: contactName,
         offer_id: offerId,
         payment_id: paymentId,
         highlevel_event_id: highLevelEventId,
         payment_status: paymentStatusRaw,
         amount_cents: amountCents,
         currency,
-        hmac_verified: verification.strategy === 'hmac',
-        signature_strategy: verification.strategy
       })
 
     activeEventId = eventRecord.id
 
-    if (!paymentStatus || paymentStatus !== 'paid') {
-      await markEventIgnored(eventRecord.id, `payment_status=${paymentStatusRaw ?? 'unknown'}`)
-      return jsonResponse({
-        status: 'ignored',
-        reason: 'Payment not marked as paid yet',
-        payment_status: paymentStatusRaw ?? null,
-        idempotency_key: idempotencyKey
-      }, 202)
-    }
-
-    const accountName = deriveAccountName(metadata, fullName, normalizedEmail)
+    const accountName = deriveAccountName({ ...metadata, business_name: businessName }, contactName, normalizedEmail)
     const { accountId, reusedAccount } = await ensureAccount(eventRecord, accountName)
 
     const existingUser = await findUserByEmail(normalizedEmail)
@@ -200,6 +204,7 @@ Deno.serve(async req => {
 })
 
 function requireEnv(key: string): string {
+  // @ts-ignore: Deno global
   const value = Deno.env.get(key)
   if (!value) {
     throw new Error(`Missing required environment variable: ${key}`)
@@ -230,56 +235,30 @@ function coerceRecord(value: unknown): Record<string, unknown> {
   return {}
 }
 
-function deriveAccountName(metadata: Record<string, unknown>, fullName: string | null, email: string) {
-  const companyName = extractString(
-    (metadata['company_name'] ?? metadata['companyName']) as string | undefined
-  )
-  if (companyName) {
-    return companyName
-  }
-  if (fullName) {
-    return `${fullName}'s Workspace`
-  }
-  return `${email}'s Workspace`
-}
-
-async function verifySignature(headers: Headers, rawBody: string): Promise<SignatureVerification> {
-  const signatureHeader = headers.get('X-HL-Signature')
-  if (HL_HMAC_SECRET && signatureHeader && signatureHeader.startsWith('sha256=')) {
-    const provided = signatureHeader.substring(7)
-    const expected = await hmacSha256Hex(HL_HMAC_SECRET, rawBody)
-    if (timingSafeEqual(provided, expected)) {
-      return { verified: true, strategy: 'hmac' }
+function deriveIdempotencyKey(payload: HighLevelPayload): string | null {
+  const headerContactId = payload.contact_id
+  if (typeof headerContactId === 'string') {
+    const trimmed = headerContactId.trim()
+    if (trimmed.length) {
+      return `hl-contact-${trimmed}`
     }
   }
-
-  return { verified: false, strategy: 'none' }
-}
-
-async function hmacSha256Hex(secret: string, payload: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  )
-  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payload))
-  return Array.from(new Uint8Array(signature)).map(b => b.toString(16).padStart(2, '0')).join('')
-}
-
-function timingSafeEqual(a: string, b: string): boolean {
-  const aBytes = encoder.encode(a)
-  const bBytes = encoder.encode(b)
-  if (aBytes.length !== bBytes.length) {
-    return false
+  if (typeof headerContactId === 'number' && Number.isFinite(headerContactId)) {
+    return `hl-contact-${headerContactId}`
   }
-  let result = 0
-  for (let i = 0; i < aBytes.length; i++) {
-    result |= aBytes[i] ^ bBytes[i]
-  }
-  return result === 0
+  return null
 }
+
+function deriveAccountName(metadata: Record<string, unknown>, name: string, email: string) {
+  // Use business_name from metadata as the primary account name (if provided)
+  const businessName = extractString(metadata.business_name as string | undefined)
+  if (businessName) {
+    return businessName
+  }
+  // Fallback to name or email-based workspace name
+  return name || `${email}'s Workspace`
+}
+
 
 async function fetchEventByIdempotency(idempotencyKey: string) {
   const { data, error } = await supabaseAdmin

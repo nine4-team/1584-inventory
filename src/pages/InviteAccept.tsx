@@ -173,11 +173,8 @@ export default function InviteAccept() {
             Check Your Email
           </h2>
           <p className="text-gray-600 text-center mb-6">
-            We've sent a verification email to <span className="font-medium">{email}</span>. 
-            Please click the link in the email to verify your account and complete your invitation acceptance.
-          </p>
-          <p className="text-xs text-gray-500 text-center mb-4">
-            The invitation link will be processed automatically after you verify your email.
+            We've sent a verification email to <span className="font-medium">{email}</span>.
+            Click the link in the email to activate your account.
           </p>
           <button
             onClick={() => navigate('/')}
@@ -201,13 +198,10 @@ export default function InviteAccept() {
           <Mail className="h-6 w-6 text-primary-600" />
         </div>
         <h2 className="text-xl font-semibold text-gray-900 text-center mb-2">
-          You've Been Invited!
+          Welcome to Ledger!
         </h2>
         <p className="text-gray-600 text-center mb-6">
-          <span className="font-medium">{invitation.email}</span> has been invited to join the team as{' '}
-          <span className="font-medium">
-            {invitation.role === UserRole.ADMIN ? 'an Admin' : 'a User'}
-          </span>
+          Create your account below to get started.
         </p>
         <div className="flex items-center justify-center mb-6">
           {invitation.role === UserRole.ADMIN ? (
@@ -377,7 +371,7 @@ export default function InviteAccept() {
         )}
 
         <p className="text-xs text-gray-500 text-center mt-4">
-          By signing up, you'll be automatically added to the team with the assigned role.
+          By creating your account, you'll gain access to manage inventory and track transactions.
         </p>
       </div>
     </div>

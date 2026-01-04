@@ -5,21 +5,23 @@ import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useState, FormEvent, useEffect, useMemo } from 'react'
 import { TransactionFormData, TransactionValidationErrors, TransactionItemFormData, ItemImage, TaxPreset } from '@/types'
 import { COMPANY_NAME, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
-import { transactionService, projectService } from '@/services/inventoryService'
-import { unifiedItemsService } from '@/services/inventoryService'
+import { transactionService, projectService, unifiedItemsService } from '@/services/inventoryService'
 import { ImageUploadService, UploadProgress } from '@/services/imageService'
 import ImageUpload from '@/components/ui/ImageUpload'
 import TransactionItemsList from '@/components/TransactionItemsList'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
+import { OfflinePrerequisiteBanner, useOfflinePrerequisiteGate } from '@/components/ui/OfflinePrerequisiteBanner'
 import { useAuth } from '../contexts/AuthContext'
 import { useAccount } from '../contexts/AccountContext'
 import { Shield } from 'lucide-react'
 import { getTaxPresets } from '@/services/taxPresetsService'
 import { getAvailableVendors } from '@/services/vendorDefaultsService'
-import { getDefaultCategory } from '@/services/accountPresetsService'
+import { getCachedDefaultCategory, getDefaultCategory } from '@/services/accountPresetsService'
 import CategorySelect from '@/components/CategorySelect'
 import { projectTransactions } from '@/utils/routes'
 import { navigateToReturnToOrFallback } from '@/utils/navigationReturnTo'
+import { useNetworkState } from '@/hooks/useNetworkState'
+import { getCachedTaxPresets, getCachedVendorDefaults } from '@/services/offlineMetadataService'
 
 export default function AddTransaction() {
   const { id, projectId: routeProjectId } = useParams<{ id?: string; projectId?: string }>()
@@ -31,6 +33,9 @@ export default function AddTransaction() {
   const { user, isOwner } = useAuth()
   const { currentAccountId } = useAccount()
   const { getBackDestination } = useNavigationContext()
+  const offlineGate = useOfflinePrerequisiteGate()
+  const { isReady: metadataReady, blockingReason: prereqBlockingReason } = offlineGate
+  const { isOnline } = useNetworkState()
 
   // Check if user has permission to add transactions
   // Users must belong to an account (have currentAccountId) or be a system owner
@@ -79,18 +84,28 @@ export default function AddTransaction() {
   // Load account-wide default category from Postgres account_presets
   useEffect(() => {
     if (!currentAccountId) return
+    let cancelled = false
+
     const loadDefault = async () => {
       try {
-        const defaultCategory = await getDefaultCategory(currentAccountId)
-        if (defaultCategory) {
-          setFormData(prev => ({ ...prev, categoryId: defaultCategory }))
+        const defaultCategory = isOnline
+          ? await getDefaultCategory(currentAccountId)
+          : await getCachedDefaultCategory(currentAccountId)
+
+        if (defaultCategory && !cancelled) {
+          setFormData(prev => (prev.categoryId ? prev : { ...prev, categoryId: defaultCategory }))
         }
       } catch (err) {
         console.error('Error loading account default category:', err)
       }
     }
+
     loadDefault()
-  }, [currentAccountId])
+
+    return () => {
+      cancelled = true
+    }
+  }, [currentAccountId, isOnline])
 
   const [formData, setFormData] = useState<TransactionFormData>({
     transactionDate: (() => {
@@ -126,19 +141,46 @@ export default function AddTransaction() {
 
   // Load vendor defaults on mount
   useEffect(() => {
+    if (!currentAccountId) return
+    let cancelled = false
+
     const loadVendors = async () => {
-      if (!currentAccountId) return
       try {
+        if (!isOnline) {
+          const cachedSlots = await getCachedVendorDefaults(currentAccountId)
+          if (cancelled) return
+          if (!cachedSlots) {
+            setAvailableVendors([])
+            return
+          }
+          const vendors = cachedSlots.filter((slot): slot is string => Boolean(slot))
+          setAvailableVendors(vendors)
+          return
+        }
+
         const vendors = await getAvailableVendors(currentAccountId)
-        setAvailableVendors(vendors)
+        if (!cancelled) {
+          setAvailableVendors(vendors)
+        }
       } catch (error) {
         console.error('Error loading vendor defaults:', error)
-        // Fallback to empty array - will show only "Other" option
-        setAvailableVendors([])
+        if (!cancelled) {
+          setAvailableVendors([])
+        }
       }
     }
+
+    if (!metadataReady && !isOnline) {
+      setAvailableVendors([])
+      return
+    }
+
     loadVendors()
-  }, [currentAccountId])
+
+    return () => {
+      cancelled = true
+    }
+  }, [currentAccountId, isOnline, metadataReady])
 
   // Initialize custom source state based on initial form data
   useEffect(() => {
@@ -151,17 +193,42 @@ export default function AddTransaction() {
 
   // Load tax presets on mount
   useEffect(() => {
+    if (!currentAccountId) return
+    let cancelled = false
+
     const loadPresets = async () => {
-      if (!currentAccountId) return
       try {
+        if (!isOnline) {
+          const cachedPresets = await getCachedTaxPresets(currentAccountId)
+          if (!cancelled) {
+            setTaxPresets(cachedPresets)
+          }
+          return
+        }
+
         const presets = await getTaxPresets(currentAccountId)
-        setTaxPresets(presets)
+        if (!cancelled) {
+          setTaxPresets(presets)
+        }
       } catch (error) {
         console.error('Error loading tax presets:', error)
+        if (!cancelled) {
+          setTaxPresets([])
+        }
       }
     }
+
+    if (!metadataReady && !isOnline) {
+      setTaxPresets([])
+      return
+    }
+
     loadPresets()
-  }, [currentAccountId])
+
+    return () => {
+      cancelled = true
+    }
+  }, [currentAccountId, isOnline, metadataReady])
 
   // Update selected preset rate when preset changes
   useEffect(() => {
@@ -176,6 +243,7 @@ export default function AddTransaction() {
   const [errors, setErrors] = useState<TransactionValidationErrors>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isUploadingImages, setIsUploadingImages] = useState(false)
+  const submitDisabled = isSubmitting || isUploadingImages || !metadataReady
 
   // Validation function
   const validateForm = (): boolean => {
@@ -218,6 +286,14 @@ export default function AddTransaction() {
     e.preventDefault()
 
     if (!validateForm() || !projectId || !currentAccountId) return
+
+    if (!metadataReady) {
+      setErrors(prev => ({
+        ...prev,
+        general: prereqBlockingReason || 'Offline prerequisites not ready. Go online and tap Retry sync to continue.'
+      }))
+      return
+    }
 
     setIsSubmitting(true)
 
@@ -540,6 +616,9 @@ export default function AddTransaction() {
           <h1 className="text-2xl font-bold text-gray-900">Add Transaction</h1>
         </div>
         <form onSubmit={handleSubmit} className="space-y-8 p-8">
+          {!metadataReady && (
+            <OfflinePrerequisiteBanner className="mb-4" />
+          )}
           {/* General Error Display */}
           {errors.general && (
             <div className="bg-red-50 border border-red-200 rounded-md p-4">
@@ -624,6 +703,7 @@ export default function AddTransaction() {
               label="Budget Category"
               error={errors.categoryId}
               required
+              disabled={!metadataReady}
             />
           </div>
 
@@ -997,7 +1077,7 @@ export default function AddTransaction() {
           </ContextBackLink>
             <button
               type="submit"
-              disabled={isSubmitting || isUploadingImages}
+              disabled={submitDisabled}
               className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Save className="h-4 w-4 mr-2" />

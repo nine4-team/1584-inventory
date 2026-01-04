@@ -486,9 +486,9 @@ export function detectTransactionConflict(local: Transaction, remote: Transactio
 ## Implementation Checklist
 
 ### Metadata & prerequisites
-- [ ] Persist budget categories and tax presets to IndexedDB + expose cached lookups.
-- [ ] Add background hydration / manual refresh UI for the metadata caches.
-- [ ] Block offline mutations (with actionable messaging) when validation data is missing.
+- [x] Persist budget categories and tax presets to IndexedDB + expose cached lookups (`offlineStore` migrations 6/8 + `offlineMetadataService.cacheBudgetCategoriesOffline/cacheTaxPresetsOffline` now back all reads).
+- [x] Add background hydration / manual refresh UI for the metadata caches (`budgetCategoriesService`, `taxPresetsService`, and `hydrateMetadataCaches` behind `RetrySyncButton`).
+- [x] Block offline mutations (with actionable messaging) when validation data is missing (`useOfflinePrerequisites` + `OfflinePrerequisiteBanner` gate `TransactionItemForm`, `ProjectForm`, and `BudgetCategoriesManager` submit states).
 
 ### Transactions ✅ **COMPLETE**
 - [x] Create `offlineTransactionService.ts` with optimistic ID generation, dependency validation, and rollback.
@@ -507,7 +507,7 @@ export function detectTransactionConflict(local: Transaction, remote: Transactio
 - [x] Define typed payloads for transaction/project operations in `src/types/operations.ts` (project updates now include metadata/default category info).
 - [x] Update `operationQueue` to support the new payloads, executors, and `inferAccountId` rules (delete executors now purge offline cache + conflicts).
 - [x] Introduce an `entityType`-aware conflict model plus detectors for transactions/projects, and clear those conflicts after successful syncs.
-- [ ] Verify / migrate IndexedDB stores and indexes required for the new entities (follow-up: new project fields/indexes).
+- [x] Verify / migrate IndexedDB stores and indexes required for the new entities (migrations 6-9 in `offlineStore` add the stores, indexes, and vendor-defaults cache so replay + conflict hygiene stay fast).
 
 ### Read surfaces & UI hydration ✅ **COMPLETE**
 - [x] Add `hydrateTransactionCache`, `hydrateProjectCache`, `hydrateOptimisticTransaction`, and `hydrateOptimisticProject`.
@@ -524,7 +524,7 @@ export function detectTransactionConflict(local: Transaction, remote: Transactio
 - `src/pages/TransactionsList.tsx` - Added project transactions cache hydration
 
 ### Testing & diagnostics
-- [ ] Expand offline UX (banners, retry buttons, telemetry) to mention transaction/project queue state and missing prerequisites.
+- [x] Expand offline UX (banners, retry buttons, telemetry) to mention transaction/project queue state and missing prerequisites (`OfflinePrerequisiteBanner`, `RetrySyncButton`, and queue health logs now surface the state across forms).
 - [ ] Add automated tests for offline transaction/project CRUD, queued item creation, sync replay, and hydration flows.
 - [ ] Run manual QA for airplane mode, IndexedDB quota exhaustion, and multi-device conflicts prior to release.
 
@@ -542,8 +542,8 @@ export function detectTransactionConflict(local: Transaction, remote: Transactio
 
 ## Outstanding gaps (unaddressed)
 
-- [ ] Re-check every offline CRUD path (items, transactions, projects, lineage) for missing network gating so offline screens don't keep pinging Supabase when connectivity is gone.
-- [ ] Bridge offline mutations into our realtime snapshots. Right now `ProjectRealtimeProvider` (and any consumers such as `ProjectLayout` → `InventoryList`) only ever hydrate from Supabase fetches or realtime events, so edits that happen while offline stay invisible until the queue finishes *and* a follow-up fetch/event lands. We need to either push offline-store writes into the provider (e.g. via `syncProjectItemsRealtimeCache` or a new hook) or rehydrate snapshots from IndexedDB whenever we refuse to initialize because `isNetworkOnline()` is false. This impacts every view that relies solely on realtime snapshots (items, transactions, budget summaries, lineage overlays).
+- [x] Re-check every offline CRUD path (items, transactions, projects, lineage) for missing network gating so offline screens don't keep pinging Supabase when connectivity is gone. `AddTransaction` gating now mirrors the item/project forms and `CategorySelect` forces cache-only reads when offline so we no longer hit `account_presets` / `budget_categories` in airplane mode.
+- [x] Bridge offline mutations into our realtime snapshots. `ProjectRealtimeProvider` hydrates from IndexedDB when offline, registers `refreshFromIndexedDB` with the offline queue, and calls `unifiedItemsService.syncProjectItemsRealtimeCache` so optimistic writes appear in `ProjectLayout`/`InventoryList` without waiting for Supabase.
 
 ### Vendor defaults: caching implemented (status: done, follow-ups)
 - Status: implemented. Vendor defaults are now cached in IndexedDB and will be used offline when available; cache hydrations happen once per successful online fetch/update (no endless loops).
