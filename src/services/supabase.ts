@@ -179,6 +179,27 @@ export const signUpWithEmailPassword = async (
   }
 }
 
+// Sign in with email and password
+export const signInWithEmailPassword = async (
+  email: string,
+  password: string
+): Promise<void> => {
+  try {
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    })
+    
+    if (error) throw error
+    
+    // Session is automatically set by Supabase, and the auth state change listener
+    // in AuthContext will handle user document creation and state updates
+  } catch (error) {
+    console.error('Email/password sign-in error:', error)
+    throw error
+  }
+}
+
 // Sign out (replaces signOutUser)
 export const signOutUser = async (): Promise<void> => {
   try {
@@ -306,17 +327,30 @@ export const createOrUpdateUserDocument = async (supabaseUser: User): Promise<vo
         // Create the user document
         // Determine role: first user in account gets 'admin', others get 'user'
         let userRole: 'admin' | 'user' = 'user'
+        
+        // Verify account exists before using it (prevent foreign key violation)
         if (accountId) {
-          // Check if this is the first user in this account
-          const { data: existingAccountUsers } = await supabase
-            .from('users')
+          const { data: accountExists, error: accountCheckError } = await supabase
+            .from('accounts')
             .select('id')
-            .eq('account_id', accountId)
-            .limit(1)
+            .eq('id', accountId)
+            .single()
           
-          if (!existingAccountUsers || existingAccountUsers.length === 0) {
-            // First user in this account gets admin role
-            userRole = 'admin'
+          if (accountCheckError || !accountExists) {
+            console.warn(`Account ${accountId} does not exist. Creating user without account_id.`, accountCheckError)
+            accountId = null
+          } else {
+            // Check if this is the first user in this account
+            const { data: existingAccountUsers } = await supabase
+              .from('users')
+              .select('id')
+              .eq('account_id', accountId)
+              .limit(1)
+            
+            if (!existingAccountUsers || existingAccountUsers.length === 0) {
+              // First user in this account gets admin role
+              userRole = 'admin'
+            }
           }
         }
 

@@ -25,11 +25,10 @@ export interface BudgetCategory {
 
 export interface Account {
   id: string;
-  name: string;
+  name: string; // Account name and business name (consolidated from business_name)
   createdAt: Date;
   createdBy: string;
   // Business profile fields (consolidated from business_profiles table)
-  businessName?: string | null;
   businessLogoUrl?: string | null;
   businessProfileUpdatedAt?: Date | null;
   businessProfileUpdatedBy?: string | null;

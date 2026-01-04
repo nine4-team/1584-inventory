@@ -5,8 +5,8 @@
 -- Function to upsert a budget category
 CREATE OR REPLACE FUNCTION rpc_upsert_budget_category(
   p_account_id uuid,
-  p_category_id uuid DEFAULT NULL,
   p_name text,
+  p_category_id uuid DEFAULT NULL,
   p_slug text DEFAULT NULL,
   p_metadata jsonb DEFAULT NULL,
   p_is_archived boolean DEFAULT false

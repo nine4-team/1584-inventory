@@ -27,12 +27,11 @@ describe('businessProfileService', () => {
     it('should return business profile when found in accounts table', async () => {
       const mockAccount = {
         id: 'test-account-id',
-        business_name: 'Test Business',
+        name: 'Test Business', // name field now serves as both account name and business name
         business_logo_url: 'https://example.com/logo.png',
         business_profile_updated_at: new Date().toISOString(),
         business_profile_updated_by: 'user-id',
-        business_profile_version: 1,
-        name: 'Account Name'
+        business_profile_version: 1
       }
       const mockQueryBuilder = createMockSupabaseClient().from('accounts')
       
@@ -50,15 +49,14 @@ describe('businessProfileService', () => {
       expect(profile?.logoUrl).toBe('https://example.com/logo.png')
     })
 
-    it('should fallback to account name when business_name is null', async () => {
+    it('should return account name (business_name has been consolidated into name)', async () => {
       const mockAccount = {
         id: 'test-account-id',
-        business_name: null,
+        name: 'Account Name', // name field serves as both account name and business name
         business_logo_url: null,
         business_profile_updated_at: null,
         business_profile_updated_by: null,
-        business_profile_version: 1,
-        name: 'Account Name'
+        business_profile_version: 1
       }
       const mockQueryBuilder = createMockSupabaseClient().from('accounts')
       

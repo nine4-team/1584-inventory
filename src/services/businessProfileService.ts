@@ -10,13 +10,14 @@ import { BusinessProfile } from '@/types'
 export const businessProfileService = {
   /**
    * Get business profile for an account
-   * Reads from accounts table (business_name, business_logo_url, etc.)
+   * Reads from accounts table (name, business_logo_url, etc.)
+   * Note: business_name has been consolidated into name
    */
   async getBusinessProfile(accountId: string): Promise<BusinessProfile | null> {
     try {
       const { data: accountData, error: accountError } = await supabase
         .from('accounts')
-        .select('id, business_name, business_logo_url, business_profile_updated_at, business_profile_updated_by, business_profile_version, name')
+        .select('id, name, business_logo_url, business_profile_updated_at, business_profile_updated_by, business_profile_version')
         .eq('id', accountId)
         .single()
 
@@ -31,9 +32,8 @@ export const businessProfileService = {
         return null
       }
 
-      // Use business_name if set, otherwise fall back to account name
+      // Use name field (which now serves as both account name and business name)
       const profileData = convertTimestamps({
-        business_name: accountData.business_name,
         business_logo_url: accountData.business_logo_url,
         business_profile_updated_at: accountData.business_profile_updated_at,
         business_profile_updated_by: accountData.business_profile_updated_by,
@@ -42,7 +42,7 @@ export const businessProfileService = {
       
       return {
         accountId: accountData.id,
-        name: accountData.business_name || accountData.name || '',
+        name: accountData.name || '',
         logoUrl: accountData.business_logo_url,
         updatedAt: profileData.business_profile_updated_at ? new Date(profileData.business_profile_updated_at) : new Date(),
         updatedBy: profileData.business_profile_updated_by || ''
@@ -77,11 +77,11 @@ export const businessProfileService = {
 
       const newVersion = (currentAccount?.business_profile_version || 0) + 1
 
-      // Write to accounts table - triggers will sync to business_profiles
+      // Write to accounts table - update name field (which serves as business name)
       const { error } = await supabase
         .from('accounts')
         .update({
-          business_name: name,
+          name: name,
           business_logo_url: logoUrl,
           business_profile_updated_at: new Date().toISOString(),
           business_profile_updated_by: updatedBy,
