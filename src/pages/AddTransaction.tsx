@@ -10,6 +10,7 @@ import { ImageUploadService, UploadProgress } from '@/services/imageService'
 import ImageUpload from '@/components/ui/ImageUpload'
 import TransactionItemsList from '@/components/TransactionItemsList'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
+import { useSyncError } from '@/hooks/useSyncError'
 import { OfflinePrerequisiteBanner, useOfflinePrerequisiteGate } from '@/components/ui/OfflinePrerequisiteBanner'
 import { useAuth } from '../contexts/AuthContext'
 import { useAccount } from '../contexts/AccountContext'
@@ -28,6 +29,7 @@ export default function AddTransaction() {
   const projectId = routeProjectId || id
   const navigate = useNavigate()
   const location = useLocation()
+  const hasSyncError = useSyncError()
   const fallbackPath = useMemo(() => (projectId ? projectTransactions(projectId) : '/projects'), [projectId])
 
   const { user, isOwner } = useAuth()
@@ -605,7 +607,7 @@ export default function AddTransaction() {
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back
           </ContextBackLink>
-          <RetrySyncButton size="sm" variant="secondary" />
+          {hasSyncError && <RetrySyncButton size="sm" variant="secondary" />}
         </div>
 
       </div>

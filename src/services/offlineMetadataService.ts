@@ -6,6 +6,35 @@ import { isNetworkOnline } from './networkStatusService'
 import { DEFAULT_TAX_PRESETS } from '@/constants/taxPresets'
 import { TRANSACTION_SOURCES } from '@/constants/transactionSources'
 
+const METADATA_HYDRATION_DEBOUNCE_MS = 30_000
+const ongoingHydrations = new Map<string, Promise<void>>()
+const lastHydrationAt = new Map<string, number>()
+
+type CacheBudgetCategoriesOptions = {
+  categories?: BudgetCategory[]
+  force?: boolean
+}
+
+type CacheTaxPresetsOptions = {
+  presets?: TaxPreset[]
+  force?: boolean
+}
+
+type CacheVendorDefaultsOptions = {
+  force?: boolean
+}
+
+type NormalizedBudgetCategory = {
+  id: string
+  accountId: string
+  name: string
+  slug: string
+  isArchived: boolean
+  metadata?: Record<string, any> | null
+  createdAt: string
+  updatedAt: string
+}
+
 /**
  * Offline Metadata Service
  * 
@@ -17,57 +46,89 @@ import { TRANSACTION_SOURCES } from '@/constants/transactionSources'
  * Cache budget categories for an account to IndexedDB
  * Fetches directly from Supabase to avoid circular dependency with budgetCategoriesService
  */
-export async function cacheBudgetCategoriesOffline(accountId: string): Promise<void> {
+export async function cacheBudgetCategoriesOffline(
+  accountId: string,
+  options: CacheBudgetCategoriesOptions = {}
+): Promise<void> {
   try {
     await offlineStore.init()
-    
-    // Only cache when online
-    if (!isNetworkOnline()) {
-      console.warn('[offlineMetadataService] Cannot cache budget categories while offline')
-      return
-    }
 
-    // Fetch directly from Supabase to avoid circular dependency
-    // Use view that reads from embedded categories in account_presets
-    await ensureAuthenticatedForDatabase()
-    
-    const { data, error } = await supabase
-      .from('vw_budget_categories')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('is_archived', false)
+    const { categories, force = false } = options
+    let normalizedCategories: NormalizedBudgetCategory[] = []
 
-    if (error) {
-      throw error
-    }
-
-    // Convert to DB format
-    const dbCategories = (data || []).map(category => {
-      const converted = convertTimestamps(category)
-      return {
-        id: converted.id,
-        accountId: converted.account_id,
-        name: converted.name,
-        slug: converted.slug,
-        isArchived: converted.is_archived || false,
-        metadata: converted.metadata || null,
-        createdAt: converted.created_at instanceof Date ? converted.created_at.toISOString() : converted.created_at,
-        updatedAt: converted.updated_at instanceof Date ? converted.updated_at.toISOString() : converted.updated_at,
+    if (categories && categories.length > 0) {
+      normalizedCategories = categories.map(category => ({
+        id: category.id,
+        accountId: category.accountId ?? accountId,
+        name: category.name,
+        slug: category.slug,
+        isArchived: category.isArchived ?? false,
+        metadata: category.metadata ?? null,
+        createdAt: category.createdAt instanceof Date ? category.createdAt.toISOString() : String(category.createdAt),
+        updatedAt: category.updatedAt instanceof Date ? category.updatedAt.toISOString() : String(category.updatedAt),
+      }))
+    } else {
+      // Only fetch when online
+      if (!isNetworkOnline()) {
+        console.warn('[offlineMetadataService] Cannot cache budget categories while offline')
+        return
       }
-    })
 
-    await offlineStore.saveBudgetCategories(accountId, dbCategories)
+      // Fetch directly from Supabase to avoid circular dependency
+      // Use view that reads from embedded categories in account_presets
+      await ensureAuthenticatedForDatabase()
+      
+      const { data, error } = await supabase
+        .from('vw_budget_categories')
+        .select('*')
+        .eq('account_id', accountId)
+        .eq('is_archived', false)
+
+      if (error) {
+        throw error
+      }
+
+      normalizedCategories = (data || []).map(category => {
+        const converted = convertTimestamps(category)
+        return {
+          id: converted.id,
+          accountId: converted.account_id,
+          name: converted.name,
+          slug: converted.slug,
+          isArchived: converted.is_archived || false,
+          metadata: converted.metadata || null,
+          createdAt: converted.created_at instanceof Date ? converted.created_at.toISOString() : converted.created_at,
+          updatedAt: converted.updated_at instanceof Date ? converted.updated_at.toISOString() : converted.updated_at,
+        }
+      })
+    }
+
+    if (!force && normalizedCategories.length > 0) {
+      const existing = await offlineStore.getBudgetCategories(accountId)
+      if (
+        existing.length > 0 &&
+        areBudgetCategoriesEqual(existing, normalizedCategories)
+      ) {
+        console.debug('[offlineMetadataService] Budget categories cache already up to date, skipping write', {
+          accountId,
+          count: normalizedCategories.length
+        })
+        return
+      }
+    }
+
+    await offlineStore.saveBudgetCategories(accountId, normalizedCategories)
     
     // Emit telemetry event
     console.log('[offlineMetadataService] Budget categories cached', { 
       accountId, 
-      count: dbCategories.length 
+      count: normalizedCategories.length 
     })
     
     // Emit custom event for telemetry
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('offlineMetadataCacheWarm', {
-        detail: { type: 'budgetCategories', accountId, count: dbCategories.length }
+        detail: { type: 'budgetCategories', accountId, count: normalizedCategories.length }
       }))
     }
   } catch (error) {
@@ -80,47 +141,67 @@ export async function cacheBudgetCategoriesOffline(accountId: string): Promise<v
  * Cache tax presets for an account to IndexedDB
  * Fetches directly from Supabase to avoid circular dependency with taxPresetsService
  */
-export async function cacheTaxPresetsOffline(accountId: string): Promise<void> {
+export async function cacheTaxPresetsOffline(
+  accountId: string,
+  options: CacheTaxPresetsOptions = {}
+): Promise<void> {
   try {
     await offlineStore.init()
+    const { presets: providedPresets, force = false } = options
+    let presets: TaxPreset[] | null = providedPresets ? providedPresets.slice() : null
     
-    // Only cache when online
-    if (!isNetworkOnline()) {
-      console.warn('[offlineMetadataService] Cannot cache tax presets while offline')
-      return
+    if (!presets) {
+      // Only cache when online
+      if (!isNetworkOnline()) {
+        console.warn('[offlineMetadataService] Cannot cache tax presets while offline')
+        return
+      }
+
+      // Fetch directly from Supabase to avoid circular dependency
+      await ensureAuthenticatedForDatabase()
+      
+      const { data, error } = await supabase
+        .from('account_presets')
+        .select('presets')
+        .eq('account_id', accountId)
+        .single()
+
+      if (error && error.code !== 'PGRST116') { // PGRST116 is "not found"
+        throw error
+      }
+
+      if (data?.presets?.tax_presets && Array.isArray(data.presets.tax_presets)) {
+        presets = data.presets.tax_presets as TaxPreset[]
+      } else {
+        presets = DEFAULT_TAX_PRESETS
+      }
     }
 
-    // Fetch directly from Supabase to avoid circular dependency
-    await ensureAuthenticatedForDatabase()
-    
-    const { data, error } = await supabase
-      .from('account_presets')
-      .select('presets')
-      .eq('account_id', accountId)
-      .single()
+    const normalizedPresets = presets ?? DEFAULT_TAX_PRESETS
 
-    let presets: TaxPreset[] = DEFAULT_TAX_PRESETS
-
-    if (error && error.code !== 'PGRST116') { // PGRST116 is "not found"
-      throw error
-    }
-
-    if (data?.presets?.tax_presets && Array.isArray(data.presets.tax_presets)) {
-      presets = data.presets.tax_presets as TaxPreset[]
+    if (!force) {
+      const existing = await offlineStore.getTaxPresets(accountId)
+      if (existing && areTaxPresetsEqual(existing, normalizedPresets)) {
+        console.debug('[offlineMetadataService] Tax presets cache already up to date, skipping write', {
+          accountId,
+          count: normalizedPresets.length
+        })
+        return
+      }
     }
     
-    await offlineStore.saveTaxPresets(accountId, presets)
+    await offlineStore.saveTaxPresets(accountId, normalizedPresets)
     
     // Emit telemetry event
     console.log('[offlineMetadataService] Tax presets cached', { 
       accountId, 
-      count: presets.length 
+      count: normalizedPresets.length 
     })
     
     // Emit custom event for telemetry
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('offlineMetadataCacheWarm', {
-        detail: { type: 'taxPresets', accountId, count: presets.length }
+        detail: { type: 'taxPresets', accountId, count: normalizedPresets.length }
       }))
     }
   } catch (error) {
@@ -135,10 +216,12 @@ export async function cacheTaxPresetsOffline(accountId: string): Promise<void> {
  */
 export async function cacheVendorDefaultsOffline(
   accountId: string,
-  slots?: Array<string | null>
+  slots?: Array<string | null>,
+  options: CacheVendorDefaultsOptions = {}
 ): Promise<void> {
   try {
     await offlineStore.init()
+    const { force = false } = options
 
     let normalizedSlots = slots?.slice()
 
@@ -175,10 +258,21 @@ export async function cacheVendorDefaultsOffline(
     const padded = normalizedSlots.map(slot => (typeof slot === 'string' ? slot : null))
     while (padded.length < 10) padded.push(null)
     const truncated = padded.slice(0, 10)
+    const configuredCount = truncated.filter(s => s !== null).length
+
+    if (!force) {
+      const existing = await offlineStore.getVendorDefaults(accountId)
+      if (existing && areVendorDefaultsEqual(existing, truncated)) {
+        console.debug('[offlineMetadataService] Vendor defaults cache already up to date, skipping write', {
+          accountId,
+          count: configuredCount
+        })
+        return
+      }
+    }
 
     await offlineStore.saveVendorDefaults(accountId, truncated)
 
-    const configuredCount = truncated.filter(s => s !== null).length
     console.log('[offlineMetadataService] Vendor defaults cached', {
       accountId,
       count: configuredCount
@@ -211,16 +305,52 @@ export async function getCachedVendorDefaults(accountId: string): Promise<Array<
 /**
  * Hydrate all metadata caches for an account
  */
-export async function hydrateMetadataCaches(accountId: string): Promise<void> {
-  try {
+export async function hydrateMetadataCaches(
+  accountId: string,
+  options: { force?: boolean } = {}
+): Promise<void> {
+  if (!accountId) {
+    return
+  }
+
+  const { force = false } = options
+  const lastRun = lastHydrationAt.get(accountId)
+  if (!force && lastRun && Date.now() - lastRun < METADATA_HYDRATION_DEBOUNCE_MS) {
+    return
+  }
+
+  const existingHydration = ongoingHydrations.get(accountId)
+  if (existingHydration) {
+    return existingHydration
+  }
+
+  const hydrationPromise = (async () => {
+    if (!force) {
+      const warmth = await areMetadataCachesWarm(accountId)
+      if (warmth.budgetCategories && warmth.taxPresets && warmth.vendorDefaults) {
+        lastHydrationAt.set(accountId, Date.now())
+        return
+      }
+    }
+
     await Promise.all([
-      cacheBudgetCategoriesOffline(accountId),
-      cacheTaxPresetsOffline(accountId),
-      cacheVendorDefaultsOffline(accountId)
+      cacheBudgetCategoriesOffline(accountId, { force }),
+      cacheTaxPresetsOffline(accountId, { force }),
+      cacheVendorDefaultsOffline(accountId, undefined, { force })
     ])
+
+    lastHydrationAt.set(accountId, Date.now())
+  })()
+
+  ongoingHydrations.set(accountId, hydrationPromise)
+
+  try {
+    await hydrationPromise
   } catch (error) {
     console.error('[offlineMetadataService] Failed to hydrate metadata caches:', error)
     throw error
+  } finally {
+    ongoingHydrations.delete(accountId)
   }
 }
 
@@ -358,4 +488,70 @@ export async function clearMetadataCaches(accountId: string): Promise<void> {
     console.error('[offlineMetadataService] Failed to clear metadata caches:', error)
     throw error
   }
+}
+
+function areBudgetCategoriesEqual(
+  existing: Array<NormalizedBudgetCategory & { cachedAt?: string }>,
+  incoming: NormalizedBudgetCategory[]
+): boolean {
+  if (existing.length !== incoming.length) {
+    return false
+  }
+
+  const sortById = <T extends { id: string }>(arr: T[]) =>
+    [...arr].sort((a, b) => a.id.localeCompare(b.id))
+
+  const existingSorted = sortById(existing)
+  const incomingSorted = sortById(incoming)
+
+  return incomingSorted.every((category, index) => {
+    const previous = existingSorted[index]
+    if (!previous) return false
+    return (
+      previous.id === category.id &&
+      previous.accountId === category.accountId &&
+      previous.name === category.name &&
+      previous.slug === category.slug &&
+      previous.isArchived === category.isArchived &&
+      previous.createdAt === category.createdAt &&
+      previous.updatedAt === category.updatedAt &&
+      JSON.stringify(previous.metadata ?? null) === JSON.stringify(category.metadata ?? null)
+    )
+  })
+}
+
+function areTaxPresetsEqual(existing: TaxPreset[], incoming: TaxPreset[]): boolean {
+  if (existing.length !== incoming.length) {
+    return false
+  }
+
+  const sortById = <T extends { id: string }>(arr: T[]) =>
+    [...arr].sort((a, b) => a.id.localeCompare(b.id))
+
+  const existingSorted = sortById(existing)
+  const incomingSorted = sortById(incoming)
+
+  return incomingSorted.every((preset, index) => {
+    const previous = existingSorted[index]
+    if (!previous) return false
+    return (
+      previous.id === preset.id &&
+      previous.name === preset.name &&
+      Number(previous.rate) === Number(preset.rate)
+    )
+  })
+}
+
+function areVendorDefaultsEqual(existing: Array<string | null>, incoming: Array<string | null>): boolean {
+  if (existing.length !== incoming.length) {
+    return false
+  }
+
+  for (let i = 0; i < incoming.length; i += 1) {
+    if ((existing[i] ?? null) !== (incoming[i] ?? null)) {
+      return false
+    }
+  }
+
+  return true
 }

@@ -112,7 +112,10 @@ export function SyncStatus() {
     }
   }, [])
 
-  const schedulerError = schedulerSnapshot.lastError || null
+  const schedulerError =
+    schedulerSnapshot.lastError && schedulerSnapshot.lastError !== 'Waiting for network connectivity'
+      ? schedulerSnapshot.lastError
+      : null
   const combinedError = backgroundSyncError || schedulerError
   const isForegroundSyncing = schedulerSnapshot.isRunning
   const isRetryScheduled =
@@ -198,7 +201,7 @@ export function SyncStatus() {
 
           <span>{statusMessage}</span>
 
-          {effectivePendingCount > 0 && statusVariant !== 'syncing' && (
+          {combinedError && statusVariant === 'error' && (
             <RetrySyncButton className="ml-2" size="sm" showPendingCount />
           )}
         </div>

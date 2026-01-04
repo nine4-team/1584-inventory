@@ -1447,6 +1447,31 @@ class OperationQueue {
     } as Operation))
   }
 
+  async getEntityIdsWithPendingWrites(
+    entityType: 'item' | 'transaction' | 'project'
+  ): Promise<Set<string>> {
+    await this.init()
+
+    const pendingIds = new Set<string>()
+    const writeTypes = this.getWriteOperationTypes(entityType)
+
+    if (writeTypes.length === 0) {
+      return pendingIds
+    }
+
+    for (const operation of this.queue) {
+      if (!writeTypes.includes(operation.type)) {
+        continue
+      }
+      const entityId = this.extractEntityId(operation)
+      if (entityId) {
+        pendingIds.add(entityId)
+      }
+    }
+
+    return pendingIds
+  }
+
   async removeOperation(operationId: string): Promise<boolean> {
     await this.init()
 
@@ -1554,6 +1579,38 @@ class OperationQueue {
     this.backgroundSyncAvailable = nextAvailable
     this.backgroundSyncReason = nextReason
     this.emitQueueChange()
+  }
+
+  private getWriteOperationTypes(entityType: 'item' | 'transaction' | 'project'): Operation['type'][] {
+    switch (entityType) {
+      case 'item':
+        return ['UPDATE_ITEM', 'DELETE_ITEM']
+      case 'transaction':
+        return ['UPDATE_TRANSACTION', 'DELETE_TRANSACTION']
+      case 'project':
+        return ['UPDATE_PROJECT', 'DELETE_PROJECT']
+      default:
+        return []
+    }
+  }
+
+  private extractEntityId(operation: Operation): string | null {
+    switch (operation.type) {
+      case 'CREATE_ITEM':
+      case 'UPDATE_ITEM':
+      case 'DELETE_ITEM':
+        return operation.data.id
+      case 'CREATE_TRANSACTION':
+      case 'UPDATE_TRANSACTION':
+      case 'DELETE_TRANSACTION':
+        return operation.data.id
+      case 'CREATE_PROJECT':
+      case 'UPDATE_PROJECT':
+      case 'DELETE_PROJECT':
+        return operation.data.id
+      default:
+        return null
+    }
   }
 }
 

@@ -1,5 +1,6 @@
 export interface ConflictItem {
   id: string
+  entityType: 'item' | 'transaction' | 'project'
   local: {
     data: Record<string, unknown>
     timestamp: string

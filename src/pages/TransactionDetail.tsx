@@ -25,6 +25,7 @@ import { getGlobalQueryClient } from '@/utils/queryClient'
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import TransactionAudit from '@/components/ui/TransactionAudit'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
+import { useSyncError } from '@/hooks/useSyncError'
 import { projectTransactionEdit, projectTransactions } from '@/utils/routes'
 import { splitItemsByMovement, type DisplayTransactionItem } from '@/utils/transactionMovement'
 import { ConflictResolutionView } from '@/components/ConflictResolutionView'
@@ -95,6 +96,7 @@ export default function TransactionDetail() {
   const { id, projectId: routeProjectId, transactionId } = useParams<{ id?: string; projectId?: string; transactionId: string }>()
   const projectId = routeProjectId || id
   const navigate = useStackedNavigate()
+  const hasSyncError = useSyncError()
   const { currentAccountId } = useAccount()
   const [transaction, setTransaction] = useState<Transaction | null>(null)
   const [project, setProject] = useState<Project | null>(null)
@@ -984,7 +986,7 @@ export default function TransactionDetail() {
             >
               <Edit className="h-4 w-4" />
             </ContextLink>
-            <RetrySyncButton size="sm" variant="secondary" />
+            {hasSyncError && <RetrySyncButton size="sm" variant="secondary" />}
           </div>
         </div>
       </div>

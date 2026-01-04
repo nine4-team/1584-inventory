@@ -12,9 +12,11 @@ import { useAccount } from '@/contexts/AccountContext'
 import { useAuth } from '@/contexts/AuthContext'
 import CategorySelect from '@/components/CategorySelect'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
+import { useSyncError } from '@/hooks/useSyncError'
 
 export default function AddBusinessInventoryTransaction() {
   const navigate = useStackedNavigate()
+  const hasSyncError = useSyncError()
   const location = useLocation()
   const { currentAccountId } = useAccount()
   const { user } = useAuth()
@@ -234,7 +236,7 @@ export default function AddBusinessInventoryTransaction() {
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back
           </ContextBackLink>
-          <RetrySyncButton size="sm" variant="secondary" />
+          {hasSyncError && <RetrySyncButton size="sm" variant="secondary" />}
         </div>
       </div>
 

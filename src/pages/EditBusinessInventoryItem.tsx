@@ -8,10 +8,12 @@ import { unifiedItemsService } from '@/services/inventoryService'
 import { useAccount } from '@/contexts/AccountContext'
 import { Combobox } from '@/components/ui/Combobox'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
+import { useSyncError } from '@/hooks/useSyncError'
 
 export default function EditBusinessInventoryItem() {
   const { id } = useParams<{ id: string }>()
   const navigate = useStackedNavigate()
+  const hasSyncError = useSyncError()
   const location = useLocation()
   const { currentAccountId } = useAccount()
   const [isLoading, setIsLoading] = useState(true)
@@ -190,7 +192,7 @@ export default function EditBusinessInventoryItem() {
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back
           </ContextBackLink>
-          <RetrySyncButton size="sm" variant="secondary" />
+          {hasSyncError && <RetrySyncButton size="sm" variant="secondary" />}
         </div>
       </div>
 

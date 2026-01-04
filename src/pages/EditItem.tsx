@@ -7,6 +7,7 @@ import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import { Transaction } from '@/types'
 import { Combobox } from '@/components/ui/Combobox'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
+import { useSyncError } from '@/hooks/useSyncError'
 import { useAuth } from '../contexts/AuthContext'
 import { useAccount } from '../contexts/AccountContext'
 import { UserRole } from '../types'
@@ -35,6 +36,7 @@ export default function EditItem() {
   const { id, projectId: routeProjectId, itemId } = useParams<{ id?: string; projectId?: string; itemId?: string }>()
   const projectId = routeProjectId || id
   const navigate = useNavigate()
+  const hasSyncError = useSyncError()
   const location = useLocation()
   const { hasRole } = useAuth()
   const { currentAccountId } = useAccount()
@@ -342,7 +344,7 @@ export default function EditItem() {
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back
           </ContextBackLink>
-          <RetrySyncButton size="sm" variant="secondary" />
+          {hasSyncError && <RetrySyncButton size="sm" variant="secondary" />}
         </div>
       </div>
 
