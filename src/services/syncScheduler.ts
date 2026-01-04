@@ -103,7 +103,8 @@ class SyncScheduler {
 
   private handleOffline = () => {
     this.lastTrigger = 'network'
-    this.lastError = 'Waiting for network connectivity'
+    // Being offline is a normal state, not an error. Clear any previous error and notify listeners
+    this.lastError = null
     this.notify()
   }
 

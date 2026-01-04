@@ -19,6 +19,7 @@ import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import CategorySelect from '@/components/CategorySelect'
 import TransactionItemsList from '@/components/TransactionItemsList'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
+import { useSyncError } from '@/hooks/useSyncError'
 import { projectTransactionDetail, projectTransactions } from '@/utils/routes'
 import { getReturnToFromLocation, navigateToReturnToOrFallback } from '@/utils/navigationReturnTo'
 import { hydrateTransactionCache } from '@/utils/hydrationHelpers'
@@ -28,6 +29,7 @@ export default function EditTransaction() {
   const { id, projectId: routeProjectId, transactionId } = useParams<{ id?: string; projectId?: string; transactionId: string }>()
   const projectId = routeProjectId || id
   const navigate = useNavigate()
+  const hasSyncError = useSyncError()
   const navigationStack = useNavigationStack()
   const location = useLocation()
   const { hasRole } = useAuth()
@@ -112,22 +114,31 @@ export default function EditTransaction() {
   // Transaction items state
   const [items, setItems] = useState<TransactionItemFormData[]>([])
   const initialItemsRef = useRef<TransactionItemFormData[] | null>(null)
+  const lastLoggedTransactionIdRef = useRef<string | null>(null)
+  const lastLoggedItemsRef = useRef<string | null>(null)
 
   // Custom source state
   const [isCustomSource, setIsCustomSource] = useState(false)
   const [availableVendors, setAvailableVendors] = useState<string[]>([])
+  const availableVendorsRef = useRef<string[]>([])
 
   // Load vendor defaults on mount
   useEffect(() => {
     const loadVendors = async () => {
-      if (!currentAccountId) return
+      if (!currentAccountId) {
+        setAvailableVendors([])
+        availableVendorsRef.current = []
+        return
+      }
       try {
         const vendors = await getAvailableVendors(currentAccountId)
         setAvailableVendors(vendors)
+        availableVendorsRef.current = vendors
       } catch (error) {
         console.error('Error loading vendor defaults:', error)
         // Fallback to empty array - will show only "Other" option
         setAvailableVendors([])
+        availableVendorsRef.current = []
       }
     }
     loadVendors()
@@ -159,14 +170,25 @@ export default function EditTransaction() {
 
   // Load transaction and project data
   useEffect(() => {
-    const loadTransaction = async () => {
-      // Guard against undefined projectId (business inventory transactions should use EditBusinessInventoryTransaction)
-      if (!projectId || projectId === 'undefined' || !transactionId || !currentAccountId) {
-        console.error('EditTransaction: projectId is required. Business inventory transactions should use EditBusinessInventoryTransaction.')
-        setIsLoading(false)
-        return
-      }
+    // Guard against missing params before attempting to load anything
+    if (!transactionId) {
+      console.error('EditTransaction: transactionId is required in the route params.')
+      setIsLoading(false)
+      return
+    }
 
+    if (!projectId || projectId === 'undefined') {
+      console.error('EditTransaction: projectId is required. Business inventory transactions should use EditBusinessInventoryTransaction.')
+      setIsLoading(false)
+      return
+    }
+
+    if (!currentAccountId) {
+      // Still waiting on account context; keep spinner visible instead of logging false errors
+      return
+    }
+
+    const loadTransaction = async () => {
       try {
         // First, try to hydrate from offlineStore to React Query cache
         // This ensures optimistic transactions created offline are available
@@ -182,7 +204,10 @@ export default function EditTransaction() {
         
         let transactionData: Transaction | null = null
         if (cachedTransaction) {
-          console.log('✅ Transaction found in React Query cache:', cachedTransaction.transactionId)
+          if (lastLoggedTransactionIdRef.current !== cachedTransaction.transactionId) {
+            console.log('✅ Transaction found in React Query cache:', cachedTransaction.transactionId)
+            lastLoggedTransactionIdRef.current = cachedTransaction.transactionId
+          }
           transactionData = cachedTransaction
         }
 
@@ -201,10 +226,7 @@ export default function EditTransaction() {
           // Determine the source to display: if database saved 'Other' (legacy), use project name
           const legacyOther = transaction.source === 'Other' || transaction.source === ''
           const resolvedSource = legacyOther && project ? project.name : transaction.source
-
-          // Check if source is custom (not in predefined list)
-          const sourceIsCustom = Boolean(resolvedSource && !availableVendors.includes(resolvedSource))
-
+          const sourceIsCustom = Boolean(resolvedSource && !availableVendorsRef.current.includes(resolvedSource))
           // Use the transaction date directly for date input (convert Date object to YYYY-MM-DD string)
           setFormData({
             transactionDate: toDateOnlyString(transaction.transactionDate) || '',
@@ -222,13 +244,13 @@ export default function EditTransaction() {
             receiptEmailed: transaction.receiptEmailed
           })
 
+          setIsCustomSource(sourceIsCustom)
+
           // Populate tax fields if present
           if (transaction.taxRatePreset) {
             setTaxRatePreset(transaction.taxRatePreset)
           }
           setSubtotal(transaction.subtotal || '')
-
-          setIsCustomSource(sourceIsCustom)
 
           // If legacy 'Other' was stored, immediately correct database to the project name
           if (legacyOther && project && projectId && transactionId && currentAccountId) {
@@ -251,18 +273,21 @@ export default function EditTransaction() {
           // Load transaction items
           try {
             const transactionItems = await unifiedItemsService.getItemsForTransaction(currentAccountId, projectId, transactionId)
-            console.log('Loaded transaction items:', transactionItems)
-
-            const transactionItemIds = transactionItems.map(item => item.itemId)
-            console.log('Transaction item IDs:', transactionItemIds)
-
+            const shouldLogItems = lastLoggedItemsRef.current !== transactionId
+            if (shouldLogItems) {
+              console.log('Loaded transaction items:', transactionItems)
+              const transactionItemIds = transactionItems.map(item => item.itemId)
+              console.log('Transaction item IDs:', transactionItemIds)
+            }
             const itemsWithDetails = await Promise.all(
               transactionItems.map(async (item) => {
-                console.log(`Loaded item ${item.itemId}:`, {
-                  id: item.itemId,
-                  description: item?.description || '',
-                  hasValidFormat: item.itemId.startsWith('I-') && item.itemId.length > 10
-                })
+                if (shouldLogItems) {
+                  console.log(`Loaded item ${item.itemId}:`, {
+                    id: item.itemId,
+                    description: item?.description || '',
+                    hasValidFormat: item.itemId.startsWith('I-') && item.itemId.length > 10
+                  })
+                }
 
                 return {
                   id: item.itemId,
@@ -276,11 +301,14 @@ export default function EditTransaction() {
                 }
               })
             )
-            console.log('Loaded transaction items:', transactionItems.map(item => ({
-              id: item.itemId,
-              description: item.description,
-              isTempId: item.itemId.startsWith('temp-')
-            })))
+            if (shouldLogItems) {
+              console.log('Loaded transaction items:', transactionItems.map(item => ({
+                id: item.itemId,
+                description: item.description,
+                isTempId: item.itemId.startsWith('temp-')
+              })))
+              lastLoggedItemsRef.current = transactionId
+            }
             setItems(itemsWithDetails)
             // Capture initial snapshot of loaded items to detect later edits.
             try {
@@ -308,7 +336,7 @@ export default function EditTransaction() {
     }
 
     loadTransaction()
-  }, [projectId, transactionId, currentAccountId, availableVendors])
+  }, [projectId, transactionId, currentAccountId])
 
   // Validation function
   const validateForm = (): boolean => {
@@ -621,7 +649,7 @@ export default function EditTransaction() {
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back
           </button>
-          <RetrySyncButton size="sm" variant="secondary" />
+          {hasSyncError && <RetrySyncButton size="sm" variant="secondary" />}
         </div>
 
       </div>

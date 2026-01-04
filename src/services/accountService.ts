@@ -23,7 +23,20 @@ export const accountService = {
       .single()
 
     if (error) throw error
-    return data.id
+    
+    const accountId = data.id
+    
+    // Ensure default budget categories are created for the new account
+    // This is a best-effort operation, so we don't throw if it fails
+    try {
+      const { budgetCategoriesService } = await import('./budgetCategoriesService')
+      await budgetCategoriesService.ensureDefaultBudgetCategories(accountId)
+    } catch (err) {
+      console.warn(`[accountService] Failed to create default budget categories for account ${accountId}:`, err)
+      // Don't throw - account creation succeeded, category seeding can be retried later
+    }
+    
+    return accountId
   },
 
   /**

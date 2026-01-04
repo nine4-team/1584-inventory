@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useLocation } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
@@ -12,6 +12,7 @@ import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import { useAccount } from '@/contexts/AccountContext'
 import CategorySelect from '@/components/CategorySelect'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
+import { useSyncError } from '@/hooks/useSyncError'
 import { hydrateTransactionCache } from '@/utils/hydrationHelpers'
 import { getGlobalQueryClient } from '@/utils/queryClient'
 
@@ -19,6 +20,7 @@ export default function EditBusinessInventoryTransaction() {
   const { projectId, transactionId } = useParams<{ projectId: string; transactionId: string }>()
   const navigate = useStackedNavigate()
   const location = useLocation()
+  const hasSyncError = useSyncError()
   const { currentAccountId } = useAccount()
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -41,17 +43,25 @@ export default function EditBusinessInventoryTransaction() {
   const [formErrors, setFormErrors] = useState<Record<string, string | undefined>>({})
   const [isCustomSource, setIsCustomSource] = useState(false)
   const [availableVendors, setAvailableVendors] = useState<string[]>([])
+  const availableVendorsRef = useRef<string[]>([])
+  const lastLoggedTransactionIdRef = useRef<string | null>(null)
 
   // Load vendor defaults on mount
   useEffect(() => {
     const loadVendors = async () => {
-      if (!currentAccountId) return
+      if (!currentAccountId) {
+        setAvailableVendors([])
+        availableVendorsRef.current = []
+        return
+      }
       try {
         const vendors = await getAvailableVendors(currentAccountId)
         setAvailableVendors(vendors)
+        availableVendorsRef.current = vendors
       } catch (error) {
         console.error('Error loading vendor defaults:', error)
         setAvailableVendors([])
+        availableVendorsRef.current = []
       }
     }
     loadVendors()
@@ -111,8 +121,17 @@ export default function EditBusinessInventoryTransaction() {
 
   // Load projects and transaction data
   useEffect(() => {
+    if (!transactionId) {
+      console.error('EditBusinessInventoryTransaction: transactionId is required in the route params.')
+      setIsLoading(false)
+      return
+    }
+
+    if (!currentAccountId) {
+      return
+    }
+
     const loadData = async () => {
-      if (!currentAccountId || !transactionId) return
       try {
         // Handle 'null' string placeholder for business inventory transactions (projectId is null)
         const actualProjectId = projectId === 'null' ? '' : (projectId || '')
@@ -131,7 +150,10 @@ export default function EditBusinessInventoryTransaction() {
         
         let transactionData: Transaction | null = null
         if (cachedTransaction) {
-          console.log('✅ Transaction found in React Query cache:', cachedTransaction.transactionId)
+          if (lastLoggedTransactionIdRef.current !== cachedTransaction.transactionId) {
+            console.log('✅ Transaction found in React Query cache:', cachedTransaction.transactionId)
+            lastLoggedTransactionIdRef.current = cachedTransaction.transactionId
+          }
           transactionData = cachedTransaction
         }
 
@@ -147,8 +169,7 @@ export default function EditBusinessInventoryTransaction() {
         if (transactionData) {
           setTransaction(transactionData)
           const resolvedSource = transactionData.source || ''
-          // Check if source is custom (not in predefined list)
-          const sourceIsCustom = Boolean(resolvedSource && !availableVendors.includes(resolvedSource))
+          const sourceIsCustom = Boolean(resolvedSource && !availableVendorsRef.current.includes(resolvedSource))
           
           setFormData({
             projectId: transactionData.projectId || '',
@@ -181,7 +202,7 @@ export default function EditBusinessInventoryTransaction() {
     }
 
     loadData()
-  }, [projectId, transactionId, currentAccountId, availableVendors])
+  }, [projectId, transactionId, currentAccountId])
 
   const handleInputChange = (field: keyof typeof formData, value: string | boolean) => {
     setFormData(prev => ({ ...prev, [field]: value }))
@@ -308,7 +329,7 @@ export default function EditBusinessInventoryTransaction() {
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back
           </ContextBackLink>
-          <RetrySyncButton size="sm" variant="secondary" />
+          {hasSyncError && <RetrySyncButton size="sm" variant="secondary" />}
         </div>
       </div>
 

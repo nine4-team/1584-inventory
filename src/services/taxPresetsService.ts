@@ -1,5 +1,5 @@
 import { DEFAULT_TAX_PRESETS, TaxPreset } from '@/constants/taxPresets'
-import { getAccountPresets, upsertAccountPresets } from './accountPresetsService'
+import { getAccountPresets, mergeAccountPresetsSection } from './accountPresetsService'
 import { cacheTaxPresetsOffline, getCachedTaxPresets } from './offlineMetadataService'
 import { isNetworkOnline } from './networkStatusService'
 
@@ -27,7 +27,7 @@ export async function getTaxPresets(accountId: string): Promise<TaxPreset[]> {
 
       // Background cache refresh when online
       if (isNetworkOnline()) {
-        cacheTaxPresetsOffline(accountId).catch((error) => {
+        cacheTaxPresetsOffline(accountId, { presets }).catch((error) => {
           // Don't fail the request if caching fails
           console.warn('[taxPresetsService] Background cache refresh failed:', error)
         })
@@ -36,17 +36,13 @@ export async function getTaxPresets(accountId: string): Promise<TaxPreset[]> {
       return presets
     }
 
-    // If missing, initialize with defaults in account_presets and return defaults
-    try {
-      await upsertAccountPresets(accountId, { presets: { tax_presets: DEFAULT_TAX_PRESETS } })
-    } catch (err) {
-      console.warn('Failed to initialize tax_presets in account_presets:', err)
-    }
+    // If missing, return defaults without writing (no write-on-read)
+    // The section will be initialized when user explicitly saves presets
     const presets = DEFAULT_TAX_PRESETS
 
     // Background cache refresh when online
     if (isNetworkOnline()) {
-      cacheTaxPresetsOffline(accountId).catch((error) => {
+      cacheTaxPresetsOffline(accountId, { presets }).catch((error) => {
         // Don't fail the request if caching fails
         console.warn('[taxPresetsService] Background cache refresh failed:', error)
       })
@@ -97,13 +93,14 @@ export async function updateTaxPresets(accountId: string, presets: TaxPreset[]):
       throw new Error('Preset IDs must be unique')
     }
 
-    // Persist exclusively to the canonical account_presets table
-    await upsertAccountPresets(accountId, { presets: { tax_presets: presets } })
+    // Persist exclusively to the canonical account_presets table using merge
+    // This ensures budget_categories and other sections are preserved
+    await mergeAccountPresetsSection(accountId, 'tax_presets', presets)
     console.log('Tax presets updated successfully (account_presets)')
 
     // Update offline cache when online
     if (isNetworkOnline()) {
-      cacheTaxPresetsOffline(accountId).catch((error) => {
+      cacheTaxPresetsOffline(accountId, { presets }).catch((error) => {
         // Don't fail the update if caching fails
         console.warn('[taxPresetsService] Failed to update offline cache:', error)
       })

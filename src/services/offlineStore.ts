@@ -1116,6 +1116,74 @@ class OfflineStore {
   }
 
   // Conflict methods
+  private normalizeConflictRecord(conflict: DBConflict): boolean {
+    let updated = false
+
+    if (!conflict.entityType) {
+      conflict.entityType = 'item'
+      updated = true
+    }
+
+    if (conflict.entityType === 'item') {
+      const derivedItemId = this.extractConflictEntityId(conflict, ['itemId', 'item_id'])
+      if (derivedItemId && conflict.itemId !== derivedItemId) {
+        conflict.itemId = derivedItemId
+        updated = true
+      } else if (typeof conflict.itemId === 'string') {
+        const trimmed = conflict.itemId.trim()
+        if (trimmed !== conflict.itemId) {
+          conflict.itemId = trimmed
+          updated = true
+        }
+      }
+    } else if (conflict.entityType === 'transaction') {
+      const derivedTransactionId = this.extractConflictEntityId(conflict, ['transactionId', 'transaction_id'])
+      if (derivedTransactionId && conflict.transactionId !== derivedTransactionId) {
+        conflict.transactionId = derivedTransactionId
+        updated = true
+      }
+    } else if (conflict.entityType === 'project') {
+      const derivedProjectId = this.extractConflictEntityId(conflict, ['projectId', 'project_id'])
+      if (derivedProjectId && conflict.projectId !== derivedProjectId) {
+        conflict.projectId = derivedProjectId
+        updated = true
+      }
+    }
+
+    return updated
+  }
+
+  private extractConflictEntityId(conflict: DBConflict, keys: string[]): string | null {
+    for (const key of keys) {
+      const value = (conflict as Record<string, unknown>)[key]
+      if (typeof value === 'string') {
+        const trimmed = value.trim()
+        if (trimmed.length > 0) {
+          return trimmed
+        }
+      }
+    }
+
+    const payloads = [conflict.local?.data, conflict.server?.data]
+    for (const payload of payloads) {
+      if (!payload || typeof payload !== 'object') {
+        continue
+      }
+
+      for (const key of keys) {
+        const candidate = (payload as Record<string, unknown>)[key]
+        if (typeof candidate === 'string') {
+          const trimmedCandidate = candidate.trim()
+          if (trimmedCandidate.length > 0) {
+            return trimmedCandidate
+          }
+        }
+      }
+    }
+
+    return null
+  }
+
   async saveConflict(conflict: Omit<DBConflict, 'id' | 'createdAt'>): Promise<void> {
     if (!this.db) throw new Error('Database not initialized')
 
@@ -1238,10 +1306,8 @@ class OfflineStore {
           const cursor = (event.target as IDBRequest).result as IDBCursorWithValue | null
           if (cursor) {
             const conflict = cursor.value as DBConflict
-            // Migrate legacy conflicts that don't have entityType
-            if (!conflict.entityType) {
-              conflict.entityType = 'item' // Default for legacy conflicts
-              conflict.itemId = conflict.itemId || (conflict as any).id // Ensure itemId is set
+            const updated = this.normalizeConflictRecord(conflict)
+            if (updated) {
               cursor.update(conflict)
             }
             if (conflict.resolved === resolved) {
@@ -1262,10 +1328,8 @@ class OfflineStore {
           const cursor = (event.target as IDBRequest).result as IDBCursorWithValue | null
           if (cursor) {
             const conflict = cursor.value as DBConflict
-            // Migrate legacy conflicts that don't have entityType
-            if (!conflict.entityType) {
-              conflict.entityType = 'item' // Default for legacy conflicts
-              conflict.itemId = conflict.itemId || (conflict as any).id // Ensure itemId is set
+            const updated = this.normalizeConflictRecord(conflict)
+            if (updated) {
               cursor.update(conflict)
             }
             results.push(conflict)
@@ -1282,10 +1346,8 @@ class OfflineStore {
           const cursor = (event.target as IDBRequest).result as IDBCursorWithValue | null
           if (cursor) {
             const conflict = cursor.value as DBConflict
-            // Migrate legacy conflicts that don't have entityType
-            if (!conflict.entityType) {
-              conflict.entityType = 'item' // Default for legacy conflicts
-              conflict.itemId = conflict.itemId || (conflict as any).id // Ensure itemId is set
+            const updated = this.normalizeConflictRecord(conflict)
+            if (updated) {
               cursor.update(conflict)
             }
             results.push(conflict)

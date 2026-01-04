@@ -387,7 +387,63 @@ async function ensureAccount(
     })
     .eq('id', eventRecord.id)
 
+  // Seed default budget categories for the new account
+  await seedDefaultBudgetCategories(data.id)
+
   return { accountId: data.id as string, reusedAccount: false }
+}
+
+/**
+ * Seed default budget categories for a new account
+ * Creates the four required default categories if they don't exist
+ */
+async function seedDefaultBudgetCategories(accountId: string): Promise<void> {
+  const defaultCategories = [
+    { name: 'Furnishings', slug: 'furnishings' },
+    { name: 'Install', slug: 'install' },
+    { name: 'Design Fee', slug: 'design-fee' },
+    { name: 'Storage & Receiving', slug: 'storage-receiving' }
+  ]
+
+  let furnishingsCategoryId: string | null = null
+
+  for (const category of defaultCategories) {
+    try {
+      const { data, error } = await supabaseAdmin.rpc('rpc_upsert_budget_category', {
+        p_account_id: accountId,
+        p_name: category.name,
+        p_slug: category.slug,
+        p_metadata: { is_default: true },
+        p_is_archived: false
+      })
+
+      if (error) {
+        // If category already exists, that's fine (idempotent)
+        if (!error.message.includes('already exists')) {
+          console.warn(`Failed to create default category ${category.name}:`, error)
+        }
+      } else if (data && category.slug === 'furnishings') {
+        furnishingsCategoryId = data.id
+      }
+    } catch (err) {
+      console.warn(`Error creating default category ${category.name}:`, err)
+    }
+  }
+
+  // Set Furnishings as the default category if we created it
+  if (furnishingsCategoryId) {
+    try {
+      await supabaseAdmin
+        .from('account_presets')
+        .upsert({
+          account_id: accountId,
+          default_category_id: furnishingsCategoryId,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'account_id' })
+    } catch (err) {
+      console.warn('Failed to set default category:', err)
+    }
+  }
 }
 
 async function findUserByEmail(email: string) {

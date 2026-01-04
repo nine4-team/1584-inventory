@@ -5,6 +5,7 @@ import { ImageUploadService } from '@/services/imageService'
 import ImagePreview from './ui/ImagePreview'
 import { useToast } from '@/components/ui/ToastContext'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
+import { useSyncError } from '@/hooks/useSyncError'
 import { OfflinePrerequisiteBanner, useOfflinePrerequisiteGate } from './ui/OfflinePrerequisiteBanner'
 
 interface TransactionItemFormProps {
@@ -18,6 +19,7 @@ interface TransactionItemFormProps {
 }
 
 export default function TransactionItemForm({ item, onSave, onCancel, isEditing = false, onImageFilesChange }: TransactionItemFormProps) {
+  const hasSyncError = useSyncError()
   // Check offline prerequisites
   const { isReady, isBlocked, blockingReason } = useOfflinePrerequisiteGate()
   
@@ -191,7 +193,7 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
           {isEditing ? 'Edit Item' : 'Add Item'}
         </h3>
         <div className="flex items-center gap-3">
-          <RetrySyncButton size="sm" variant="secondary" showPendingCount={false} />
+          {hasSyncError && <RetrySyncButton size="sm" variant="secondary" showPendingCount={false} />}
           <button
             onClick={onCancel}
             className="text-gray-400 hover:text-gray-600"
