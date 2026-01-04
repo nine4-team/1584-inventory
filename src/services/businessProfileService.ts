@@ -4,33 +4,48 @@ import { BusinessProfile } from '@/types'
 
 /**
  * Business Profile Service - Manages business profile data for accounts
+ * 
+ * Phase 6: Reads exclusively from accounts table (business_profiles table has been decommissioned)
  */
 export const businessProfileService = {
   /**
    * Get business profile for an account
+   * Reads from accounts table (business_name, business_logo_url, etc.)
    */
   async getBusinessProfile(accountId: string): Promise<BusinessProfile | null> {
     try {
-      const { data, error } = await supabase
-        .from('business_profiles')
-        .select('*')
-        .eq('account_id', accountId)
+      const { data: accountData, error: accountError } = await supabase
+        .from('accounts')
+        .select('id, business_name, business_logo_url, business_profile_updated_at, business_profile_updated_by, business_profile_version, name')
+        .eq('id', accountId)
         .single()
 
-      if (error) {
-        if (error.code === 'PGRST116') {
+      if (accountError) {
+        if (accountError.code === 'PGRST116') {
           return null
         }
-        throw error
+        throw accountError
       }
 
-      const profileData = convertTimestamps(data)
+      if (!accountData) {
+        return null
+      }
+
+      // Use business_name if set, otherwise fall back to account name
+      const profileData = convertTimestamps({
+        business_name: accountData.business_name,
+        business_logo_url: accountData.business_logo_url,
+        business_profile_updated_at: accountData.business_profile_updated_at,
+        business_profile_updated_by: accountData.business_profile_updated_by,
+        business_profile_version: accountData.business_profile_version
+      })
+      
       return {
-        accountId: profileData.account_id,
-        name: profileData.name,
-        logoUrl: profileData.logo_url,
-        updatedAt: profileData.updated_at,
-        updatedBy: profileData.updated_by
+        accountId: accountData.id,
+        name: accountData.business_name || accountData.name || '',
+        logoUrl: accountData.business_logo_url,
+        updatedAt: profileData.business_profile_updated_at ? new Date(profileData.business_profile_updated_at) : new Date(),
+        updatedBy: profileData.business_profile_updated_by || ''
       } as BusinessProfile
     } catch (error) {
       console.error('Error fetching business profile:', error)
@@ -40,6 +55,7 @@ export const businessProfileService = {
 
   /**
    * Update business profile for an account
+   * Writes directly to accounts table
    */
   async updateBusinessProfile(
     accountId: string,
@@ -48,40 +64,33 @@ export const businessProfileService = {
     updatedBy: string
   ): Promise<void> {
     try {
-      // Check if profile exists
-      const { data: existing, error: checkError } = await supabase
-        .from('business_profiles')
-        .select('account_id')
-        .eq('account_id', accountId)
+      // Get the current version to increment it properly
+      const { data: currentAccount, error: fetchError } = await supabase
+        .from('accounts')
+        .select('business_profile_version')
+        .eq('id', accountId)
         .single()
 
-      // If there's an error checking and it's not "not found", throw it
-      if (checkError && checkError.code !== 'PGRST116') {
-        throw checkError
-      }
-      const profileData = {
-        account_id: accountId,
-        name,
-        logo_url: logoUrl,
-        updated_at: new Date().toISOString(),
-        updated_by: updatedBy
+      if (fetchError && fetchError.code !== 'PGRST116') {
+        throw fetchError
       }
 
-      if (existing) {
-        // Update existing
-        const { error } = await supabase
-          .from('business_profiles')
-          .update(profileData)
-          .eq('account_id', accountId)
+      const newVersion = (currentAccount?.business_profile_version || 0) + 1
 
-        if (error) throw error
-      } else {
-        // Create new
-        const { error } = await supabase
-          .from('business_profiles')
-          .insert(profileData)
+      // Write to accounts table - triggers will sync to business_profiles
+      const { error } = await supabase
+        .from('accounts')
+        .update({
+          business_name: name,
+          business_logo_url: logoUrl,
+          business_profile_updated_at: new Date().toISOString(),
+          business_profile_updated_by: updatedBy,
+          business_profile_version: newVersion
+        })
+        .eq('id', accountId)
 
-        if (error) throw error
+      if (error) {
+        throw error
       }
 
       console.log('Business profile updated successfully')

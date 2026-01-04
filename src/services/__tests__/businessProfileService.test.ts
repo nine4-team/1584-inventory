@@ -24,21 +24,23 @@ describe('businessProfileService', () => {
   })
 
   describe('getBusinessProfile', () => {
-    it('should return business profile when found', async () => {
-      const mockProfile = {
-        account_id: 'test-account-id',
-        name: 'Test Business',
-        logo_url: 'https://example.com/logo.png',
-        updated_at: new Date().toISOString(),
-        updated_by: 'user-id'
+    it('should return business profile when found in accounts table', async () => {
+      const mockAccount = {
+        id: 'test-account-id',
+        business_name: 'Test Business',
+        business_logo_url: 'https://example.com/logo.png',
+        business_profile_updated_at: new Date().toISOString(),
+        business_profile_updated_by: 'user-id',
+        business_profile_version: 1,
+        name: 'Account Name'
       }
-      const mockQueryBuilder = createMockSupabaseClient().from('business_profiles')
+      const mockQueryBuilder = createMockSupabaseClient().from('accounts')
       
       vi.mocked(supabaseModule.supabase.from).mockReturnValue({
         ...mockQueryBuilder,
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: mockProfile, error: null })
+        single: vi.fn().mockResolvedValue({ data: mockAccount, error: null })
       } as any)
 
       const profile = await businessProfileService.getBusinessProfile('test-account-id')
@@ -48,9 +50,33 @@ describe('businessProfileService', () => {
       expect(profile?.logoUrl).toBe('https://example.com/logo.png')
     })
 
-    it('should return null when profile not found', async () => {
+    it('should fallback to account name when business_name is null', async () => {
+      const mockAccount = {
+        id: 'test-account-id',
+        business_name: null,
+        business_logo_url: null,
+        business_profile_updated_at: null,
+        business_profile_updated_by: null,
+        business_profile_version: 1,
+        name: 'Account Name'
+      }
+      const mockQueryBuilder = createMockSupabaseClient().from('accounts')
+      
+      vi.mocked(supabaseModule.supabase.from).mockReturnValue({
+        ...mockQueryBuilder,
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: mockAccount, error: null })
+      } as any)
+
+      const profile = await businessProfileService.getBusinessProfile('test-account-id')
+      expect(profile).toBeTruthy()
+      expect(profile?.name).toBe('Account Name')
+    })
+
+    it('should return null when account not found', async () => {
       const notFoundError = createNotFoundError()
-      const mockQueryBuilder = createMockSupabaseClient().from('business_profiles')
+      const mockQueryBuilder = createMockSupabaseClient().from('accounts')
       
       vi.mocked(supabaseModule.supabase.from).mockReturnValue({
         ...mockQueryBuilder,
@@ -65,7 +91,7 @@ describe('businessProfileService', () => {
 
     it('should handle errors gracefully', async () => {
       const error = { code: '500', message: 'Server error', details: null, hint: null }
-      const mockQueryBuilder = createMockSupabaseClient().from('business_profiles')
+      const mockQueryBuilder = createMockSupabaseClient().from('accounts')
       
       vi.mocked(supabaseModule.supabase.from).mockReturnValue({
         ...mockQueryBuilder,
@@ -80,39 +106,11 @@ describe('businessProfileService', () => {
   })
 
   describe('updateBusinessProfile', () => {
-    it('should create new profile when it does not exist', async () => {
-      const notFoundError = createNotFoundError()
-      let insertCalled = false
-      
-      vi.mocked(supabaseModule.supabase.from).mockImplementation((table) => {
-        const mockQueryBuilder = createMockSupabaseClient().from(table)
-        if (table === 'business_profiles') {
-          return {
-            ...mockQueryBuilder,
-            select: vi.fn().mockReturnThis(),
-            eq: vi.fn().mockReturnThis(),
-            single: vi.fn().mockResolvedValue({ data: null, error: notFoundError }),
-            insert: vi.fn().mockImplementation(() => {
-              insertCalled = true
-              return Promise.resolve({ data: null, error: null })
-            })
-          } as any
-        }
-        return mockQueryBuilder as any
-      })
-
-      await businessProfileService.updateBusinessProfile(
-        'test-account-id',
-        'Test Business',
-        'https://example.com/logo.png',
-        'user-id'
-      )
-
-      expect(insertCalled).toBe(true)
-    })
-
-    it('should update existing profile', async () => {
-      const existingProfile = { account_id: 'test-account-id' }
+    it('should update account business profile', async () => {
+      const existingAccount = { 
+        id: 'test-account-id',
+        business_profile_version: 1
+      }
       let updateCalled = false
       
       // Create an awaitable chain for the update operation
@@ -130,12 +128,12 @@ describe('businessProfileService', () => {
       
       vi.mocked(supabaseModule.supabase.from).mockImplementation((table) => {
         const mockQueryBuilder = createMockSupabaseClient().from(table)
-        if (table === 'business_profiles') {
+        if (table === 'accounts') {
           return {
             ...mockQueryBuilder,
             select: vi.fn().mockReturnThis(),
             eq: vi.fn().mockReturnThis(),
-            single: vi.fn().mockResolvedValue({ data: existingProfile, error: null }),
+            single: vi.fn().mockResolvedValue({ data: existingAccount, error: null }),
             update: vi.fn().mockReturnValue(awaitableUpdateChain)
           } as any
         }
@@ -153,17 +151,34 @@ describe('businessProfileService', () => {
     })
 
     it('should handle null logo URL', async () => {
-      const notFoundError = createNotFoundError()
+      const existingAccount = { 
+        id: 'test-account-id',
+        business_profile_version: 1
+      }
+      
+      const awaitableUpdateChain = {
+        update: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        then: vi.fn((onResolve?: (value: any) => any) => {
+          return Promise.resolve({ data: null, error: null }).then(onResolve)
+        }),
+        catch: vi.fn((onReject?: (error: any) => any) => {
+          return Promise.resolve({ data: null, error: null }).catch(onReject)
+        })
+      }
       
       vi.mocked(supabaseModule.supabase.from).mockImplementation((table) => {
         const mockQueryBuilder = createMockSupabaseClient().from(table)
-        return {
-          ...mockQueryBuilder,
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          single: vi.fn().mockResolvedValue({ data: null, error: notFoundError }),
-          insert: vi.fn().mockResolvedValue({ data: null, error: null })
-        } as any
+        if (table === 'accounts') {
+          return {
+            ...mockQueryBuilder,
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({ data: existingAccount, error: null }),
+            update: vi.fn().mockReturnValue(awaitableUpdateChain)
+          } as any
+        }
+        return mockQueryBuilder as any
       })
 
       await expect(
@@ -181,13 +196,15 @@ describe('businessProfileService', () => {
       
       vi.mocked(supabaseModule.supabase.from).mockImplementation((table) => {
         const mockQueryBuilder = createMockSupabaseClient().from(table)
-        return {
-          ...mockQueryBuilder,
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          single: vi.fn().mockResolvedValue({ data: null, error }),
-          insert: vi.fn().mockResolvedValue({ data: null, error })
-        } as any
+        if (table === 'accounts') {
+          return {
+            ...mockQueryBuilder,
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({ data: null, error })
+          } as any
+        }
+        return mockQueryBuilder as any
       })
 
       await expect(

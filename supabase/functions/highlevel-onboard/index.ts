@@ -361,10 +361,16 @@ async function ensureAccount(
     return { accountId: eventRecord.account_id as string, reusedAccount: true }
   }
 
+  // Create account with business_name set to accountName
+  // This ensures the business profile data appears immediately in the UI
   const { data, error } = await supabaseAdmin
     .from('accounts')
     .insert({
       name: accountName,
+      business_name: accountName, // Set business_name during account creation
+      business_profile_updated_at: new Date().toISOString(),
+      business_profile_updated_by: INVITER_USER_ID,
+      business_profile_version: 1,
       created_by: INVITER_USER_ID
     })
     .select('id')

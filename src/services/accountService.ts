@@ -48,7 +48,12 @@ export const accountService = {
       id: accountData.id,
       name: accountData.name,
       createdAt: accountData.created_at,
-      createdBy: accountData.created_by
+      createdBy: accountData.created_by,
+      businessName: accountData.business_name ?? null,
+      businessLogoUrl: accountData.business_logo_url ?? null,
+      businessProfileUpdatedAt: accountData.business_profile_updated_at ? new Date(accountData.business_profile_updated_at) : null,
+      businessProfileUpdatedBy: accountData.business_profile_updated_by ?? null,
+      businessProfileVersion: accountData.business_profile_version ?? null
     } as Account
   },
 
@@ -159,7 +164,12 @@ export const accountService = {
         id: converted.id,
         name: converted.name,
         createdAt: converted.created_at,
-        createdBy: converted.created_by
+        createdBy: converted.created_by,
+        businessName: converted.business_name ?? null,
+        businessLogoUrl: converted.business_logo_url ?? null,
+        businessProfileUpdatedAt: converted.business_profile_updated_at ? new Date(converted.business_profile_updated_at) : null,
+        businessProfileUpdatedBy: converted.business_profile_updated_by ?? null,
+        businessProfileVersion: converted.business_profile_version ?? null
       } as Account
     })
   }

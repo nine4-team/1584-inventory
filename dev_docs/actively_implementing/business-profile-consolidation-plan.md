@@ -9,6 +9,8 @@ Fold the standalone `business_profiles` table into the `accounts` table so every
 - HighLevel onboarding, settings UI, invoices, headers, and offline caches all display the same business name/logo without extra fetches.
 - `business_profiles` table can be safely dropped after verification.
 
+> **Current status (2026-01-03):** Application code is already merged and expects the new `accounts.business_*` columns, but the Phase 1–5 migrations below have not been applied in dev/staging yet. Until those migrations run, business profile reads/writes will fail. Follow the rollout plan exactly—run the migrations, verify consistency, keep dual writes active, then drop `business_profiles` only after verification passes.
+
 ## Current State
 - HighLevel onboarding writes only to `accounts.name`.
 - UI components (`Header`, `ProjectInvoice`, `ClientSummary`, etc.) read `BusinessProfileContext`, which in turn fetches `business_profiles`.

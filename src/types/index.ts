@@ -28,6 +28,12 @@ export interface Account {
   name: string;
   createdAt: Date;
   createdBy: string;
+  // Business profile fields (consolidated from business_profiles table)
+  businessName?: string | null;
+  businessLogoUrl?: string | null;
+  businessProfileUpdatedAt?: Date | null;
+  businessProfileUpdatedBy?: string | null;
+  businessProfileVersion?: number | null;
 }
 
 

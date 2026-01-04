@@ -2,7 +2,6 @@ import { createContext, useContext, useEffect, useState, ReactNode } from 'react
 import { useAccount } from './AccountContext'
 import { businessProfileService } from '../services/businessProfileService'
 import { BusinessProfile } from '../types'
-import { COMPANY_NAME } from '@/constants/company'
 
 interface BusinessProfileContextType {
   businessProfile: BusinessProfile | null
@@ -50,8 +49,10 @@ export function BusinessProfileProvider({ children }: BusinessProfileProviderPro
     loadProfile()
   }, [currentAccountId, accountLoading])
 
-  // Derived values with fallbacks
-  const businessName = businessProfile?.name || COMPANY_NAME
+  // Derived values
+  // Note: businessProfileService already handles fallback to account name,
+  // so businessProfile?.name should always have a value if account exists
+  const businessName = businessProfile?.name || ''
   const businessLogoUrl = businessProfile?.logoUrl || null
 
   const value: BusinessProfileContextType = {
