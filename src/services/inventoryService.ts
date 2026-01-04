@@ -1471,6 +1471,18 @@ export const transactionService = {
         needs = completeness.completenessStatus !== 'complete'
       }
 
+      // When offline, queue the needsReview update so it syncs later instead of hitting Supabase.
+      if (!isNetworkOnline()) {
+        try {
+          const { offlineTransactionService } = await import('./offlineTransactionService')
+          await offlineTransactionService.updateTransaction(accountId, transactionId, { needsReview: needs })
+          return
+        } catch (offlineError) {
+          console.warn('Failed to queue offline needs_review update:', offlineError)
+          throw offlineError
+        }
+      }
+
       // Persist the boolean directly to the transactions table to avoid calling updateTransaction
       await ensureAuthenticatedForDatabase()
       const dbUpdates: any = {
@@ -1698,26 +1710,66 @@ export const transactionService = {
     }
   },
 
+  async _getSuggestedItemsOffline(
+    accountId: string,
+    transactionSource: string,
+    limit: number
+  ): Promise<Item[]> {
+    try {
+      await offlineStore.init()
+      const sourceKey = (transactionSource || '').toLowerCase()
+      const cached = await offlineStore.getAllItems()
+      const filtered = cached
+        .filter(item => !item.accountId || item.accountId === accountId)
+        .filter(item => !item.transactionId)
+        .filter(item => (item.source || '').toLowerCase() === sourceKey)
+        .sort((a, b) => {
+          const aTime = new Date(a.dateCreated || a.createdAt || a.lastUpdated || 0).getTime()
+          const bTime = new Date(b.dateCreated || b.createdAt || b.lastUpdated || 0).getTime()
+          return bTime - aTime
+        })
+        .slice(0, limit)
+        .map(item => this._convertOfflineItem(item))
+      return filtered
+    } catch (error) {
+      console.warn('Failed to read offline suggested items:', error)
+      return []
+    }
+  },
+
   // Find suggested items to add to transaction (unassociated items with same vendor)
   async getSuggestedItemsForTransaction(
     accountId: string,
     transactionSource: string,
     limit: number = 5
   ): Promise<Item[]> {
-    await ensureAuthenticatedForDatabase()
+    if (!isNetworkOnline()) {
+      return this._getSuggestedItemsOffline(accountId, transactionSource, limit)
+    }
 
-    const { data, error } = await supabase
-      .from('items')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('source', transactionSource)
-      .is('transaction_id', null)
-      .order('date_created', { ascending: false })
-      .limit(limit)
+    try {
+      await ensureAuthenticatedForDatabase()
 
-    if (error) throw error
+      const { data, error } = await supabase
+        .from('items')
+        .select('*')
+        .eq('account_id', accountId)
+        .eq('source', transactionSource)
+        .is('transaction_id', null)
+        .order('date_created', { ascending: false })
+        .limit(limit)
 
-    return (data || []).map(item => unifiedItemsService._convertItemFromDb(item))
+      if (error) throw error
+
+      if (data && data.length) {
+        void cacheItemsOffline(data)
+      }
+
+      return (data || []).map(item => unifiedItemsService._convertItemFromDb(item))
+    } catch (error) {
+      console.warn('Failed to fetch suggested items online, falling back to offline cache:', error)
+      return this._getSuggestedItemsOffline(accountId, transactionSource, limit)
+    }
   },
 
   // Create new transaction (account-scoped)
@@ -2336,6 +2388,19 @@ export const transactionService = {
     transactionId: string,
     callback: (transaction: Transaction | null) => void
   ) {
+    const hydrateFromOffline = async () => {
+      try {
+        const { transaction } = await this._getTransactionByIdOffline(accountId, transactionId)
+        if (transaction) {
+          callback(transaction)
+          return true
+        }
+      } catch (error) {
+        console.warn('Failed to hydrate transaction from offline store:', error)
+      }
+      return false
+    }
+
     const channel = supabase
       .channel(`transaction:${accountId}:${transactionId}`)
       .on(
@@ -2357,8 +2422,13 @@ export const transactionService = {
             return
           }
 
-          // Refetch transaction on any change
+          // Refetch transaction on any change (but skip network calls when offline)
           try {
+            if (!isNetworkOnline()) {
+              await hydrateFromOffline()
+              return
+            }
+
             const { data, error } = await supabase
               .from('transactions')
               .select('*')
@@ -2393,6 +2463,14 @@ export const transactionService = {
     // Initial fetch
     const fetchTransaction = async () => {
       try {
+        if (!isNetworkOnline()) {
+          const hydrated = await hydrateFromOffline()
+          if (!hydrated) {
+            callback(null)
+          }
+          return
+        }
+
         const { data, error } = await supabase
           .from('transactions')
           .select('*')
