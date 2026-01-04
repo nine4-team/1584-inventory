@@ -13,6 +13,7 @@ interface BulkItemControlsProps {
   onAssignToTransaction: (transactionId: string) => Promise<void>
   onSetLocation: (location: string) => Promise<void>
   onSetDisposition: (disposition: ItemDisposition) => Promise<void>
+  onSetSku: (sku: string) => Promise<void>
   onDelete: () => Promise<void>
   onClearSelection: () => void
   itemListContainerWidth?: number
@@ -24,6 +25,7 @@ export default function BulkItemControls({
   onAssignToTransaction,
   onSetLocation,
   onSetDisposition,
+  onSetSku,
   onDelete,
   onClearSelection,
   itemListContainerWidth
@@ -32,12 +34,14 @@ export default function BulkItemControls({
   const [showTransactionDialog, setShowTransactionDialog] = useState(false)
   const [showLocationDialog, setShowLocationDialog] = useState(false)
   const [showDispositionDialog, setShowDispositionDialog] = useState(false)
+  const [showSkuDialog, setShowSkuDialog] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [loadingTransactions, setLoadingTransactions] = useState(false)
   const [selectedTransactionId, setSelectedTransactionId] = useState('')
   const [locationValue, setLocationValue] = useState('')
   const [selectedDisposition, setSelectedDisposition] = useState<ItemDisposition | ''>('')
+  const [skuValue, setSkuValue] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
 
   // Load transactions when dialog opens
@@ -114,6 +118,20 @@ export default function BulkItemControls({
     }
   }
 
+  const handleSetSku = async () => {
+    setIsProcessing(true)
+    try {
+      await onSetSku(skuValue)
+      setShowSkuDialog(false)
+      setSkuValue('')
+      onClearSelection()
+    } catch (error) {
+      console.error('Failed to set SKU:', error)
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
   const handleDelete = async () => {
     setIsProcessing(true)
     try {
@@ -183,6 +201,15 @@ export default function BulkItemControls({
             >
               <Tag className="h-4 w-4" />
               Set Disposition
+            </button>
+
+            {/* Set SKU */}
+            <button
+              onClick={() => setShowSkuDialog(true)}
+              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+            >
+              <Tag className="h-4 w-4" />
+              Set SKU
             </button>
 
             {/* Delete */}
@@ -336,6 +363,52 @@ export default function BulkItemControls({
                 className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isProcessing ? 'Setting...' : 'Set Disposition'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SKU Input Dialog */}
+      {showSkuDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-medium text-gray-900">
+                Set SKU for {selectedItemIds.size} item{selectedItemIds.size !== 1 ? 's' : ''}
+              </h3>
+            </div>
+            <div className="px-6 py-4">
+              <label htmlFor="sku-input" className="block text-sm font-medium text-gray-700 mb-2">
+                SKU
+              </label>
+              <input
+                id="sku-input"
+                type="text"
+                value={skuValue}
+                onChange={(e) => setSkuValue(e.target.value)}
+                placeholder="e.g., PILLOW-001, CHAIR-RED"
+                className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                disabled={isProcessing}
+              />
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowSkuDialog(false)
+                  setSkuValue('')
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                disabled={isProcessing}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSetSku}
+                disabled={isProcessing}
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isProcessing ? 'Setting...' : 'Set SKU'}
               </button>
             </div>
           </div>

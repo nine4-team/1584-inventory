@@ -540,6 +540,32 @@ export default function InventoryList({ projectId, projectName, items: propItems
     }
   }
 
+  const handleBulkSetSku = async (sku: string) => {
+    if (!currentAccountId) {
+      setError('Account ID is required')
+      return
+    }
+
+    const itemIds = Array.from(selectedItems)
+    if (itemIds.length === 0) return
+
+    try {
+      const updatePromises = itemIds.map(itemId =>
+        unifiedItemsService.updateItem(currentAccountId, itemId, {
+          sku: sku
+        })
+      )
+
+      await Promise.all(updatePromises)
+      await refreshRealtimeAfterWrite()
+      showSuccess(`Updated SKU for ${itemIds.length} item${itemIds.length !== 1 ? 's' : ''}`)
+    } catch (error) {
+      console.error('Failed to set SKU:', error)
+      setError('Failed to set SKU. Please try again.')
+      throw error
+    }
+  }
+
   const handleRetry = async () => {
     if (!currentAccountId) {
       setError('Account ID is required to reload inventory.')
@@ -1048,6 +1074,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
         onAssignToTransaction={handleBulkAssignToTransaction}
         onSetLocation={handleBulkSetLocation}
         onSetDisposition={handleBulkSetDisposition}
+        onSetSku={handleBulkSetSku}
         onDelete={handleBulkDelete}
         onClearSelection={() => setSelectedItems(new Set())}
         itemListContainerWidth={itemListContainerWidth}
