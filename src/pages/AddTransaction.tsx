@@ -3,10 +3,14 @@ import { useParams, useLocation, useNavigate } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useState, FormEvent, useEffect, useMemo } from 'react'
-import { TransactionFormData, TransactionValidationErrors, TransactionItemFormData, ItemImage, TaxPreset } from '@/types'
+import { TransactionFormData, TransactionValidationErrors, TransactionItemFormData, ItemImage, TaxPreset, TransactionImage } from '@/types'
 import { COMPANY_NAME, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { transactionService, projectService, unifiedItemsService } from '@/services/inventoryService'
 import { ImageUploadService, UploadProgress } from '@/services/imageService'
+import { OfflineAwareImageService } from '@/services/offlineAwareImageService'
+import { useOfflineMediaTracker } from '@/hooks/useOfflineMediaTracker'
+import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
+import { offlineStore } from '@/services/offlineStore'
 import ImageUpload from '@/components/ui/ImageUpload'
 import TransactionItemsList from '@/components/TransactionItemsList'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
@@ -38,6 +42,12 @@ export default function AddTransaction() {
   const offlineGate = useOfflinePrerequisiteGate()
   const { isReady: metadataReady, blockingReason: prereqBlockingReason } = offlineGate
   const { isOnline } = useNetworkState()
+  const { showOfflineSaved } = useOfflineFeedback()
+  
+  // Track offline media IDs for cleanup
+  const itemImageTracker = useOfflineMediaTracker()
+  const receiptTracker = useOfflineMediaTracker()
+  const otherImageTracker = useOfflineMediaTracker()
 
   // Check if user has permission to add transactions
   // Users must belong to an account (have currentAccountId) or be a system owner
@@ -307,6 +317,88 @@ export default function AddTransaction() {
         throw new Error('User must be authenticated to create transactions')
       }
 
+      // Process receipt images to get metadata
+      let processedReceiptImages: TransactionImage[] | undefined
+      let receiptOfflineMediaIds: string[] = []
+      if (receiptImages && receiptImages.length > 0) {
+        processedReceiptImages = []
+        for (const file of receiptImages) {
+          try {
+            const uploadResult = await OfflineAwareImageService.uploadReceiptAttachment(
+              file,
+              projectName,
+              '', // No transactionId yet, will be updated during sync
+              currentAccountId
+            )
+
+            const metadata = uploadResult.url.startsWith('offline://')
+              ? {
+                  offlineMediaId: uploadResult.url.replace('offline://', ''),
+                  isOfflinePlaceholder: true
+                }
+              : undefined
+
+            if (metadata?.offlineMediaId) {
+              receiptTracker.trackMediaId(metadata.offlineMediaId)
+              receiptOfflineMediaIds.push(metadata.offlineMediaId)
+            }
+
+            processedReceiptImages.push({
+              url: uploadResult.url,
+              fileName: uploadResult.fileName,
+              uploadedAt: new Date(),
+              size: uploadResult.size,
+              mimeType: uploadResult.mimeType,
+              ...(metadata && { metadata })
+            } as TransactionImage)
+          } catch (uploadError) {
+            console.error(`Failed to upload receipt ${file.name}:`, uploadError)
+            // Continue with other files
+          }
+        }
+      }
+
+      // Process other images to get metadata
+      let processedOtherImages: TransactionImage[] | undefined
+      let otherOfflineMediaIds: string[] = []
+      if (otherImages && otherImages.length > 0) {
+        processedOtherImages = []
+        for (const file of otherImages) {
+          try {
+            const uploadResult = await OfflineAwareImageService.uploadOtherAttachment(
+              file,
+              projectName,
+              '', // No transactionId yet, will be updated during sync
+              currentAccountId
+            )
+
+            const metadata = uploadResult.url.startsWith('offline://')
+              ? {
+                  offlineMediaId: uploadResult.url.replace('offline://', ''),
+                  isOfflinePlaceholder: true
+                }
+              : undefined
+
+            if (metadata?.offlineMediaId) {
+              otherImageTracker.trackMediaId(metadata.offlineMediaId)
+              otherOfflineMediaIds.push(metadata.offlineMediaId)
+            }
+
+            processedOtherImages.push({
+              url: uploadResult.url,
+              fileName: uploadResult.fileName,
+              uploadedAt: new Date(),
+              size: uploadResult.size,
+              mimeType: uploadResult.mimeType,
+              ...(metadata && { metadata })
+            } as TransactionImage)
+          } catch (uploadError) {
+            console.error(`Failed to upload other image ${file.name}:`, uploadError)
+            // Continue with other files
+          }
+        }
+      }
+
       const transactionData = {
         ...formDataWithoutImages,
         projectId: projectId,
@@ -314,7 +406,9 @@ export default function AddTransaction() {
         createdBy: user.id,
         taxRatePreset: taxRatePreset,
         receiptEmailed: formData.receiptEmailed ?? false,
-        subtotal: taxRatePreset === 'Other' ? subtotal : ''
+        subtotal: taxRatePreset === 'Other' ? subtotal : '',
+        ...(processedReceiptImages && { receiptImages: processedReceiptImages }),
+        ...(processedOtherImages && { otherImages: processedOtherImages })
       }
 
       console.log('Attempting to create transaction with data:', transactionData)
@@ -322,125 +416,21 @@ export default function AddTransaction() {
       console.log('Transaction date type:', typeof transactionData.transactionDate)
       console.log('Transaction items:', items)
 
-      // Create transaction with items first to get the real transaction ID
+      // Create transaction with items and processed images
       const transactionId = await transactionService.createTransaction(currentAccountId, projectId, transactionData, items)
 
-      // Now upload receipts (images + PDFs) using the real transaction ID
-      if (formData.receiptImages && formData.receiptImages.length > 0) {
-        setIsUploadingImages(true)
+      // Remove tracked receipt and other image IDs after successful transaction creation
+      // This prevents them from being cleaned up by useOfflineMediaTracker on unmount
+      receiptOfflineMediaIds.forEach(mediaId => {
+        receiptTracker.removeMediaId(mediaId)
+      })
+      otherOfflineMediaIds.forEach(mediaId => {
+        otherImageTracker.removeMediaId(mediaId)
+      })
 
-        try {
-          const uploadResults = await ImageUploadService.uploadMultipleReceiptAttachments(
-            formData.receiptImages,
-            projectName,
-            transactionId,
-            handleImageUploadProgress
-          )
-
-          // Convert to TransactionImage format
-          const receiptImages = ImageUploadService.convertFilesToReceiptImages(uploadResults)
-          console.log('Receipts uploaded successfully:', receiptImages.length, 'files')
-          console.log('Receipts to save:', receiptImages)
-
-          // Update the transaction with the uploaded receipts
-          if (receiptImages && receiptImages.length > 0) {
-            console.log('Updating transaction with receipts...')
-            try {
-              await transactionService.updateTransaction(currentAccountId, projectId, transactionId, {
-                receiptImages: receiptImages
-              })
-              console.log('Transaction updated successfully with receipts')
-            } catch (updateError) {
-              console.error('Failed to update transaction with receipts:', updateError)
-              // Don't fail the entire transaction if image update fails
-            }
-          }
-
-          // Small delay to ensure the update is processed before continuing
-          await new Promise(resolve => setTimeout(resolve, 500))
-        } catch (error: any) {
-          console.error('Error uploading receipts:', error)
-
-          // Provide specific error messages based on error type
-          let errorMessage = 'Failed to upload receipts. Please try again.'
-          if (error.message?.includes('Storage service is not available')) {
-            errorMessage = 'Storage service is unavailable. Please check your internet connection.'
-          } else if (error.message?.includes('Network error') || error.message?.includes('offline')) {
-            errorMessage = 'Network connection issue. Please check your internet and try again.'
-          } else if (error.message?.includes('quota exceeded')) {
-            errorMessage = 'Storage quota exceeded. Please contact support.'
-          } else if (error.message?.includes('Unauthorized')) {
-            errorMessage = 'Permission denied. Please check your account permissions.'
-          } else if (error.message?.includes('CORS') || error.message?.includes('Access-Control') || error.message?.includes('ERR_FAILED') || error.message?.includes('preflight')) {
-            errorMessage = 'Upload blocked by browser security policy. Please check Supabase Storage configuration or try refreshing the page.'
-          }
-
-          setErrors({ receiptImages: errorMessage })
-          setIsSubmitting(false)
-          setIsUploadingImages(false)
-          return
-        }
-
-        setIsUploadingImages(false)
-      }
-
-      // Now upload other images using the real transaction ID
-      if (formData.otherImages && formData.otherImages.length > 0) {
-        setIsUploadingImages(true)
-
-        try {
-          const uploadResults = await ImageUploadService.uploadMultipleOtherImages(
-            formData.otherImages,
-            projectName,
-            transactionId,
-            handleImageUploadProgress
-          )
-
-          // Convert to TransactionImage format
-          const otherImages = ImageUploadService.convertFilesToOtherImages(uploadResults)
-          console.log('Other images uploaded successfully:', otherImages.length, 'images')
-          console.log('Other images to save:', otherImages)
-
-          // Update the transaction with the uploaded other images
-          if (otherImages && otherImages.length > 0) {
-            console.log('Updating transaction with other images...')
-            try {
-              await transactionService.updateTransaction(currentAccountId, projectId, transactionId, {
-                otherImages: otherImages
-              })
-              console.log('Transaction updated successfully with other images')
-            } catch (updateError) {
-              console.error('Failed to update transaction with other images:', updateError)
-              // Don't fail the entire transaction if image update fails
-            }
-          }
-
-          // Small delay to ensure the update is processed before continuing
-          await new Promise(resolve => setTimeout(resolve, 500))
-        } catch (error: any) {
-          console.error('Error uploading other images:', error)
-
-          // Provide specific error messages based on error type
-          let errorMessage = 'Failed to upload other images. Please try again.'
-          if (error.message?.includes('Storage service is not available')) {
-            errorMessage = 'Storage service is unavailable. Please check your internet connection.'
-          } else if (error.message?.includes('Network error') || error.message?.includes('offline')) {
-            errorMessage = 'Network connection issue. Please check your internet and try again.'
-          } else if (error.message?.includes('quota exceeded')) {
-            errorMessage = 'Storage quota exceeded. Please contact support.'
-          } else if (error.message?.includes('Unauthorized')) {
-            errorMessage = 'Permission denied. Please check your account permissions.'
-          } else if (error.message?.includes('CORS') || error.message?.includes('Access-Control') || error.message?.includes('ERR_FAILED') || error.message?.includes('preflight')) {
-            errorMessage = 'Upload blocked by browser security policy. Please check Supabase Storage configuration or try refreshing the page.'
-          }
-
-          setErrors({ otherImages: errorMessage })
-          setIsSubmitting(false)
-          setIsUploadingImages(false)
-          return
-        }
-
-        setIsUploadingImages(false)
+      // Show offline feedback if any images were queued during transaction creation
+      if ((receiptOfflineMediaIds.length > 0 || otherOfflineMediaIds.length > 0) && !isOnline) {
+        showOfflineSaved()
       }
 
       // Upload item images with the correct item IDs
@@ -472,45 +462,50 @@ export default function AddTransaction() {
             if (imageFiles && imageFiles.length > 0) {
               console.log(`Uploading ${imageFiles.length} images for item ${itemId} (form item ID: ${formItem.id})`)
 
-              // Upload each image file with the final item ID
-              const uploadPromises = imageFiles.map(async (file, fileIndex) => {
+              // Upload each image file sequentially with offline support
+              const uploadedImages: ItemImage[] = []
+              for (let fileIndex = 0; fileIndex < imageFiles.length; fileIndex++) {
+                const file = imageFiles[fileIndex]
                 try {
                   console.log(`Uploading file ${fileIndex + 1}/${imageFiles.length}: ${file.name}`)
-                  const uploadResult = await ImageUploadService.uploadItemImage(
+                  const uploadResult = await OfflineAwareImageService.uploadItemImage(
                     file,
                     projectName,
-                    itemId
+                    itemId,
+                    currentAccountId
                   )
                   console.log(`Upload successful for ${file.name}:`, uploadResult)
                   console.log(`Upload result URL: ${uploadResult.url}`)
+
+                  const metadata = uploadResult.url.startsWith('offline://')
+                    ? {
+                        offlineMediaId: uploadResult.url.replace('offline://', ''),
+                        isOfflinePlaceholder: true
+                      }
+                    : undefined
+
+                  if (metadata?.offlineMediaId) {
+                    itemImageTracker.trackMediaId(metadata.offlineMediaId)
+                  }
 
                   const uploadedImage: ItemImage = {
                     url: uploadResult.url,
                     alt: file.name,
                     isPrimary: formItem.images?.find(img => img.fileName === file.name)?.isPrimary || (fileIndex === 0),
                     uploadedAt: new Date(),
-                    fileName: file.name,
-                    size: file.size,
-                    mimeType: file.type
+                    fileName: uploadResult.fileName,
+                    size: uploadResult.size,
+                    mimeType: uploadResult.mimeType,
+                    metadata
                   }
                   console.log('Created ItemImage object:', uploadedImage)
-                  return uploadedImage
+                  uploadedImages.push(uploadedImage)
                 } catch (uploadError) {
                   console.error(`Failed to upload ${file.name}:`, uploadError)
-                  // Return a placeholder image object so the process continues
-                  return {
-                    url: '',
-                    alt: file.name,
-                    isPrimary: false,
-                    uploadedAt: new Date(),
-                    fileName: file.name,
-                    size: file.size,
-                    mimeType: file.type
-                  } as ItemImage
+                  // Don't add failed uploads
                 }
-              })
+              }
 
-              const uploadedImages = await Promise.all(uploadPromises)
               console.log('All uploads completed, updating item with images:', uploadedImages)
 
               // Filter out any failed uploads (empty URLs)
@@ -520,7 +515,20 @@ export default function AddTransaction() {
               if (validImages.length > 0) {
                 // Update the item with the uploaded images
                 await unifiedItemsService.updateItem(currentAccountId, itemId, { images: validImages })
+                
+                // Remove tracked IDs after successful save
+                validImages.forEach(img => {
+                  if (img.metadata?.offlineMediaId) {
+                    itemImageTracker.removeMediaId(img.metadata.offlineMediaId)
+                  }
+                })
+                
                 console.log(`Successfully updated item ${itemId} with ${validImages.length} images`)
+                
+                // Show offline feedback if any images were queued
+                if (validImages.some(img => img.metadata?.isOfflinePlaceholder)) {
+                  showOfflineSaved()
+                }
               }
             }
           }

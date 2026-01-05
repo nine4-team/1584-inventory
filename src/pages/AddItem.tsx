@@ -1,10 +1,12 @@
-import { ArrowLeft, Save, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Save, X } from 'lucide-react'
 import { useParams, useLocation, useNavigate } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useState, FormEvent, useEffect, useRef, useMemo } from 'react'
 import { transactionService, projectService, unifiedItemsService } from '@/services/inventoryService'
 import { ImageUploadService } from '@/services/imageService'
+import { OfflineAwareImageService } from '@/services/offlineAwareImageService'
+import { offlineMediaService } from '@/services/offlineMediaService'
 import { TransactionSource } from '@/constants/transactionSources'
 import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import { Transaction, ItemImage, ItemDisposition } from '@/types'
@@ -18,6 +20,7 @@ import { getUserFriendlyErrorMessage, getErrorAction } from '@/utils/imageUtils'
 import { useToast } from '@/components/ui/ToastContext'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { useSyncError } from '@/hooks/useSyncError'
+import { useNetworkState } from '@/hooks/useNetworkState'
 import { DISPOSITION_OPTIONS, displayDispositionLabel } from '@/utils/dispositionUtils'
 import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
 import { OfflineQueueUnavailableError } from '@/services/offlineItemService'
@@ -67,6 +70,14 @@ export default function AddItem() {
   const { currentAccountId } = useAccount()
   const { showError, showSuccess } = useToast()
   const { showOfflineSaved } = useOfflineFeedback()
+  const hasSyncError = useSyncError()
+  const { isOnline } = useNetworkState()
+  const clientGeneratedItemId = useMemo(
+    () => `I-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    []
+  )
+  const offlineMediaIdsRef = useRef<Set<string>>(new Set())
+  const itemSavedRef = useRef(false)
 
   const [projectName, setProjectName] = useState<string>('')
 
@@ -162,6 +173,19 @@ export default function AddItem() {
     loadVendors()
   }, [currentAccountId])
 
+  // Cleanup any queued offline media if user leaves without saving
+  useEffect(() => {
+    return () => {
+      if (itemSavedRef.current) return
+      const mediaIds = Array.from(offlineMediaIdsRef.current)
+      mediaIds.forEach(mediaId => {
+        offlineMediaService.deleteMediaFile(mediaId).catch(error => {
+          console.warn('Failed to cleanup offline media on unmount:', error)
+        })
+      })
+    }
+  }, [])
+
   // Initialize custom states based on initial form data
   useEffect(() => {
     if (formData.source && !availableVendors.includes(formData.source)) {
@@ -217,7 +241,10 @@ export default function AddItem() {
         return
       }
 
-      const createResult = await unifiedItemsService.createItem(currentAccountId, itemData)
+      const createResult = await unifiedItemsService.createItem(currentAccountId, itemData, {
+        clientItemId: clientGeneratedItemId
+      })
+      itemSavedRef.current = true
 
       // Hydrate optimistic item into React Query cache immediately
       // This makes the item appear in lists before sync completes
@@ -291,6 +318,10 @@ export default function AddItem() {
 
   const handleMultipleImageUpload = async (files: File[]) => {
     if (!projectName) return
+    if (!currentAccountId) {
+      showError('Account ID is required to upload images.')
+      return
+    }
 
     try {
       setIsUploadingImage(true)
@@ -298,37 +329,54 @@ export default function AddItem() {
 
       console.log('Starting multiple image upload for', files.length, 'files')
 
-      const uploadResults = await ImageUploadService.uploadMultipleItemImages(
-        files,
-        projectName,
-        'new-item', // temporary ID for new items
-        (fileIndex, progress) => {
-          // Show progress for current file being uploaded
-          const overallProgress = Math.round(((fileIndex + progress.percentage / 100) / files.length) * 100)
-          setUploadProgress(overallProgress)
+      const newImages: ItemImage[] = []
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const uploadResult = await OfflineAwareImageService.uploadItemImage(
+          file,
+          projectName,
+          clientGeneratedItemId,
+          currentAccountId,
+          progress => {
+            const overallProgress = Math.round(((i + progress.percentage / 100) / files.length) * 100)
+            setUploadProgress(overallProgress)
+          }
+        )
+
+        const metadata = uploadResult.url.startsWith('offline://')
+          ? {
+              offlineMediaId: uploadResult.url.replace('offline://', ''),
+              isOfflinePlaceholder: true
+            }
+          : undefined
+
+        if (metadata?.offlineMediaId) {
+          offlineMediaIdsRef.current.add(metadata.offlineMediaId)
         }
-      )
 
-      console.log('All uploads completed successfully:', uploadResults.length, 'images')
-
-      // Convert upload results to ItemImage objects
-      const newImages: ItemImage[] = uploadResults.map((result, index) => ({
-        url: result.url,
-        alt: result.fileName,
-        isPrimary: images.length === 0 && index === 0, // First image is primary if no images exist
-        uploadedAt: new Date(),
-        fileName: result.fileName,
-        size: result.size,
-        mimeType: result.mimeType
-      }))
+        newImages.push({
+          url: uploadResult.url,
+          alt: uploadResult.fileName,
+          isPrimary: images.length === 0 && i === 0,
+          uploadedAt: new Date(),
+          fileName: uploadResult.fileName,
+          size: uploadResult.size,
+          mimeType: uploadResult.mimeType,
+          metadata
+        })
+      }
 
       console.log('New image objects created:', newImages.length)
 
-      // Update the images array
       setImages(prev => [...prev, ...newImages])
       setUploadProgress(100)
 
-      console.log('Multiple image upload completed successfully')
+      if (!isOnline) {
+        console.info('Images saved offline and queued for sync')
+      } else {
+        console.log('Multiple image upload completed successfully')
+      }
     } catch (error) {
       console.error('Error uploading multiple images:', error)
       const friendlyMessage = getUserFriendlyErrorMessage(error)
@@ -373,11 +421,17 @@ export default function AddItem() {
   }
 
   const handleRemoveImage = async (imageUrl: string) => {
-    // Remove from local state
-    setImages(prev => prev.filter(img => img.url !== imageUrl))
+    if (imageUrl.startsWith('offline://')) {
+      const mediaId = imageUrl.replace('offline://', '')
+      offlineMediaIdsRef.current.delete(mediaId)
+      try {
+        await offlineMediaService.deleteMediaFile(mediaId)
+      } catch (error) {
+        console.warn('Failed to delete offline media file:', error)
+      }
+    }
 
-    // Note: For new items, we don't need to delete from storage since they haven't been saved yet
-    // The images will be cleaned up when the item is actually created
+    setImages(prev => prev.filter(img => img.url !== imageUrl))
   }
 
   return (
@@ -452,6 +506,12 @@ export default function AddItem() {
                   }
                 </button>
               </div>
+            )}
+            {!isOnline && (
+              <p className="mt-2 text-xs text-amber-600 flex items-center gap-1">
+                <AlertTriangle className="h-4 w-4" />
+                You're offline. Images are stored locally and will sync once you're back online.
+              </p>
             )}
           </div>
 

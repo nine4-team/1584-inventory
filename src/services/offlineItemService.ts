@@ -103,7 +103,8 @@ export class OfflineItemService {
    */
   async createItem(
     accountId: string,
-    itemData: Omit<Item, 'itemId' | 'dateCreated' | 'lastUpdated'>
+    itemData: Omit<Item, 'itemId' | 'dateCreated' | 'lastUpdated'>,
+    options?: { itemId?: string }
   ): Promise<OfflineOperationResult> {
     try {
       await offlineStore.init()
@@ -116,7 +117,7 @@ export class OfflineItemService {
     }
 
     const timestamp = new Date().toISOString()
-    const itemId = `I-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
+    const itemId = options?.itemId ?? `I-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
     const qrKey = itemData.qrKey || `QR-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
 
     // Optimistically update local store with full item data

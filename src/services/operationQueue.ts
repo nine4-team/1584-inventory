@@ -28,6 +28,7 @@ import {
 } from './offlineContext'
 import type { ConflictItem } from '../types/conflicts'
 import { isNetworkOnline } from './networkStatusService'
+import { refreshProjectSnapshot } from '../utils/realtimeSnapshotUpdater'
 
 type OperationInput = Omit<Operation, 'id' | 'timestamp' | 'retryCount' | 'accountId' | 'updatedBy' | 'version'>
 
@@ -969,32 +970,38 @@ class OperationQueue {
       // Create on server using the FULL transaction data from local store
       // Use fallback '0.00' for sum_item_purchase_prices to prevent NOT NULL constraint violations
       // This is the last line of defense for stale caches (e.g., already-queued entries)
+      // Process any offline placeholder URLs in transaction images before creating
+      const processedTransaction = await this.processOfflinePlaceholders(localTransaction, accountId)
+
       const { data: serverTransaction, error } = await supabase
         .from('transactions')
         .insert({
           transaction_id: data.id,
           account_id: accountId,
-          project_id: localTransaction.projectId ?? data.projectId ?? null,
-          transaction_date: localTransaction.transactionDate,
-          source: localTransaction.source ?? '',
-          transaction_type: localTransaction.transactionType ?? '',
-          payment_method: localTransaction.paymentMethod ?? '',
-          amount: localTransaction.amount ?? '0.00',
-          budget_category: localTransaction.budgetCategory ?? null,
-          category_id: localTransaction.categoryId ?? null,
-          notes: localTransaction.notes ?? null,
-          receipt_emailed: localTransaction.receiptEmailed ?? false,
-          status: localTransaction.status ?? null,
-          reimbursement_type: localTransaction.reimbursementType ?? null,
-          trigger_event: localTransaction.triggerEvent ?? null,
-          tax_rate_preset: localTransaction.taxRatePreset ?? null,
-          tax_rate_pct: localTransaction.taxRatePct ?? null,
-          subtotal: localTransaction.subtotal ?? null,
-          needs_review: localTransaction.needsReview ?? null,
-          sum_item_purchase_prices: localTransaction.sumItemPurchasePrices ?? '0.00',
-          item_ids: localTransaction.itemIds ?? null,
-          created_at: localTransaction.createdAt || new Date().toISOString(),
-          created_by: localTransaction.createdBy || updatedBy,
+          project_id: processedTransaction.projectId ?? data.projectId ?? null,
+          transaction_date: processedTransaction.transactionDate,
+          source: processedTransaction.source ?? '',
+          transaction_type: processedTransaction.transactionType ?? '',
+          payment_method: processedTransaction.paymentMethod ?? '',
+          amount: processedTransaction.amount ?? '0.00',
+          budget_category: processedTransaction.budgetCategory ?? null,
+          category_id: processedTransaction.categoryId ?? null,
+          notes: processedTransaction.notes ?? null,
+          transaction_images: processedTransaction.transactionImages ?? null,
+          receipt_images: processedTransaction.receiptImages ?? null,
+          other_images: processedTransaction.otherImages ?? null,
+          receipt_emailed: processedTransaction.receiptEmailed ?? false,
+          status: processedTransaction.status ?? null,
+          reimbursement_type: processedTransaction.reimbursementType ?? null,
+          trigger_event: processedTransaction.triggerEvent ?? null,
+          tax_rate_preset: processedTransaction.taxRatePreset ?? null,
+          tax_rate_pct: processedTransaction.taxRatePct ?? null,
+          subtotal: processedTransaction.subtotal ?? null,
+          needs_review: processedTransaction.needsReview ?? null,
+          sum_item_purchase_prices: processedTransaction.sumItemPurchasePrices ?? '0.00',
+          item_ids: processedTransaction.itemIds ?? null,
+          created_at: processedTransaction.createdAt || new Date().toISOString(),
+          created_by: processedTransaction.createdBy || updatedBy,
           version: version
         })
         .select()
@@ -1008,6 +1015,7 @@ class OperationQueue {
         transactionId: serverTransaction.transaction_id || data.id,
         accountId,
         projectId: serverTransaction.project_id ?? localTransaction.projectId ?? null,
+        projectName: localTransaction.projectName ?? null,
         transactionDate: serverTransaction.transaction_date ?? localTransaction.transactionDate,
         source: serverTransaction.source ?? localTransaction.source ?? '',
         transactionType: serverTransaction.transaction_type ?? localTransaction.transactionType ?? '',
@@ -1033,6 +1041,12 @@ class OperationQueue {
       }
       await offlineStore.saveTransactions([dbTransaction])
 
+      // Refresh project snapshot after successful sync
+      const projectId = dbTransaction.projectId
+      if (projectId) {
+        refreshProjectSnapshot(projectId)
+      }
+
       return true
     } catch (error) {
       console.error('Failed to create transaction on server:', error)
@@ -1046,19 +1060,25 @@ class OperationQueue {
     try {
       // Get the full transaction data from local store
       const localTransaction = await offlineStore.getTransactionById(data.id)
-      
+
       if (!localTransaction) {
         console.error(`Cannot update transaction: local transaction ${data.id} not found in offline store`)
         return false
       }
 
-      // Merge the operation updates into the full local transaction
+      // Process any offline placeholder URLs in the transaction images before syncing
+      const processedTransaction = await this.processOfflinePlaceholders(localTransaction, accountId)
+
+      // Use the processed transaction for the update
       const updatedLocalTransaction: DBTransaction = {
-        ...localTransaction,
+        ...processedTransaction,
         ...(data.updates.amount !== undefined && { amount: data.updates.amount }),
         ...(data.updates.categoryId !== undefined && { categoryId: data.updates.categoryId }),
         ...(data.updates.taxRatePreset !== undefined && { taxRatePreset: data.updates.taxRatePreset }),
         ...(data.updates.status !== undefined && { status: data.updates.status as 'pending' | 'completed' | 'canceled' }),
+        ...(data.updates.receiptImages !== undefined && { receiptImages: data.updates.receiptImages }),
+        ...(data.updates.otherImages !== undefined && { otherImages: data.updates.otherImages }),
+        ...(data.updates.transactionImages !== undefined && { transactionImages: data.updates.transactionImages }),
         version: version
       }
 
@@ -1075,6 +1095,9 @@ class OperationQueue {
           budget_category: updatedLocalTransaction.budgetCategory ?? null,
           category_id: updatedLocalTransaction.categoryId ?? null,
           notes: updatedLocalTransaction.notes ?? null,
+          transaction_images: updatedLocalTransaction.transactionImages ?? null,
+          receipt_images: updatedLocalTransaction.receiptImages ?? null,
+          other_images: updatedLocalTransaction.otherImages ?? null,
           receipt_emailed: updatedLocalTransaction.receiptEmailed ?? false,
           status: updatedLocalTransaction.status ?? null,
           reimbursement_type: updatedLocalTransaction.reimbursementType ?? null,
@@ -1099,6 +1122,7 @@ class OperationQueue {
         transactionId: serverTransaction.transaction_id || data.id,
         accountId,
         projectId: serverTransaction.project_id ?? updatedLocalTransaction.projectId ?? null,
+        projectName: updatedLocalTransaction.projectName ?? localTransaction.projectName ?? null,
         transactionDate: serverTransaction.transaction_date ?? updatedLocalTransaction.transactionDate,
         source: serverTransaction.source ?? updatedLocalTransaction.source ?? '',
         transactionType: serverTransaction.transaction_type ?? updatedLocalTransaction.transactionType ?? '',
@@ -1107,6 +1131,9 @@ class OperationQueue {
         budgetCategory: serverTransaction.budget_category ?? updatedLocalTransaction.budgetCategory,
         categoryId: serverTransaction.category_id ?? updatedLocalTransaction.categoryId,
         notes: serverTransaction.notes ?? updatedLocalTransaction.notes,
+        transactionImages: serverTransaction.transaction_images ?? updatedLocalTransaction.transactionImages,
+        receiptImages: serverTransaction.receipt_images ?? updatedLocalTransaction.receiptImages,
+        otherImages: serverTransaction.other_images ?? updatedLocalTransaction.otherImages,
         receiptEmailed: serverTransaction.receipt_emailed ?? updatedLocalTransaction.receiptEmailed ?? false,
         createdAt: serverTransaction.created_at ?? updatedLocalTransaction.createdAt ?? cachedAt,
         createdBy: serverTransaction.created_by ?? updatedLocalTransaction.createdBy ?? updatedBy,
@@ -1137,6 +1164,12 @@ class OperationQueue {
         })
       }
 
+      // Refresh project snapshot after successful sync
+      const projectId = dbTransaction.projectId
+      if (projectId) {
+        refreshProjectSnapshot(projectId)
+      }
+
       return true
     } catch (error) {
       console.error('Failed to update transaction:', error)
@@ -1148,6 +1181,18 @@ class OperationQueue {
     const { data, accountId } = operation
 
     try {
+      // Get projectId before deletion for snapshot refresh
+      let projectId: string | null = null
+      try {
+        const localTransaction = await offlineStore.getTransactionById(data.id)
+        projectId = localTransaction?.projectId ?? null
+      } catch (error) {
+        console.warn('Failed to get projectId for transaction before delete (non-fatal)', {
+          transactionId: data.id,
+          error
+        })
+      }
+
       // Delete from server
       const { error } = await supabase
         .from('transactions')
@@ -1166,6 +1211,11 @@ class OperationQueue {
           transactionId: data.id,
           cleanupError
         })
+      }
+
+      // Refresh project snapshot after successful sync
+      if (projectId) {
+        refreshProjectSnapshot(projectId)
       }
 
       return true
@@ -1613,6 +1663,111 @@ class OperationQueue {
       default:
         return null
     }
+  }
+
+  /**
+   * Process offline placeholder URLs in transaction images by uploading them
+   */
+  private async processOfflinePlaceholders(transaction: DBTransaction, accountId: string): Promise<DBTransaction> {
+    const { ImageUploadService } = await import('./imageService')
+    const { offlineMediaService } = await import('./offlineMediaService')
+
+    const processImageArray = async (images: any[] | undefined, type: 'receipt' | 'other' | 'transaction'): Promise<any[]> => {
+      if (!images || images.length === 0) return images
+
+      const processedImages = []
+      const projectNameForStorage =
+        (transaction.projectName && transaction.projectName.trim().length > 0)
+          ? transaction.projectName
+          : transaction.projectId
+            ? `Project-${transaction.projectId}`
+            : 'Unknown-Project'
+
+      for (const image of images) {
+        if (image.url?.startsWith('offline://')) {
+          const mediaId = image.url.replace('offline://', '')
+
+          try {
+            // Get the media file
+            const mediaFile = await offlineMediaService.getMediaFile(mediaId)
+            if (!mediaFile) {
+              console.warn(`Offline media file ${mediaId} not found, keeping placeholder`)
+              processedImages.push(image)
+              continue
+            }
+
+            // Upload based on type
+            let uploadResult
+
+            // Convert blob to File object for upload
+            const file = new File([mediaFile.blob], mediaFile.filename, { type: mediaFile.mimeType })
+
+            if (type === 'receipt') {
+              uploadResult = await ImageUploadService.uploadReceiptAttachment(
+                file,
+                projectNameForStorage,
+                transaction.transactionId
+              )
+            } else if (type === 'other') {
+              uploadResult = await ImageUploadService.uploadOtherImage(
+                file,
+                projectNameForStorage,
+                transaction.transactionId
+              )
+            } else {
+              uploadResult = await ImageUploadService.uploadTransactionImage(
+                file,
+                projectNameForStorage,
+                transaction.transactionId
+              )
+            }
+
+            // Replace with uploaded URL
+            processedImages.push({
+              ...image,
+              url: uploadResult.url,
+              fileName: uploadResult.fileName,
+              size: uploadResult.size,
+              mimeType: uploadResult.mimeType,
+              metadata: {
+                ...image.metadata,
+                offlineMediaId: undefined,
+                isOfflinePlaceholder: false
+              }
+            })
+
+            // Clean up offline media
+            await offlineMediaService.deleteMediaFile(mediaId)
+
+          } catch (error) {
+            console.error(`Failed to upload offline media ${mediaId}:`, error)
+            // Keep the placeholder on failure
+            processedImages.push(image)
+          }
+        } else {
+          // Not an offline placeholder, keep as-is
+          processedImages.push(image)
+        }
+      }
+
+      return processedImages
+    }
+
+    const processedTransaction = { ...transaction }
+
+    if (transaction.receiptImages) {
+      processedTransaction.receiptImages = await processImageArray(transaction.receiptImages, 'receipt')
+    }
+
+    if (transaction.otherImages) {
+      processedTransaction.otherImages = await processImageArray(transaction.otherImages, 'other')
+    }
+
+    if (transaction.transactionImages) {
+      processedTransaction.transactionImages = await processImageArray(transaction.transactionImages, 'transaction')
+    }
+
+    return processedTransaction
   }
 }
 

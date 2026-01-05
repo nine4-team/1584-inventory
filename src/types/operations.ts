@@ -73,6 +73,9 @@ export interface UpdateTransactionOperation extends BaseOperation {
       categoryId: string
       taxRatePreset: string
       status: string
+      receiptImages: any[]
+      otherImages: any[]
+      transactionImages: any[]
     }>
   }
 }

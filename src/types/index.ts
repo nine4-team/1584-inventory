@@ -167,6 +167,10 @@ export interface ItemImage {
   size: number; // in bytes
   mimeType: string;
   caption?: string; // Optional caption for the image
+  metadata?: {
+    offlineMediaId?: string;
+    isOfflinePlaceholder?: boolean;
+  };
 }
 
 export interface TransactionImage {
@@ -175,6 +179,10 @@ export interface TransactionImage {
   uploadedAt: Date;
   size: number; // in bytes
   mimeType: string;
+  metadata?: {
+    offlineMediaId?: string;
+    isOfflinePlaceholder?: boolean;
+  };
 }
 
 export interface Dimensions {

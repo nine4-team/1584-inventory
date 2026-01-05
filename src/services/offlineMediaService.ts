@@ -64,6 +64,20 @@ export class OfflineMediaService {
 
   async deleteMediaFile(mediaId: string): Promise<void> {
     await offlineStore.deleteMedia(mediaId)
+
+    // Clean up any queued uploads referencing this media
+    try {
+      const queueEntries = await offlineStore.getMediaUploadQueue()
+      const relatedEntries = queueEntries.filter(entry => entry.mediaId === mediaId)
+      await Promise.all(
+        relatedEntries.map(entry => offlineStore.removeMediaUploadFromQueue(entry.id))
+      )
+    } catch (error) {
+      console.warn('Failed to remove media upload queue entry for deleted media', {
+        mediaId,
+        error
+      })
+    }
   }
 
   async cleanupExpiredMedia(): Promise<number> {

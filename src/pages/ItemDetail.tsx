@@ -8,6 +8,8 @@ import { normalizeDisposition, dispositionsEqual, displayDispositionLabel, DISPO
 import { formatDate, formatCurrency } from '@/utils/dateUtils'
 import { unifiedItemsService, projectService, integrationService, transactionService } from '@/services/inventoryService'
 import { ImageUploadService } from '@/services/imageService'
+import { OfflineAwareImageService } from '@/services/offlineAwareImageService'
+import { offlineMediaService } from '@/services/offlineMediaService'
 import ImagePreview from '@/components/ui/ImagePreview'
 import ItemLineageBreadcrumb from '@/components/ui/ItemLineageBreadcrumb'
 import { lineageService } from '@/services/lineageService'
@@ -16,6 +18,7 @@ import { useToast } from '@/components/ui/ToastContext'
 import { useDuplication } from '@/hooks/useDuplication'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
+import { useNetworkState } from '@/hooks/useNetworkState'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { projectItemEdit, projectItems, projectTransactionDetail } from '@/utils/routes'
 import { Combobox } from '@/components/ui/Combobox'
@@ -44,7 +47,9 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
   const [isUpdatingTransaction, setIsUpdatingTransaction] = useState(false)
   const { showError, showSuccess } = useToast()
   const { buildContextUrl, getBackDestination } = useNavigationContext()
+  const { isOnline } = useNetworkState()
   const stickyRef = useRef<HTMLDivElement>(null)
+  const offlineMediaIdsRef = useRef<Set<string>>(new Set())
 
   // Use itemId if available (from /project/:projectId/items/:itemId), otherwise use id (from /item/:id)
   const actualItemId = propItemId || itemId || id
@@ -291,6 +296,18 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
       loadTransactions()
     }
   }, [showTransactionDialog, currentAccountId, projectId, item?.projectId])
+
+  // Cleanup any queued offline media if component unmounts before images are saved
+  useEffect(() => {
+    return () => {
+      const mediaIds = Array.from(offlineMediaIdsRef.current)
+      mediaIds.forEach(mediaId => {
+        offlineMediaService.deleteMediaFile(mediaId).catch(error => {
+          console.warn('Failed to cleanup offline media on unmount:', error)
+        })
+      })
+    }
+  }, [])
 
   const loadTransactions = async () => {
     const effectiveProjectId = projectId || item?.projectId
@@ -544,40 +561,53 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
   }
 
   const handleMultipleImageUpload = async (files: File[]) => {
-    if (!item) return
+    if (!item || !currentAccountId) return
 
     try {
       setIsUploadingImage(true)
       setUploadProgress(0)
 
       console.log('Starting multiple image upload for', files.length, 'files')
+
+      const newImages: ItemImage[] = []
+
       for (let i = 0; i < files.length; i++) {
-        console.log(`Processing file ${i + 1}:`, files[i].name)
+        const file = files[i]
+        const uploadResult = await OfflineAwareImageService.uploadItemImage(
+          file,
+          projectName || 'Business Inventory',
+          item.itemId,
+          currentAccountId,
+          progress => {
+            const overallProgress = Math.round(((i + progress.percentage / 100) / files.length) * 100)
+            setUploadProgress(overallProgress)
+          }
+        )
+
+        const metadata = uploadResult.url.startsWith('offline://')
+          ? {
+              offlineMediaId: uploadResult.url.replace('offline://', ''),
+              isOfflinePlaceholder: true
+            }
+          : undefined
+
+        if (metadata?.offlineMediaId) {
+          offlineMediaIdsRef.current.add(metadata.offlineMediaId)
+        }
+
+        newImages.push({
+          url: uploadResult.url,
+          alt: uploadResult.fileName,
+          isPrimary: item.images?.length === 0 && i === 0, // First image is primary if no images exist
+          uploadedAt: new Date(),
+          fileName: uploadResult.fileName,
+          size: uploadResult.size,
+          mimeType: uploadResult.mimeType,
+          metadata
+        })
       }
 
-      const uploadResults = await ImageUploadService.uploadMultipleItemImages(
-        files,
-        projectName || 'Business Inventory',
-        item.itemId,
-        (fileIndex, progress) => {
-          // Show progress for current file being uploaded
-          const overallProgress = Math.round(((fileIndex + progress.percentage / 100) / files.length) * 100)
-          setUploadProgress(overallProgress)
-        }
-      )
-
-      console.log('All uploads completed successfully:', uploadResults.length, 'images')
-
-      // Convert upload results to ItemImage objects
-      const newImages: ItemImage[] = uploadResults.map((result, index) => ({
-        url: result.url,
-        alt: result.fileName,
-        isPrimary: item.images?.length === 0 && index === 0, // First image is primary if no images exist
-        uploadedAt: new Date(),
-        fileName: result.fileName,
-        size: result.size,
-        mimeType: result.mimeType
-      }))
+      console.log('All uploads completed successfully:', newImages.length, 'images')
 
       console.log('New image objects created:', newImages.length)
 
@@ -594,6 +624,13 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
       if (currentAccountId) {
         console.log('Updating item in database with multiple new images')
         await unifiedItemsService.updateItem(currentAccountId, item.itemId, { images: updatedImages })
+
+        // Remove media IDs from tracking since they're now saved to the item
+        newImages.forEach(img => {
+          if (img.metadata?.offlineMediaId) {
+            offlineMediaIdsRef.current.delete(img.metadata.offlineMediaId)
+          }
+        })
 
         const queryClient = getGlobalQueryClient()
         const itemCacheKey = ['item', currentAccountId, item.itemId]
@@ -635,7 +672,11 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
 
       setUploadProgress(100)
 
-      console.log('Multiple image upload completed successfully')
+      if (!isOnline) {
+        console.info('Images saved offline and queued for sync')
+      } else {
+        console.log('Multiple image upload completed successfully')
+      }
     } catch (error) {
       console.error('Error uploading multiple images:', error)
       const friendlyMessage = getUserFriendlyErrorMessage(error)
@@ -684,6 +725,17 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
     if (!item || !currentAccountId) return
 
     try {
+      // Handle offline media deletion if this is an offline placeholder
+      if (imageUrl.startsWith('offline://')) {
+        const mediaId = imageUrl.replace('offline://', '')
+        offlineMediaIdsRef.current.delete(mediaId)
+        try {
+          await offlineMediaService.deleteMediaFile(mediaId)
+        } catch (error) {
+          console.warn('Failed to delete offline media file:', error)
+        }
+      }
+
       // Remove from database
       await unifiedItemsService.updateItem(currentAccountId, item.itemId, {
         images: item.images?.filter(img => img.url !== imageUrl) || []
