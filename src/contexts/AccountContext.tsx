@@ -38,7 +38,11 @@ export function AccountProvider({ children }: AccountProviderProps) {
       try {
         await initOfflineContext()
         if (!isMounted) return
-        setOfflineFallbackAccountId(getOfflineContext()?.accountId ?? null)
+        const cachedAccountId = getOfflineContext()?.accountId ?? null
+        setOfflineFallbackAccountId(cachedAccountId)
+        if (cachedAccountId) {
+          setCurrentAccountId(prev => prev ?? cachedAccountId)
+        }
       } catch (error) {
         console.warn('[AccountContext] Failed to hydrate offline context', error)
       }
@@ -56,6 +60,18 @@ export function AccountProvider({ children }: AccountProviderProps) {
       unsubscribe()
     }
   }, [])
+
+  useEffect(() => {
+    if (
+      !currentAccountId &&
+      offlineFallbackAccountId &&
+      !authLoading &&
+      !userLoading &&
+      user
+    ) {
+      setCurrentAccountId(offlineFallbackAccountId)
+    }
+  }, [authLoading, userLoading, user, currentAccountId, offlineFallbackAccountId])
 
   useEffect(() => {
     let isMounted = true
