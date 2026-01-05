@@ -570,6 +570,40 @@ export function detectTransactionConflict(local: Transaction, remote: Transactio
   - **Make the executor bulletproof.** In `operationQueue.executeCreateTransaction`, change the insert payload to `sum_item_purchase_prices: localTransaction.sumItemPurchasePrices ?? '0.00'`. This is the last line of defense so stale caches (e.g., already-queued entries) can’t violate the constraint.
   - **Keep the cached sum in sync with optimistic children.** Immediately after the loop that calls `offlineItemService.createItem`, recompute the total from the newly created `itemIds` (or from the known `items` array you just processed) and resave the transaction. That ensures `executeCreateTransaction` reads the sum that matches the optimistic child items instead of the original `'0.00'`. If we later add a helper like `offlineTransactionService.bumpSumItemPurchasePrices`, have it both update IndexedDB and emit a console log so we can trace mismatches.
 
+### Cache hygiene & ghost prevention
+
+**Goal:** never allow a deleted item/transaction to remain in IndexedDB or React Query after the user confirms the delete—online *or* offline.
+
+#### Transactions
+1. **Online happy path must purge the cache.** Right after the Supabase delete succeeds inside `inventoryService.deleteTransaction`, call:
+   ```ts
+   await offlineStore.deleteTransaction(transactionId)
+   await offlineStore.deleteConflictsForTransactions(accountId, [transactionId])
+   refreshProjectSnapshot(projectIdFromCache)
+   ```
+   Wrap in a try/catch so the server delete still resolves even if IndexedDB is unavailable, but log loudly when the cache cleanup fails.
+2. **Keep the executor as the second line of defense.** `operationQueue.executeDeleteTransaction` already deletes from Supabase; extend the `try` block to:
+   - Fetch the `projectId` before deleting so we can refresh snapshots after cleanup.
+   - Call `offlineStore.deleteTransaction(data.id)` and `offlineStore.deleteConflictsForTransactions(accountId, [data.id])`.
+   - Log (non-fatal) if the cache delete throws so we can diagnose lingering ghosts quickly.
+3. **Invalidate React Query immediately.** After purging IndexedDB (both in the online path and executor), invalidate the `['transaction', accountId, transactionId]` query and the project-level lists (`hydrateProjectTransactionsCache` or `hydrateTransactionsListCache`). That prevents React Query from rehydrating the deleted entity from stale cache entries.
+4. **Block stale hydrations from resurrecting ghosts.** Update `cacheTransactionsOffline`/`hydrateTransactionCache` to skip writes for IDs that no longer exist in IndexedDB (consult `operationQueue.getEntityIdsWithPendingWrites` and the local delete set). If a fetch returns a transaction we just deleted offline, drop it on the floor instead of re-inserting the ghost.
+
+#### Items (child entities hit most often during offline transaction work)
+1. **Delete optimistically in the offline service.** After `offlineItemService.deleteItem` enqueues `DELETE_ITEM`, immediately call `offlineStore.deleteItem(itemId)` (even when offline). If the queue add fails, re-save the item so we do not lose data accidentally.
+2. **Executor must purge + clear conflicts.** In `operationQueue.executeDeleteItem`, after the Supabase delete:
+   ```ts
+   await offlineStore.deleteItem(data.id)
+   await offlineStore.deleteConflictsForItems(accountId, [data.id])
+   if (projectId) refreshProjectSnapshot(projectId)
+   ```
+   Today the executor relies on “React Query invalidation later”; remove that comment and do the actual delete so IndexedDB is always the source of truth.
+3. **Hydrators/list caches need deletes too.** Whenever an item is removed, update `hydrateProjectTransactionsCache`, `hydrateProjectItemsCache`, and any list-level caches to filter out the deleted ID before writing back to IndexedDB or React Query. Otherwise a subsequent online fetch can reinsert the ghost record that was just removed locally.
+
+4. **Conflict + telemetry hygiene.** Every delete—online or offline—should attempt `offlineStore.deleteConflictsFor{Transactions,Items}` and emit a structured log (`console.info` in DEV, telemetry event in prod) noting the account/entity IDs removed. That gives support a breadcrumb trail if a ghost somehow reappears.
+
+These steps are intentionally explicit so no one “forgets” to purge the cache when adding new delete entry points. If a developer touches a delete flow, they should verify: (a) server row deleted, (b) IndexedDB row removed right away, (c) conflicts cleared, (d) React Query invalidated, (e) project snapshot refreshed.
+
 ### Vendor defaults: caching implemented (status: done, follow-ups)
 - Status: implemented. Vendor defaults are now cached in IndexedDB and will be used offline when available; cache hydrations happen once per successful online fetch/update (no endless loops).
 - What changed:

@@ -1,7 +1,7 @@
-import { 
-  Operation, 
-  CreateItemOperation, 
-  UpdateItemOperation, 
+import {
+  Operation,
+  CreateItemOperation,
+  UpdateItemOperation,
   DeleteItemOperation,
   CreateTransactionOperation,
   UpdateTransactionOperation,
@@ -29,6 +29,31 @@ import {
 import type { ConflictItem } from '../types/conflicts'
 import { isNetworkOnline } from './networkStatusService'
 import { refreshProjectSnapshot } from '../utils/realtimeSnapshotUpdater'
+import type { QueryClient } from '@tanstack/react-query'
+import { removeItemFromCaches, removeTransactionFromCaches } from '@/utils/queryCacheHelpers'
+
+type QueryClientGetter = () => QueryClient
+
+let cachedGetGlobalQueryClient: QueryClientGetter | null = null
+function resolveQueryClient(): QueryClient | null {
+  try {
+    if (!cachedGetGlobalQueryClient) {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const queryClientModule = require('../utils/queryClient') as {
+        getGlobalQueryClient?: QueryClientGetter
+      }
+      cachedGetGlobalQueryClient = queryClientModule?.getGlobalQueryClient ?? null
+    }
+
+    if (!cachedGetGlobalQueryClient) {
+      return null
+    }
+
+    return cachedGetGlobalQueryClient()
+  } catch {
+    return null
+  }
+}
 
 type OperationInput = Omit<Operation, 'id' | 'timestamp' | 'retryCount' | 'accountId' | 'updatedBy' | 'version'>
 
@@ -937,6 +962,20 @@ class OperationQueue {
     const { data, accountId, updatedBy, version } = operation
 
     try {
+      // Get projectId before deletion for snapshot refresh
+      let projectId: string | null = null
+      let transactionId: string | null = null
+      try {
+        const localItem = await offlineStore.getItemById(data.id)
+        projectId = localItem?.projectId ?? null
+        transactionId = localItem?.transactionId ?? null
+      } catch (error) {
+        console.warn('Failed to get projectId for item before delete (non-fatal)', {
+          itemId: data.id,
+          error
+        })
+      }
+
       // Delete from server
       const { error } = await supabase
         .from('items')
@@ -945,8 +984,54 @@ class OperationQueue {
 
       if (error) throw error
 
-      // Note: Local store deletion will be handled by cache invalidation
-      // in the React Query integration
+      // Executor must purge + clear conflicts - IndexedDB is always the source of truth
+      try {
+        await offlineStore.deleteItem(data.id)
+        await offlineStore.deleteConflictsForItems(accountId, [data.id])
+        if (projectId) {
+          refreshProjectSnapshot(projectId)
+        }
+
+        // Emit telemetry for conflict + hygiene tracking
+        console.info('Item deleted successfully', {
+          itemId: data.id,
+          accountId,
+          projectId,
+          operationId: operation.id
+        })
+      } catch (cleanupError) {
+        console.warn('Failed to purge item from offline store after server delete (non-fatal)', {
+          itemId: data.id,
+          cleanupError
+        })
+      }
+
+      // Invalidate React Query caches immediately after cleanup
+      try {
+        const queryClient = this.getQueryClient()
+        if (queryClient) {
+          removeItemFromCaches(queryClient, accountId, data.id, {
+            projectId,
+            transactionId
+          })
+          queryClient.invalidateQueries({ queryKey: ['item', accountId, data.id] })
+          if (projectId) {
+            queryClient.invalidateQueries({ queryKey: ['project-items', accountId, projectId] })
+          } else {
+            queryClient.invalidateQueries({ queryKey: ['business-inventory', accountId] })
+          }
+          if (transactionId) {
+            queryClient.invalidateQueries({ queryKey: ['transaction-items', accountId, transactionId] })
+          } else {
+            queryClient.invalidateQueries({ queryKey: ['transaction-items', accountId] })
+          }
+        }
+      } catch (invalidationError) {
+        console.warn('Failed to invalidate React Query after item delete (non-fatal)', {
+          itemId: data.id,
+          invalidationError
+        })
+      }
 
       return true
     } catch (error) {
@@ -1206,6 +1291,12 @@ class OperationQueue {
         if (accountId) {
           await offlineStore.deleteConflictsForTransactions(accountId, [data.id])
         }
+        console.info('Transaction deleted successfully', {
+          transactionId: data.id,
+          accountId,
+          projectId,
+          operationId: operation.id
+        })
       } catch (cleanupError) {
         console.warn('Failed to purge transaction from offline store after server delete (non-fatal)', {
           transactionId: data.id,
@@ -1216,6 +1307,25 @@ class OperationQueue {
       // Refresh project snapshot after successful sync
       if (projectId) {
         refreshProjectSnapshot(projectId)
+      }
+
+      // Invalidate React Query caches immediately after cleanup
+      try {
+        const queryClient = this.getQueryClient()
+        if (queryClient) {
+          removeTransactionFromCaches(queryClient, accountId, data.id, projectId)
+          queryClient.invalidateQueries({ queryKey: ['transaction', accountId, data.id] })
+          if (projectId) {
+            queryClient.invalidateQueries({ queryKey: ['project-transactions', accountId, projectId] })
+          }
+          queryClient.invalidateQueries({ queryKey: ['transaction-items', accountId, data.id] })
+          queryClient.invalidateQueries({ queryKey: ['transactions', accountId] })
+        }
+      } catch (invalidationError) {
+        console.warn('Failed to invalidate React Query after transaction delete (non-fatal)', {
+          transactionId: data.id,
+          invalidationError
+        })
       }
 
       return true
@@ -1663,6 +1773,10 @@ class OperationQueue {
       default:
         return null
     }
+  }
+
+  private getQueryClient(): QueryClient | null {
+    return resolveQueryClient()
   }
 
   /**

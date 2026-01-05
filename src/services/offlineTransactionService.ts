@@ -6,6 +6,8 @@ import { isNetworkOnline } from './networkStatusService'
 import { offlineItemService } from './offlineItemService'
 import { getCachedBudgetCategoryById, getCachedTaxPresetById } from './offlineMetadataService'
 import { refreshProjectSnapshot } from '../utils/realtimeSnapshotUpdater'
+import { removeTransactionFromCaches } from '@/utils/queryCacheHelpers'
+import type { QueryClient } from '@tanstack/react-query'
 
 export interface OfflineOperationResult {
   operationId: string
@@ -29,6 +31,29 @@ export class OfflineQueueUnavailableError extends OfflineStorageError {
   constructor(message: string, cause?: unknown) {
     super(message, cause)
     this.name = 'OfflineQueueUnavailableError'
+  }
+}
+
+type QueryClientGetter = () => QueryClient
+
+let cachedGetGlobalQueryClient: QueryClientGetter | null = null
+function tryGetQueryClient(): QueryClient | null {
+  try {
+    if (!cachedGetGlobalQueryClient) {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const queryClientModule = require('../utils/queryClient') as {
+        getGlobalQueryClient?: QueryClientGetter
+      }
+      cachedGetGlobalQueryClient = queryClientModule?.getGlobalQueryClient ?? null
+    }
+
+    if (!cachedGetGlobalQueryClient) {
+      return null
+    }
+
+    return cachedGetGlobalQueryClient()
+  } catch {
+    return null
   }
 }
 
@@ -425,12 +450,45 @@ export class OfflineTransactionService {
         transactionId,
         error
       })
+      try {
+        await offlineStore.saveTransactions([existingTransaction])
+      } catch (restoreError) {
+        console.error('Failed to re-save transaction after queue enqueue failure', {
+          transactionId,
+          restoreError
+        })
+      }
       throw error
     }
 
     // Remove from offline cache immediately so UI no longer surfaces ghost entries
     try {
       await offlineStore.deleteTransaction(transactionId)
+      await offlineStore.deleteConflictsForTransactions(accountId, [transactionId])
+
+      console.info('Transaction deleted offline', {
+        transactionId,
+        accountId,
+        projectId: existingTransaction.projectId
+      })
+
+      try {
+        const queryClient = tryGetQueryClient()
+        if (queryClient) {
+          removeTransactionFromCaches(queryClient, accountId, transactionId, existingTransaction.projectId)
+          queryClient.invalidateQueries({ queryKey: ['transaction', accountId, transactionId] })
+          if (existingTransaction.projectId) {
+            queryClient.invalidateQueries({ queryKey: ['project-transactions', accountId, existingTransaction.projectId] })
+          }
+          queryClient.invalidateQueries({ queryKey: ['transaction-items', accountId, transactionId] })
+          queryClient.invalidateQueries({ queryKey: ['transactions', accountId] })
+        }
+      } catch (cacheError) {
+        console.warn('Failed to invalidate React Query after offline transaction delete (non-fatal)', {
+          transactionId,
+          cacheError
+        })
+      }
     } catch (cleanupError) {
       console.warn('Failed to purge transaction from offline store after enqueueing delete (non-fatal)', {
         transactionId,

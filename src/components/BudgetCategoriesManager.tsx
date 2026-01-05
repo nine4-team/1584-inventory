@@ -289,7 +289,6 @@ export default function BudgetCategoriesManager() {
 
       {/* Account-wide default category preset */}
       <div className="bg-gray-50 border border-gray-200 rounded-md p-4">
-        <h5 className="text-sm font-medium text-gray-900 mb-2">Default transaction category</h5>
         <p className="text-sm text-gray-500 mb-3">Set the default category that will be used when creating transactions.</p>
         <div className="flex items-start space-x-3">
           <div className="flex-1">
