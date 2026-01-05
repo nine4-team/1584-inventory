@@ -6,6 +6,7 @@ import { projectService, transactionService, unifiedItemsService } from '@/servi
 import { isNetworkOnline, subscribeToNetworkStatus, getNetworkStatusSnapshot } from '@/services/networkStatusService'
 import { offlineStore } from '@/services/offlineStore'
 import { registerSnapshotRefreshCallback } from '@/utils/realtimeSnapshotUpdater'
+import { onSyncEvent } from '@/services/serviceWorker'
 
 type ProjectRealtimeTelemetry = {
   activeChannelCount: number
@@ -82,10 +83,16 @@ interface ProviderProps {
 export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: ProviderProps) {
   const { currentAccountId } = useAccount()
   const [snapshots, setSnapshots] = useState<Record<string, ProjectRealtimeEntry>>({})
+  const snapshotsRef = useRef<Record<string, ProjectRealtimeEntry>>({})
   const subscriptionsRef = useRef<Record<string, ProjectSubscriptions>>({})
   const cleanupTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const initializingRef = useRef<Record<string, boolean>>({})
   const cacheRefreshRef = useRef<Record<string, boolean>>({})
+  const previousOnlineStatusRef = useRef(getNetworkStatusSnapshot().isOnline)
+
+  useEffect(() => {
+    snapshotsRef.current = snapshots
+  }, [snapshots])
 
   const setEntry = useCallback(
     (projectId: string, updater: (entry: ProjectRealtimeEntry) => ProjectRealtimeEntry) => {
@@ -654,42 +661,67 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
     })
   }, [initializeProject, snapshots])
 
-  // Handle network status transitions: refresh cache-hydrated projects when network comes back online
-  useEffect(() => {
-    const unsubscribe = subscribeToNetworkStatus(networkStatus => {
-      // When network comes back online, refresh projects that were hydrated from cache
-      // Use refreshCollections instead of initializeProject to avoid toggling isLoading
-      if (networkStatus.isOnline) {
-        Object.entries(snapshots).forEach(([projectId, entry]) => {
-          if (
-            entry.refCount > 0 &&
-            entry.initialized &&
-            entry.hydratedFromCache &&
-            !initializingRef.current[projectId] &&
-            !cacheRefreshRef.current[projectId]
-          ) {
-            // Refresh collections without toggling isLoading, so cached UI stays visible
-            cacheRefreshRef.current[projectId] = true
-            void refreshCollections(projectId, { includeProject: true })
-              .then(() => {
+  const refreshAllActiveProjects = useCallback(
+    (options?: { clearHydratedFlag?: boolean }) => {
+      const currentSnapshots = snapshotsRef.current
+      Object.entries(currentSnapshots).forEach(([projectId, entry]) => {
+        if (
+          entry.refCount > 0 &&
+          entry.initialized &&
+          !initializingRef.current[projectId] &&
+          !cacheRefreshRef.current[projectId]
+        ) {
+          cacheRefreshRef.current[projectId] = true
+          void refreshCollections(projectId, { includeProject: true })
+            .then(() => {
+              if (options?.clearHydratedFlag) {
                 setEntry(projectId, projEntry => ({
                   ...projEntry,
                   hydratedFromCache: false,
                 }))
+              }
+            })
+            .catch(error => {
+              console.error('ProjectRealtimeProvider: project refresh failed', {
+                projectId,
+                error,
               })
-              .catch(error => {
-                console.error('ProjectRealtimeProvider: cache refresh after reconnect failed', error)
-              })
-              .finally(() => {
-                cacheRefreshRef.current[projectId] = false
-              })
-          }
-        })
+            })
+            .finally(() => {
+              cacheRefreshRef.current[projectId] = false
+            })
+        }
+      })
+    },
+    [refreshCollections, setEntry]
+  )
+
+  // Handle network status transitions: refresh cache-hydrated projects when network comes back online
+  useEffect(() => {
+    const unsubscribe = subscribeToNetworkStatus(networkStatus => {
+      const wasOnline = previousOnlineStatusRef.current
+      previousOnlineStatusRef.current = networkStatus.isOnline
+
+      // Only refresh when we transition from offline -> online
+      if (!networkStatus.isOnline || wasOnline) {
+        return
       }
+      refreshAllActiveProjects({ clearHydratedFlag: true })
     })
 
     return unsubscribe
-  }, [refreshCollections, snapshots, setEntry])
+  }, [refreshAllActiveProjects])
+
+  // After offline queue flushes (SYNC_COMPLETE with zero pending ops), re-fetch to capture missed realtime payloads
+  useEffect(() => {
+    const unsubscribe = onSyncEvent('complete', payload => {
+      if (payload?.pendingOperations && payload.pendingOperations > 0) {
+        return
+      }
+      refreshAllActiveProjects()
+    })
+    return unsubscribe
+  }, [refreshAllActiveProjects])
 
   const contextValue = useMemo<ProjectRealtimeContextValue>(
     () => ({

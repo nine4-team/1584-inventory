@@ -5,6 +5,8 @@ import type { Item } from '../types'
 import type { Operation } from '../types/operations'
 import { isNetworkOnline } from './networkStatusService'
 import { refreshProjectSnapshot } from '../utils/realtimeSnapshotUpdater'
+import { removeItemFromCaches } from '@/utils/queryCacheHelpers'
+import type { QueryClient } from '@tanstack/react-query'
 
 export interface OfflineOperationResult {
   operationId: string
@@ -23,6 +25,29 @@ export class OfflineQueueUnavailableError extends OfflineStorageError {
   constructor(message: string, cause?: unknown) {
     super(message, cause)
     this.name = 'OfflineQueueUnavailableError'
+  }
+}
+
+type QueryClientGetter = () => QueryClient
+
+let cachedGetGlobalQueryClient: QueryClientGetter | null = null
+function tryGetQueryClient(): QueryClient | null {
+  try {
+    if (!cachedGetGlobalQueryClient) {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const queryClientModule = require('../utils/queryClient') as {
+        getGlobalQueryClient?: QueryClientGetter
+      }
+      cachedGetGlobalQueryClient = queryClientModule?.getGlobalQueryClient ?? null
+    }
+
+    if (!cachedGetGlobalQueryClient) {
+      return null
+    }
+
+    return cachedGetGlobalQueryClient()
+  } catch {
+    return null
   }
 }
 
@@ -334,15 +359,71 @@ export class OfflineItemService {
       data: { id: itemId, accountId }
     }
 
-    const operationId = await operationQueue.add(operation, {
-      accountId,
-      version: existingItem.version ?? 1,
-      timestamp
-    })
+    let operationId: string
+    try {
+      operationId = await operationQueue.add(operation, {
+        accountId,
+        version: existingItem.version ?? 1,
+        timestamp
+      })
+    } catch (error) {
+      console.error('Failed to enqueue DELETE_ITEM operation', {
+        accountId,
+        itemId,
+        error
+      })
+      try {
+        await offlineStore.saveItems([existingItem])
+      } catch (saveError) {
+        console.error('Failed to re-save item after queue enqueue failure', {
+          itemId,
+          saveError
+        })
+      }
+      throw error
+    }
 
-    // Note: Optimistic deletion from local store would be complex
-    // since we need to track deletions. For now, we'll let the
-    // React Query invalidation handle this when sync completes.
+    // Delete optimistically from local store immediately after enqueueing
+    try {
+      await offlineStore.deleteItem(itemId)
+      await offlineStore.deleteConflictsForItems(accountId, [itemId])
+
+      console.info('Item deleted offline', {
+        itemId,
+        accountId,
+        projectId: existingItem.projectId,
+        transactionId: existingItem.transactionId
+      })
+
+      try {
+        const queryClient = tryGetQueryClient()
+        if (queryClient) {
+          removeItemFromCaches(queryClient, accountId, itemId, {
+            projectId: existingItem.projectId,
+            transactionId: existingItem.transactionId
+          })
+          queryClient.invalidateQueries({ queryKey: ['item', accountId, itemId] })
+          if (existingItem.projectId) {
+            queryClient.invalidateQueries({ queryKey: ['project-items', accountId, existingItem.projectId] })
+          } else {
+            queryClient.invalidateQueries({ queryKey: ['business-inventory', accountId] })
+          }
+          if (existingItem.transactionId) {
+            queryClient.invalidateQueries({ queryKey: ['transaction-items', accountId, existingItem.transactionId] })
+          }
+        }
+      } catch (cacheError) {
+        console.warn('Failed to invalidate React Query after offline item delete (non-fatal)', {
+          itemId,
+          cacheError
+        })
+      }
+    } catch (cleanupError) {
+      console.warn('Failed to purge item from offline store after enqueueing delete (non-fatal)', {
+        itemId,
+        cleanupError
+      })
+    }
 
     // Trigger immediate processing if online
     if (isNetworkOnline()) {

@@ -5,12 +5,14 @@ import { useState, useEffect, useRef, FormEvent, useMemo, useCallback } from 're
 import { TransactionFormData, TransactionValidationErrors, TransactionImage, TransactionItemFormData, TaxPreset, Transaction } from '@/types'
 import { COMPANY_NAME, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { transactionService, projectService, unifiedItemsService } from '@/services/inventoryService'
-import { ImageUploadService, UploadProgress } from '@/services/imageService'
+import { OfflineAwareImageService } from '@/services/offlineAwareImageService'
 import ImageUpload from '@/components/ui/ImageUpload'
 import { useAuth } from '../contexts/AuthContext'
 import ContextLink from '@/components/ContextLink'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '../contexts/AccountContext'
+import { useOfflineMediaTracker } from '@/hooks/useOfflineMediaTracker'
+import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
 import { UserRole } from '../types'
 import { Shield } from 'lucide-react'
 import { toDateOnlyString } from '@/utils/dateUtils'
@@ -35,6 +37,9 @@ export default function EditTransaction() {
   const { hasRole } = useAuth()
   const { currentAccountId } = useAccount()
   const { buildContextUrl, getBackDestination } = useNavigationContext()
+  const { showOfflineSaved } = useOfflineFeedback()
+  const receiptTracker = useOfflineMediaTracker()
+  const otherImageTracker = useOfflineMediaTracker()
 
   const defaultBackPath = useMemo(() => {
     if (projectId && transactionId) {
@@ -371,7 +376,11 @@ export default function EditTransaction() {
 
     if (!validateForm() || !projectId || !transactionId || !currentAccountId) return
 
-  setIsSubmitting(true)
+    setIsSubmitting(true)
+    const willUploadImages = Boolean((formData.receiptImages?.length || 0) > 0 || (formData.otherImages?.length || 0) > 0)
+    if (willUploadImages) {
+      setIsUploadingImages(true)
+    }
     let _needsReviewBatchStarted = false
     try {
       if (currentAccountId && transactionId) {
@@ -495,57 +504,100 @@ export default function EditTransaction() {
         // Note: Item image upload functionality removed for now - focusing on transaction images
       }
 
-      // Upload other images
+      const otherOfflineMediaIds: string[] = []
+      const receiptOfflineMediaIds: string[] = []
+
+      // Upload other images with offline support
       let otherImages: TransactionImage[] = [...existingOtherImages]
       if (formData.otherImages && formData.otherImages.length > 0) {
         try {
-          const uploadResults = await ImageUploadService.uploadMultipleOtherImages(
-            formData.otherImages,
-            projectName,
-            transactionId,
-            handleImageUploadProgress
-          )
+          const newOtherImages: TransactionImage[] = []
+          for (const file of formData.otherImages) {
+            const uploadResult = await OfflineAwareImageService.uploadOtherAttachment(
+              file,
+              projectName || 'Unnamed Project',
+              transactionId,
+              currentAccountId
+            )
 
-          // Convert to TransactionImage format and combine with existing images
-          const newOtherImages = ImageUploadService.convertFilesToOtherImages(uploadResults)
-          otherImages = [...existingOtherImages, ...newOtherImages]
+            const metadata = uploadResult.url.startsWith('offline://')
+              ? {
+                  offlineMediaId: uploadResult.url.replace('offline://', ''),
+                  isOfflinePlaceholder: true
+                }
+              : undefined
+
+            if (metadata?.offlineMediaId) {
+              otherImageTracker.trackMediaId(metadata.offlineMediaId)
+              otherOfflineMediaIds.push(metadata.offlineMediaId)
+            }
+
+            newOtherImages.push({
+              url: uploadResult.url,
+              fileName: uploadResult.fileName,
+              uploadedAt: new Date(),
+              size: uploadResult.size,
+              mimeType: uploadResult.mimeType,
+              ...(metadata && { metadata })
+            })
+          }
+
+          if (newOtherImages.length > 0) {
+            otherImages = [...existingOtherImages, ...newOtherImages]
+          }
         } catch (error) {
           console.error('Error uploading other images:', error)
           setErrors({ otherImages: 'Failed to upload other images. Please try again.' })
-          setIsSubmitting(false)
-          setIsUploadingImages(false)
           return
         }
-      } else {
-        // Use existing images if no new ones uploaded
-        otherImages = existingOtherImages
       }
 
-      // Upload receipt images
+      // Upload receipt images with offline support
       let receiptImages: TransactionImage[] = [...existingReceiptImages]
       if (formData.receiptImages && formData.receiptImages.length > 0) {
         try {
-          const uploadResults = await ImageUploadService.uploadMultipleReceiptAttachments(
-            formData.receiptImages,
-            projectName,
-            transactionId,
-            handleImageUploadProgress
-          )
+          const newReceiptImages: TransactionImage[] = []
+          for (const file of formData.receiptImages) {
+            const uploadResult = await OfflineAwareImageService.uploadReceiptAttachment(
+              file,
+              projectName || 'Unnamed Project',
+              transactionId,
+              currentAccountId
+            )
 
-          // Convert to TransactionImage format and combine with existing images
-          const newReceiptImages = ImageUploadService.convertFilesToReceiptImages(uploadResults)
-          receiptImages = [...existingReceiptImages, ...newReceiptImages]
+            const metadata = uploadResult.url.startsWith('offline://')
+              ? {
+                  offlineMediaId: uploadResult.url.replace('offline://', ''),
+                  isOfflinePlaceholder: true
+                }
+              : undefined
+
+            if (metadata?.offlineMediaId) {
+              receiptTracker.trackMediaId(metadata.offlineMediaId)
+              receiptOfflineMediaIds.push(metadata.offlineMediaId)
+            }
+
+            newReceiptImages.push({
+              url: uploadResult.url,
+              fileName: uploadResult.fileName,
+              uploadedAt: new Date(),
+              size: uploadResult.size,
+              mimeType: uploadResult.mimeType,
+              ...(metadata && { metadata })
+            })
+          }
+
+          if (newReceiptImages.length > 0) {
+            receiptImages = [...existingReceiptImages, ...newReceiptImages]
+          }
         } catch (error) {
           console.error('Error uploading receipt images:', error)
           setErrors({ receiptImages: 'Failed to upload receipt images. Please try again.' })
-          setIsSubmitting(false)
-          setIsUploadingImages(false)
           return
         }
-      } else {
-        // Use existing images if no new ones uploaded
-        receiptImages = existingReceiptImages
       }
+
+      const hadOfflineUploads = receiptOfflineMediaIds.length > 0 || otherOfflineMediaIds.length > 0
 
       // Update transaction with new data and images
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -559,6 +611,15 @@ export default function EditTransaction() {
       }
 
       await transactionService.updateTransaction(currentAccountId, projectId, transactionId, updateData)
+
+      // Prevent offline placeholders from being cleaned up before sync completes
+      receiptOfflineMediaIds.forEach(mediaId => receiptTracker.removeMediaId(mediaId))
+      otherOfflineMediaIds.forEach(mediaId => otherImageTracker.removeMediaId(mediaId))
+
+      if (hadOfflineUploads) {
+        showOfflineSaved()
+      }
+
       navigateToReturnToOrFallback(navigate, location, defaultBackPath)
     } catch (error) {
       console.error('Error updating transaction:', error)
@@ -573,6 +634,7 @@ export default function EditTransaction() {
         }
       }
       setIsSubmitting(false)
+      setIsUploadingImages(false)
     }
   }
 
@@ -615,13 +677,6 @@ export default function EditTransaction() {
       setErrors(prev => ({ ...prev, receiptImages: undefined }))
     }
   }
-
-  const handleImageUploadProgress = (fileIndex: number, progress: UploadProgress) => {
-    // Progress tracking removed to fix TypeScript errors
-    console.log(`Upload progress for file ${fileIndex}: ${progress.percentage}%`)
-  }
-
-
 
   if (isLoading) {
     return (

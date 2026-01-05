@@ -19,13 +19,18 @@ export async function hydrateItemCache(
 ): Promise<void> {
   try {
     await offlineStore.init()
-    const cachedItem = await offlineStore.getItemById(itemId)
-    if (cachedItem) {
-      // Convert DBItem to Item format
-      const item = unifiedItemsService._convertOfflineItem(cachedItem)
-      // Prime the React Query cache
-      queryClient.setQueryData(['item', accountId, itemId], item)
+
+    // Block stale hydrations from resurrecting ghosts - check if item still exists in IndexedDB
+    const cachedItem = await offlineStore.getItemById(itemId).catch(() => null)
+    if (!cachedItem) {
+      console.info('Skipping hydration of deleted item (ghost prevention)', { itemId })
+      return
     }
+
+    // Convert DBItem to Item format
+    const item = unifiedItemsService._convertOfflineItem(cachedItem)
+    // Prime the React Query cache
+    queryClient.setQueryData(['item', accountId, itemId], item)
   } catch (error) {
     console.warn('Failed to hydrate item cache:', error)
   }
@@ -43,12 +48,34 @@ export async function hydrateProjectItemsCache(
     await offlineStore.init()
     const cachedItems = await offlineStore.getItems(projectId)
     if (cachedItems.length > 0) {
-      // Convert DBItems to Items format
-      const items = cachedItems
-        .filter(item => !item.accountId || item.accountId === accountId)
-        .map(item => unifiedItemsService._convertOfflineItem(item))
-      // Prime the React Query cache
-      queryClient.setQueryData(['project-items', accountId, projectId], items)
+      // Filter out items that no longer exist in IndexedDB (ghost prevention)
+      const validItems = []
+      for (const cachedItem of cachedItems) {
+        if (!cachedItem.accountId || cachedItem.accountId === accountId) {
+          // Double-check item still exists before including it
+          try {
+            const exists = await offlineStore.getItemById(cachedItem.itemId).catch(() => null)
+            if (exists) {
+              validItems.push(unifiedItemsService._convertOfflineItem(cachedItem))
+            } else {
+              console.info('Filtering out deleted item from project cache (ghost prevention)', {
+                itemId: cachedItem.itemId,
+                projectId
+              })
+            }
+          } catch (error) {
+            console.warn('Failed to verify item existence during hydration, excluding from cache', {
+              itemId: cachedItem.itemId,
+              error
+            })
+          }
+        }
+      }
+
+      if (validItems.length > 0) {
+        // Prime the React Query cache
+        queryClient.setQueryData(['project-items', accountId, projectId], validItems)
+      }
     }
   } catch (error) {
     console.warn('Failed to hydrate project items cache:', error)
@@ -66,14 +93,34 @@ export async function hydrateTransactionItemsCache(
   try {
     await offlineStore.init()
     const cachedItems = await offlineStore.getAllItems()
-    const transactionItems = cachedItems
-      .filter(item => item.transactionId === transactionId)
-      .filter(item => !item.accountId || item.accountId === accountId)
-      .map(item => unifiedItemsService._convertOfflineItem(item))
-    
-    if (transactionItems.length > 0) {
+
+    // Filter out items that no longer exist in IndexedDB (ghost prevention)
+    const validTransactionItems = []
+    for (const cachedItem of cachedItems) {
+      if (cachedItem.transactionId === transactionId && (!cachedItem.accountId || cachedItem.accountId === accountId)) {
+        // Double-check item still exists before including it
+        try {
+          const exists = await offlineStore.getItemById(cachedItem.itemId).catch(() => null)
+          if (exists) {
+            validTransactionItems.push(unifiedItemsService._convertOfflineItem(cachedItem))
+          } else {
+            console.info('Filtering out deleted item from transaction cache (ghost prevention)', {
+              itemId: cachedItem.itemId,
+              transactionId
+            })
+          }
+        } catch (error) {
+          console.warn('Failed to verify item existence during transaction items hydration, excluding from cache', {
+            itemId: cachedItem.itemId,
+            error
+          })
+        }
+      }
+    }
+
+    if (validTransactionItems.length > 0) {
       // Prime the React Query cache
-      queryClient.setQueryData(['transaction-items', accountId, transactionId], transactionItems)
+      queryClient.setQueryData(['transaction-items', accountId, transactionId], validTransactionItems)
     }
   } catch (error) {
     console.warn('Failed to hydrate transaction items cache:', error)
@@ -90,14 +137,33 @@ export async function hydrateBusinessInventoryCache(
   try {
     await offlineStore.init()
     const cachedItems = await offlineStore.getAllItems()
-    const businessItems = cachedItems
-      .filter(item => !item.projectId)
-      .filter(item => !item.accountId || item.accountId === accountId)
-      .map(item => unifiedItemsService._convertOfflineItem(item))
-    
-    if (businessItems.length > 0) {
+
+    // Filter out items that no longer exist in IndexedDB (ghost prevention)
+    const validBusinessItems = []
+    for (const cachedItem of cachedItems) {
+      if ((!cachedItem.projectId) && (!cachedItem.accountId || cachedItem.accountId === accountId)) {
+        // Double-check item still exists before including it
+        try {
+          const exists = await offlineStore.getItemById(cachedItem.itemId).catch(() => null)
+          if (exists) {
+            validBusinessItems.push(unifiedItemsService._convertOfflineItem(cachedItem))
+          } else {
+            console.info('Filtering out deleted item from business inventory cache (ghost prevention)', {
+              itemId: cachedItem.itemId
+            })
+          }
+        } catch (error) {
+          console.warn('Failed to verify item existence during business inventory hydration, excluding from cache', {
+            itemId: cachedItem.itemId,
+            error
+          })
+        }
+      }
+    }
+
+    if (validBusinessItems.length > 0) {
       // Prime the React Query cache
-      queryClient.setQueryData(['business-inventory', accountId], businessItems)
+      queryClient.setQueryData(['business-inventory', accountId], validBusinessItems)
     }
   } catch (error) {
     console.warn('Failed to hydrate business inventory cache:', error)
@@ -185,6 +251,14 @@ export async function hydrateTransactionCache(
 ): Promise<void> {
   try {
     await offlineStore.init()
+
+    // Block stale hydrations from resurrecting ghosts - check if transaction still exists in IndexedDB
+    const cachedTransaction = await offlineStore.getTransactionById(transactionId).catch(() => null)
+    if (!cachedTransaction) {
+      console.info('Skipping hydration of deleted transaction (ghost prevention)', { transactionId })
+      return
+    }
+
     // Use the existing offline method which handles conversion and enrichment
     const { transaction } = await transactionService._getTransactionByIdOffline(accountId, transactionId)
     if (transaction) {
@@ -407,9 +481,19 @@ export async function hydrateProjectTransactionsCache(
     // Convert each cached transaction using the service helper
     const { transactionService } = await import('../services/inventoryService')
     const transactions: Transaction[] = []
-    
+
     for (const txId of projectTxIds) {
       try {
+        // Double-check transaction still exists in IndexedDB before including it (ghost prevention)
+        const exists = await offlineStore.getTransactionById(txId).catch(() => null)
+        if (!exists) {
+          console.info('Filtering out deleted transaction from project cache (ghost prevention)', {
+            transactionId: txId,
+            projectId
+          })
+          continue
+        }
+
         const { transaction } = await transactionService._getTransactionByIdOffline(accountId, txId)
         if (transaction) {
           transactions.push(transaction)
@@ -447,9 +531,19 @@ export async function getCachedProjectTransactions(
     
     const { transactionService } = await import('../services/inventoryService')
     const transactions: Transaction[] = []
-    
+
     for (const txId of projectTxIds) {
       try {
+        // Double-check transaction still exists in IndexedDB before including it (ghost prevention)
+        const exists = await offlineStore.getTransactionById(txId).catch(() => null)
+        if (!exists) {
+          console.info('Filtering out deleted transaction from cached list (ghost prevention)', {
+            transactionId: txId,
+            projectId
+          })
+          continue
+        }
+
         const { transaction } = await transactionService._getTransactionByIdOffline(accountId, txId)
         if (transaction) {
           transactions.push(transaction)

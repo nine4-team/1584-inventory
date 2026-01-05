@@ -8,6 +8,8 @@ import { offlineStore, type DBItem, type DBTransaction, type DBProject } from '.
 import { isNetworkOnline, withNetworkTimeout, NetworkTimeoutError } from './networkStatusService'
 import { OfflineQueueUnavailableError } from './offlineItemService'
 import { operationQueue, OfflineContextError } from './operationQueue'
+import { refreshProjectSnapshot } from '@/utils/realtimeSnapshotUpdater'
+import { removeTransactionFromCaches } from '@/utils/queryCacheHelpers'
 import type { Item, Project, FilterOptions, PaginationOptions, Transaction, TransactionItemFormData, TransactionCompleteness, CompletenessStatus, ItemImage } from '@/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
@@ -1510,6 +1512,24 @@ export const transactionService = {
       // Round to cents
       transactionSubtotal = Math.round(transactionSubtotal * 100) / 100
       inferredTax = Math.round(inferredTax * 100) / 100
+    } else if (transaction.taxRatePreset) {
+      try {
+        const preset = await getTaxPresetById(accountId, transaction.taxRatePreset)
+        if (preset) {
+          const taxRate = preset.rate / 100
+          transactionSubtotal = transactionAmount / (1 + taxRate)
+          inferredTax = transactionAmount - transactionSubtotal
+          transactionSubtotal = Math.round(transactionSubtotal * 100) / 100
+          inferredTax = Math.round(inferredTax * 100) / 100
+        } else {
+          transactionSubtotal = transactionAmount
+          missingTaxData = true
+        }
+      } catch (presetError) {
+        console.warn('getTransactionCompleteness - failed to resolve tax preset:', presetError)
+        transactionSubtotal = transactionAmount
+        missingTaxData = true
+      }
     } else {
       // Fall back to gross total when tax data is missing
       transactionSubtotal = transactionAmount
@@ -2155,18 +2175,13 @@ export const transactionService = {
           }
         } else {
           // Look up preset by ID
-          try {
-            const preset = await getTaxPresetById(accountId, finalUpdates.taxRatePreset)
-            if (preset) {
-              finalUpdates.taxRatePct = preset.rate
-              // Remove subtotal when using presets
-              finalUpdates.subtotal = undefined
-            } else {
-              console.warn(`Tax preset with ID '${finalUpdates.taxRatePreset}' not found during update`)
-            }
-          } catch (e) {
-            console.warn('Tax preset lookup failed during update:', e)
+          const preset = await getTaxPresetById(accountId, finalUpdates.taxRatePreset)
+          if (!preset) {
+            throw new Error(`Tax preset with ID '${finalUpdates.taxRatePreset}' not found.`)
           }
+          finalUpdates.taxRatePct = preset.rate
+          // Remove subtotal when using presets
+          finalUpdates.subtotal = undefined
         }
       }
 
@@ -2278,6 +2293,15 @@ export const transactionService = {
         // Continue with delete so the transaction does not linger, but surface the warning.
       }
 
+      // Get projectId before deleting for cache cleanup
+      let projectIdFromCache: string | null = null
+      try {
+        const existingTransaction = await offlineStore.getTransactionById(transactionId).catch(() => null)
+        projectIdFromCache = existingTransaction?.projectId ?? null
+      } catch (error) {
+        console.warn('Failed to get projectId for transaction before online delete (non-fatal)', error)
+      }
+
       await withNetworkTimeout(async () => {
         const { error } = await supabase
           .from('transactions')
@@ -2287,6 +2311,37 @@ export const transactionService = {
 
         if (error) throw error
       })
+
+      // Online happy path must purge the cache immediately after successful server delete
+      try {
+        await offlineStore.deleteTransaction(transactionId)
+        await offlineStore.deleteConflictsForTransactions(accountId, [transactionId])
+        refreshProjectSnapshot(projectIdFromCache)
+
+        // Invalidate React Query immediately to prevent stale data
+        const queryClient = tryGetQueryClient()
+        if (queryClient) {
+          removeTransactionFromCaches(queryClient, accountId, transactionId, projectIdFromCache)
+          queryClient.invalidateQueries({ queryKey: ['transaction', accountId, transactionId] })
+          if (projectIdFromCache) {
+            queryClient.invalidateQueries({ queryKey: ['project-transactions', accountId, projectIdFromCache] })
+          }
+          queryClient.invalidateQueries({ queryKey: ['transaction-items', accountId, transactionId] })
+          queryClient.invalidateQueries({ queryKey: ['transactions', accountId] })
+        }
+
+        console.info('Transaction deleted online', {
+          transactionId,
+          accountId,
+          projectId: projectIdFromCache
+        })
+      } catch (cleanupError) {
+        console.warn('Failed to purge transaction from offline store after online delete (non-fatal)', {
+          transactionId,
+          cleanupError
+        })
+        // Server delete succeeded, so we don't fail the operation, but log for debugging
+      }
     } catch (error) {
       if (error instanceof NetworkTimeoutError) {
         console.warn('Supabase delete timed out, queuing transaction delete for offline sync.')
