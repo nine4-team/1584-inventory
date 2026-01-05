@@ -86,7 +86,21 @@ export class OfflineTransactionService {
     const timestamp = new Date().toISOString()
     const transactionId = `T-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
 
+    // Calculate initial sum from provided items (if any) or default to '0.00'
+    let sum = 0
+    if (items && items.length > 0) {
+      for (const itemData of items) {
+        const price = itemData.purchasePrice || itemData.projectPrice || '0'
+        const parsed = parseFloat(price)
+        if (!isNaN(parsed)) {
+          sum += parsed
+        }
+      }
+    }
+    const initialSumItemPurchasePrices = sum.toFixed(2)
+
     // Convert transaction data to DB format
+    // Ensure sumItemPurchasePrices is always set (never undefined) to prevent null constraint violations
     const tempTransaction: DBTransaction = {
       transactionId,
       accountId,
@@ -109,7 +123,7 @@ export class OfflineTransactionService {
       taxRatePct: transactionData.taxRatePct,
       subtotal: transactionData.subtotal,
       needsReview: transactionData.needsReview ?? false,
-      sumItemPurchasePrices: transactionData.sumItemPurchasePrices,
+      sumItemPurchasePrices: transactionData.sumItemPurchasePrices ?? initialSumItemPurchasePrices,
       itemIds: transactionData.itemIds || [],
       version: 1,
       last_synced_at: null // Not synced yet
@@ -162,13 +176,33 @@ export class OfflineTransactionService {
           })
         }
 
-        // Update transaction with created item IDs
+        // Recompute sum from the items array that was just processed
+        // This ensures the cached sum matches the optimistic child items
+        let recomputedSum = 0
+        for (const itemData of items) {
+          const price = itemData.purchasePrice || itemData.projectPrice || '0'
+          const parsed = parseFloat(price)
+          if (!isNaN(parsed)) {
+            recomputedSum += parsed
+          }
+        }
+        tempTransaction.sumItemPurchasePrices = recomputedSum.toFixed(2)
+
+        // Update transaction with created item IDs and recomputed sum
         const createdItemIds = createdChildItems
           .map(child => child.itemId)
           .filter((id): id is string => Boolean(id))
 
         tempTransaction.itemIds = createdItemIds
         await offlineStore.saveTransactions([tempTransaction])
+        
+        if (import.meta.env.DEV) {
+          console.debug('[offlineTransactionService] Updated transaction with recomputed sumItemPurchasePrices', {
+            transactionId,
+            sumItemPurchasePrices: tempTransaction.sumItemPurchasePrices,
+            itemCount: createdItemIds.length
+          })
+        }
       } catch (itemError) {
         console.error('Failed to create child items for transaction:', itemError)
         // Rollback transaction if item creation fails
