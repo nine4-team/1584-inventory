@@ -967,6 +967,8 @@ class OperationQueue {
       }
 
       // Create on server using the FULL transaction data from local store
+      // Use fallback '0.00' for sum_item_purchase_prices to prevent NOT NULL constraint violations
+      // This is the last line of defense for stale caches (e.g., already-queued entries)
       const { data: serverTransaction, error } = await supabase
         .from('transactions')
         .insert({
@@ -989,7 +991,7 @@ class OperationQueue {
           tax_rate_pct: localTransaction.taxRatePct ?? null,
           subtotal: localTransaction.subtotal ?? null,
           needs_review: localTransaction.needsReview ?? null,
-          sum_item_purchase_prices: localTransaction.sumItemPurchasePrices ?? null,
+          sum_item_purchase_prices: localTransaction.sumItemPurchasePrices ?? '0.00',
           item_ids: localTransaction.itemIds ?? null,
           created_at: localTransaction.createdAt || new Date().toISOString(),
           created_by: localTransaction.createdBy || updatedBy,
