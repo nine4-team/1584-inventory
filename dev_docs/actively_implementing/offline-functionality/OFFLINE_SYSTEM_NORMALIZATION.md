@@ -34,6 +34,11 @@ Add more bullets here as we discover additional regressions.
    - `useConflictResolution` + `ConflictResolutionView` now trim IDs when hydrating conflicts, which keeps `resolveAllConflicts` from feeding undefined IDs into `conflictResolver.applyResolution`.  
    - Result: “Resolve all” succeeds again and conflict entries are cleaned as they’re read from IndexedDB.
 
+7. **Offline network gating still hit Supabase auth refresh** ✅ **FIXED 2026‑01‑04**  
+   - `networkStatusService.runConnectivityCheck` now pings the uncached Google `generate_204` endpoint instead of the service-worker’d `/ping.json`, so `isNetworkOnline()` flips to `false` as soon as real connectivity drops.  
+   - Connectivity checks no longer call `supabase.auth.getSession()` during offline probes, so we stop spamming the console with refresh attempts while intentionally offline.  
+   - Result: Add Transaction and every other offline path short‑circuit into the offline queue without attempting to hit Supabase when the device is disconnected.
+
 ## Purpose
 This document captures the established offline patterns discovered through code analysis and provides a roadmap for normalizing offline functionality across all entities (items, transactions, projects) in the application.
 
