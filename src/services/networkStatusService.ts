@@ -1,4 +1,3 @@
-import { supabase } from './supabase'
 import { getSyncSchedulerSnapshot, reportNetworkStatus } from './syncScheduler'
 
 export interface NetworkStatusSnapshot {
@@ -14,7 +13,7 @@ export interface NetworkStatusSnapshot {
 type NetworkStatusListener = (snapshot: NetworkStatusSnapshot) => void
 type ConnectivityCheckReason = 'init' | 'interval' | 'manual' | 'online-event' | 'retry'
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
+const REMOTE_HEALTH_URL = 'https://www.gstatic.com/generate_204'
 
 let snapshot: NetworkStatusSnapshot = {
   isOnline: typeof navigator === 'undefined' ? true : navigator.onLine,
@@ -155,40 +154,20 @@ async function runConnectivityCheck(reason: ConnectivityCheckReason): Promise<vo
   }
 
   if (navigatorOnline) {
+    const remotePingUrl = `${REMOTE_HEALTH_URL}?cb=${Date.now()}`
     try {
-      const cacheBuster = Date.now()
-      const response = await fetch(`/ping.json?cb=${cacheBuster}`, {
+      const response = await fetch(remotePingUrl, {
         method: 'GET',
         cache: 'no-store',
+        mode: 'no-cors',
         signal: AbortSignal.timeout(5000)
       })
-      actualOnline = response.ok
-      lastOfflineReason = response.ok ? null : 'ping-failed'
+      const pingSucceeded = response.type === 'opaque' || response.ok
+      actualOnline = pingSucceeded
+      lastOfflineReason = pingSucceeded ? null : 'remote-health-failed'
     } catch {
       actualOnline = false
-      lastOfflineReason = 'ping-exception'
-
-      if (SUPABASE_URL) {
-        try {
-          const { data: { session } } = await supabase.auth.getSession()
-          const token = session?.access_token
-          if (token) {
-            const response = await fetch(`${SUPABASE_URL}/functions/v1/ping`, {
-              method: 'GET',
-              headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json'
-              },
-              cache: 'no-store',
-              signal: AbortSignal.timeout(5000)
-            })
-            actualOnline = response.ok
-            lastOfflineReason = response.ok ? null : 'supabase-ping-failed'
-          }
-        } catch {
-          lastOfflineReason = 'supabase-ping-exception'
-        }
-      }
+      lastOfflineReason = 'remote-health-exception'
     }
   } else {
     lastOfflineReason = 'navigator-offline'
