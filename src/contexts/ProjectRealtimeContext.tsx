@@ -85,6 +85,7 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
   const subscriptionsRef = useRef<Record<string, ProjectSubscriptions>>({})
   const cleanupTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const initializingRef = useRef<Record<string, boolean>>({})
+  const cacheRefreshRef = useRef<Record<string, boolean>>({})
 
   const setEntry = useCallback(
     (projectId: string, updater: (entry: ProjectRealtimeEntry) => ProjectRealtimeEntry) => {
@@ -653,28 +654,42 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
     })
   }, [initializeProject, snapshots])
 
-  // Handle network status transitions: re-initialize cache-hydrated projects when network comes back online
+  // Handle network status transitions: refresh cache-hydrated projects when network comes back online
   useEffect(() => {
     const unsubscribe = subscribeToNetworkStatus(networkStatus => {
-      // When network comes back online, re-initialize projects that were hydrated from cache
+      // When network comes back online, refresh projects that were hydrated from cache
+      // Use refreshCollections instead of initializeProject to avoid toggling isLoading
       if (networkStatus.isOnline) {
         Object.entries(snapshots).forEach(([projectId, entry]) => {
           if (
             entry.refCount > 0 &&
             entry.initialized &&
             entry.hydratedFromCache &&
-            !initializingRef.current[projectId]
+            !initializingRef.current[projectId] &&
+            !cacheRefreshRef.current[projectId]
           ) {
-            // Re-initialize to get fresh data from network
-            // Keep showing cached data until network data arrives (no flash of empty state)
-            void initializeProject(projectId)
+            // Refresh collections without toggling isLoading, so cached UI stays visible
+            cacheRefreshRef.current[projectId] = true
+            void refreshCollections(projectId, { includeProject: true })
+              .then(() => {
+                setEntry(projectId, projEntry => ({
+                  ...projEntry,
+                  hydratedFromCache: false,
+                }))
+              })
+              .catch(error => {
+                console.error('ProjectRealtimeProvider: cache refresh after reconnect failed', error)
+              })
+              .finally(() => {
+                cacheRefreshRef.current[projectId] = false
+              })
           }
         })
       }
     })
 
     return unsubscribe
-  }, [initializeProject, snapshots])
+  }, [refreshCollections, snapshots, setEntry])
 
   const contextValue = useMemo<ProjectRealtimeContextValue>(
     () => ({

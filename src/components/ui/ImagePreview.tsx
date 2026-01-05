@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { Plus, ChevronDown, Trash2, Star, ExternalLink, Crown, FileText } from 'lucide-react'
 import { ItemImage, TransactionImage } from '@/types'
 import ImageGallery from './ImageGallery'
+import { offlineMediaService } from '@/services/offlineMediaService'
 
 interface ImagePreviewProps {
   images: ItemImage[]
@@ -37,12 +38,87 @@ export default function ImagePreview({
   const [showGallery, setShowGallery] = useState(false)
   const [galleryInitialIndex, setGalleryInitialIndex] = useState(0)
   const [openMenuIndex, setOpenMenuIndex] = useState<number | null>(null)
+  const [resolvedUrls, setResolvedUrls] = useState<Record<string, string>>({})
+  const resolvedUrlsRef = useRef<Record<string, string>>({})
 
   const sizeClasses = {
     sm: 'w-20 h-20 sm:w-16 sm:h-16',
     md: 'w-24 h-24 sm:w-20 sm:h-20',
     lg: 'w-28 h-28 sm:w-24 sm:h-24'
   }
+
+  useEffect(() => {
+    resolvedUrlsRef.current = resolvedUrls
+  }, [resolvedUrls])
+
+  useEffect(() => {
+    let isMounted = true
+
+    const resolveOfflineImages = async () => {
+      for (const image of images) {
+        if (!image.url.startsWith('offline://')) continue
+        if (resolvedUrls[image.url]) continue
+
+        const mediaId = image.url.replace('offline://', '')
+        try {
+          const mediaFile = await offlineMediaService.getMediaFile(mediaId)
+          if (!mediaFile?.blob || !isMounted) continue
+
+          const objectUrl = URL.createObjectURL(mediaFile.blob)
+          setResolvedUrls(prev => {
+            if (prev[image.url]) {
+              URL.revokeObjectURL(objectUrl)
+              return prev
+            }
+            return {
+              ...prev,
+              [image.url]: objectUrl
+            }
+          })
+        } catch (error) {
+          console.warn('Failed to resolve offline image preview:', error)
+        }
+      }
+    }
+
+    resolveOfflineImages()
+
+    return () => {
+      isMounted = false
+    }
+  }, [images, resolvedUrls])
+
+  useEffect(() => {
+    setResolvedUrls(prev => {
+      const currentUrls = new Set(images.map(image => image.url))
+      let changed = false
+      const next: Record<string, string> = {}
+
+      Object.entries(prev).forEach(([key, value]) => {
+        if (currentUrls.has(key)) {
+          next[key] = value
+        } else {
+          URL.revokeObjectURL(value)
+          changed = true
+        }
+      })
+
+      return changed ? next : prev
+    })
+  }, [images])
+
+  useEffect(() => {
+    return () => {
+      Object.values(resolvedUrlsRef.current).forEach(url => URL.revokeObjectURL(url))
+    }
+  }, [])
+
+  const resolvedGalleryImages = useMemo(() => {
+    return images.map(image => ({
+      ...image,
+      url: resolvedUrls[image.url] || image.url
+    }))
+  }, [images, resolvedUrls])
 
   const handleImageClick = (index: number) => {
     setGalleryInitialIndex(index)
@@ -107,7 +183,7 @@ export default function ImagePreview({
                 onClick={() => handleImageClick(index)}
               >
                 <img
-                  src={image.url}
+                  src={resolvedUrls[image.url] || image.url}
                   alt={image.alt || image.fileName}
                   className="w-full h-full object-cover transition-transform group-hover:scale-105"
                 />
@@ -209,7 +285,7 @@ export default function ImagePreview({
       {/* Image gallery modal */}
       {showGallery && (
         <ImageGallery
-          images={images}
+          images={resolvedGalleryImages}
           initialIndex={galleryInitialIndex}
           onClose={handleGalleryClose}
         />

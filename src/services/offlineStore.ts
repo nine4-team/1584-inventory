@@ -1,4 +1,4 @@
-import type { ItemImage } from '@/types'
+import type { ItemImage, TransactionImage } from '@/types'
 
 interface DBItem {
   itemId: string
@@ -41,6 +41,7 @@ interface DBTransaction {
   transactionId: string
   accountId: string
   projectId?: string | null
+  projectName?: string | null
   transactionDate: string
   source: string
   transactionType: string
@@ -49,6 +50,9 @@ interface DBTransaction {
   budgetCategory?: string
   categoryId?: string
   notes?: string
+  transactionImages?: TransactionImage[] // Legacy field for backward compatibility
+  receiptImages?: TransactionImage[]
+  otherImages?: TransactionImage[]
   receiptEmailed: boolean
   createdAt: string
   createdBy: string

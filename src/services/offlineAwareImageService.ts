@@ -21,8 +21,8 @@ export class OfflineAwareImageService {
 
     if (!isOnline) {
       // Store offline and queue for upload
-      const mediaId = await offlineMediaService.queueMediaUpload(accountId, itemId, file)
-      
+      const { mediaId } = await offlineMediaService.queueMediaUpload(accountId, itemId, file)
+
       // Return a placeholder URL that indicates offline storage
       // The actual upload will happen when online
       return {
@@ -79,5 +79,65 @@ export class OfflineAwareImageService {
       // Allow upload if check fails (fail open)
       return { allowed: true }
     }
+  }
+
+  /**
+   * Upload a receipt attachment (PDF or image), storing it offline if network is unavailable
+   * Uses transactionId as the identifier for offline storage
+   */
+  static async uploadReceiptAttachment(
+    file: File,
+    projectName: string,
+    transactionId: string,
+    accountId: string,
+    onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void
+  ): Promise<{ url: string; fileName: string; size: number; mimeType: string }> {
+    const isOnline = isNetworkOnline()
+
+    if (!isOnline) {
+      // Store offline and queue for upload
+      // Use transactionId as the "itemId" parameter since it's just an identifier
+      const { mediaId } = await offlineMediaService.queueMediaUpload(accountId, transactionId, file)
+
+      return {
+        url: `offline://${mediaId}`,
+        fileName: file.name,
+        size: file.size,
+        mimeType: file.type
+      }
+    }
+
+    // Online: upload immediately
+    return await ImageUploadService.uploadReceiptAttachment(file, projectName, transactionId, onProgress)
+  }
+
+  /**
+   * Upload an "other" attachment, storing it offline if network is unavailable
+   * Uses transactionId as the identifier for offline storage
+   */
+  static async uploadOtherAttachment(
+    file: File,
+    projectName: string,
+    transactionId: string,
+    accountId: string,
+    onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void
+  ): Promise<{ url: string; fileName: string; size: number; mimeType: string }> {
+    const isOnline = isNetworkOnline()
+
+    if (!isOnline) {
+      // Store offline and queue for upload
+      // Use transactionId as the "itemId" parameter since it's just an identifier
+      const { mediaId } = await offlineMediaService.queueMediaUpload(accountId, transactionId, file)
+
+      return {
+        url: `offline://${mediaId}`,
+        fileName: file.name,
+        size: file.size,
+        mimeType: file.type
+      }
+    }
+
+    // Online: upload immediately
+    return await ImageUploadService.uploadOtherImage(file, projectName, transactionId, onProgress)
   }
 }

@@ -1,9 +1,11 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Camera, ChevronDown, Receipt, Bookmark, Edit, Copy, X } from 'lucide-react'
 import ContextLink from '@/components/ContextLink'
 import { normalizeDisposition, displayDispositionLabel, DISPOSITION_OPTIONS, dispositionsEqual } from '@/utils/dispositionUtils'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
 import { useTransactionDisplayInfo } from '@/hooks/useTransactionDisplayInfo'
+import { offlineMediaService } from '@/services/offlineMediaService'
 import type { ItemDisposition, ItemImage } from '@/types'
 
 // Common interface for item data that can be displayed
@@ -86,6 +88,60 @@ export default function ItemPreviewCard({
   transactionRoute: providedTransactionRoute,
   isLoadingTransaction: providedIsLoadingTransaction
 }: ItemPreviewCardProps) {
+  const [resolvedUrls, setResolvedUrls] = useState<Record<string, string>>({})
+  const resolvedUrlsRef = useRef<Record<string, string>>({})
+
+  useEffect(() => {
+    resolvedUrlsRef.current = resolvedUrls
+  }, [resolvedUrls])
+
+  // Resolve offline image URLs
+  useEffect(() => {
+    let isMounted = true
+
+    const resolveOfflineImages = async () => {
+      if (!item.images) return
+
+      for (const image of item.images) {
+        if (!image.url.startsWith('offline://')) continue
+        if (resolvedUrls[image.url]) continue
+
+        const mediaId = image.url.replace('offline://', '')
+        try {
+          const mediaFile = await offlineMediaService.getMediaFile(mediaId)
+          if (!mediaFile?.blob || !isMounted) continue
+
+          const objectUrl = URL.createObjectURL(mediaFile.blob)
+          setResolvedUrls(prev => {
+            if (prev[image.url]) {
+              URL.revokeObjectURL(objectUrl)
+              return prev
+            }
+            return {
+              ...prev,
+              [image.url]: objectUrl
+            }
+          })
+        } catch (error) {
+          console.warn('Failed to resolve offline image preview:', error)
+        }
+      }
+    }
+
+    resolveOfflineImages()
+
+    return () => {
+      isMounted = false
+    }
+  }, [item.images, resolvedUrls])
+
+  // Clean up object URLs on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(resolvedUrlsRef.current).forEach(url => URL.revokeObjectURL(url))
+    }
+  }, [])
+
   // Determine which controls to show based on context (canonical configuration)
   const showTransactionLink = context !== 'transaction' // Hide in transaction context
   const showBookmark = (context === 'project' || context === 'businessInventory' || context === 'transaction') && !!onBookmark
@@ -360,11 +416,17 @@ export default function ItemPreviewCard({
         {/* Left column: Image */}
         <div className="flex-shrink-0">
           {item.images && item.images.length > 0 ? (
-            <img
-              src={item.images.find(img => img.isPrimary)?.url || item.images[0].url}
-              alt={item.images[0].alt || item.images[0].fileName}
-              className="h-12 w-12 rounded-md object-cover border border-gray-200"
-            />
+            (() => {
+              const primaryImage = item.images.find(img => img.isPrimary) || item.images[0]
+              const resolvedUrl = resolvedUrls[primaryImage.url] || primaryImage.url
+              return (
+                <img
+                  src={resolvedUrl}
+                  alt={primaryImage.alt || primaryImage.fileName}
+                  className="h-12 w-12 rounded-md object-cover border border-gray-200"
+                />
+              )
+            })()
           ) : (
             onAddImage ? (
               <button

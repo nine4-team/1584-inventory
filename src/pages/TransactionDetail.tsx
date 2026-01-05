@@ -6,11 +6,16 @@ import { useParams } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
 import ContextLink from '@/components/ContextLink'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
-import { Transaction, Project, Item, TransactionItemFormData, BudgetCategory, ItemDisposition } from '@/types'
+import { Transaction, Project, Item, TransactionItemFormData, BudgetCategory, ItemDisposition, ItemImage, TransactionImage } from '@/types'
 import { transactionService, projectService, unifiedItemsService } from '@/services/inventoryService'
 import { budgetCategoriesService } from '@/services/budgetCategoriesService'
 import { lineageService } from '@/services/lineageService'
 import { ImageUploadService } from '@/services/imageService'
+import { OfflineAwareImageService } from '@/services/offlineAwareImageService'
+import { offlineMediaService } from '@/services/offlineMediaService'
+import { offlineStore } from '@/services/offlineStore'
+import { offlineTransactionService } from '@/services/offlineTransactionService'
+import { useOfflineMediaTracker } from '@/hooks/useOfflineMediaTracker'
 import { formatDate, formatCurrency } from '@/utils/dateUtils'
 import { useToast } from '@/components/ui/ToastContext'
 import TransactionItemForm from '@/components/TransactionItemForm'
@@ -225,6 +230,11 @@ export default function TransactionDetail() {
   const { showOfflineSaved } = useOfflineFeedback()
   const { isOnline } = useNetworkState()
   const { buildContextUrl, getBackDestination } = useNavigationContext()
+  
+  // Track offline media IDs for cleanup
+  const itemImageTracker = useOfflineMediaTracker()
+  const receiptTracker = useOfflineMediaTracker()
+  const otherImageTracker = useOfflineMediaTracker()
 
   // Navigation context logic
 
@@ -613,39 +623,115 @@ export default function TransactionDetail() {
   }
 
   const handleReceiptsUpload = async (files: File[]) => {
-    if (!projectId || !transactionId || !project || files.length === 0) return
+    if (!projectId || !transactionId || !project || files.length === 0 || !currentAccountId) return
 
     setIsUploadingReceiptImages(true)
 
     try {
-      // Upload receipts (images + PDFs)
-      const uploadResults = await ImageUploadService.uploadMultipleReceiptAttachments(
-        files,
-        project.name,
-        transactionId
-      )
+      const newReceiptImages: TransactionImage[] = []
+      const projectName = project.name
 
-      // Convert to TransactionImage format
-      const newReceiptImages = ImageUploadService.convertFilesToReceiptImages(uploadResults)
+      // Upload sequentially to track offline media IDs properly
+      for (const file of files) {
+        try {
+          const uploadResult = await OfflineAwareImageService.uploadReceiptAttachment(
+            file,
+            projectName,
+            transactionId,
+            currentAccountId
+          )
 
-      // Update transaction with new receipts
-      const currentReceiptImages = transaction?.receiptImages || []
-      const updatedReceiptImages = [...currentReceiptImages, ...newReceiptImages]
+          const metadata = uploadResult.url.startsWith('offline://')
+            ? {
+                offlineMediaId: uploadResult.url.replace('offline://', ''),
+                isOfflinePlaceholder: true
+              }
+            : undefined
 
-      const updateProjectId = transaction?.projectId || projectId
-      if (!currentAccountId) return
-      await transactionService.updateTransaction(currentAccountId, updateProjectId || '', transactionId, {
-        receiptImages: updatedReceiptImages,
-        transactionImages: updatedReceiptImages // Also update legacy field for compatibility
-      })
+          if (metadata?.offlineMediaId) {
+            receiptTracker.trackMediaId(metadata.offlineMediaId)
+          }
 
-      // Refresh transaction data (use actual project_id from transaction)
-      const refreshProjectId = transaction?.projectId || projectId
-      const updatedTransaction = await transactionService.getTransaction(currentAccountId, refreshProjectId || '', transactionId)
-      setTransaction(updatedTransaction)
-      await refreshRealtimeAfterWrite()
+          newReceiptImages.push({
+            url: uploadResult.url,
+            fileName: uploadResult.fileName,
+            uploadedAt: new Date(),
+            size: uploadResult.size,
+            mimeType: uploadResult.mimeType,
+            ...(metadata && { metadata })
+          } as TransactionImage & { metadata?: { offlineMediaId: string; isOfflinePlaceholder: boolean } })
+        } catch (uploadError) {
+          console.error(`Failed to upload receipt ${file.name}:`, uploadError)
+          // Continue with other files
+        }
+      }
 
-      showSuccess('Receipts uploaded successfully')
+      if (newReceiptImages.length > 0) {
+        // Update transaction with new receipts
+        const currentReceiptImages = transaction?.receiptImages || []
+        const updatedReceiptImages = [...currentReceiptImages, ...newReceiptImages]
+
+        // Check if we're online to determine whether to queue the update or apply it immediately
+        const hasOfflinePlaceholders = newReceiptImages.some(img => (img as any).metadata?.isOfflinePlaceholder)
+
+        // Always update local transaction record for immediate UI feedback
+        const offlineTransaction = await offlineStore.getTransactionById(transactionId).catch(() => null)
+        if (offlineTransaction) {
+          const updatedOfflineTransaction = {
+            ...offlineTransaction,
+            receiptImages: updatedReceiptImages,
+            transactionImages: updatedReceiptImages // Also update legacy field for compatibility
+          }
+          await offlineStore.saveTransactions([updatedOfflineTransaction])
+
+          // Update UI state immediately
+          setTransaction({
+            ...transaction,
+            receiptImages: updatedReceiptImages,
+            transactionImages: updatedReceiptImages
+          } as Transaction)
+        }
+
+        const shouldQueueUpdate = hasOfflinePlaceholders || !isOnline
+
+        if (!shouldQueueUpdate) {
+          // Online with no placeholders - use normal transaction service
+          const updateProjectId = transaction?.projectId || projectId
+          await transactionService.updateTransaction(currentAccountId, updateProjectId || '', transactionId, {
+            receiptImages: updatedReceiptImages,
+            transactionImages: updatedReceiptImages // Also update legacy field for compatibility
+          })
+
+          // Remove tracked IDs after successful save
+          newReceiptImages.forEach(img => {
+            if ((img as any).metadata?.offlineMediaId) {
+              receiptTracker.removeMediaId((img as any).metadata.offlineMediaId)
+            }
+          })
+
+          // Refresh transaction data (use actual project_id from transaction)
+          const refreshProjectId = transaction?.projectId || projectId
+          const updatedTransaction = await transactionService.getTransaction(currentAccountId, refreshProjectId || '', transactionId)
+          setTransaction(updatedTransaction)
+          await refreshRealtimeAfterWrite()
+        } else {
+          // Offline or has placeholders - queue the update operation for sync
+          await offlineTransactionService.updateTransaction(currentAccountId, transactionId, {
+            receiptImages: updatedReceiptImages,
+            transactionImages: updatedReceiptImages // Also update legacy field for compatibility
+          })
+
+          // Keep tracked IDs for cleanup after sync
+          // They'll be removed when the queued operation completes successfully
+        }
+
+        // Show offline feedback if any receipts were queued
+        if (hasOfflinePlaceholders) {
+          showOfflineSaved()
+        } else {
+          showSuccess('Receipts uploaded successfully')
+        }
+      }
     } catch (error) {
       console.error('Error uploading receipts:', error)
       showError('Failed to upload receipts. Please try again.')
@@ -655,38 +741,111 @@ export default function TransactionDetail() {
   }
 
   const handleOtherImagesUpload = async (files: File[]) => {
-    if (!projectId || !transactionId || !project || files.length === 0) return
+    if (!projectId || !transactionId || !project || files.length === 0 || !currentAccountId) return
 
     setIsUploadingOtherImages(true)
 
     try {
-      // Upload other images
-      const uploadResults = await ImageUploadService.uploadMultipleOtherImages(
-        files,
-        project.name,
-        transactionId
-      )
+      const newOtherImages: TransactionImage[] = []
+      const projectName = project.name
 
-      // Convert to TransactionImage format
-      const newOtherImages = ImageUploadService.convertFilesToOtherImages(uploadResults)
+      // Upload sequentially to track offline media IDs properly
+      for (const file of files) {
+        try {
+          const uploadResult = await OfflineAwareImageService.uploadOtherAttachment(
+            file,
+            projectName,
+            transactionId,
+            currentAccountId
+          )
 
-      // Update transaction with new other images
-      const currentOtherImages = transaction?.otherImages || []
-      const updatedOtherImages = [...currentOtherImages, ...newOtherImages]
+          const metadata = uploadResult.url.startsWith('offline://')
+            ? {
+                offlineMediaId: uploadResult.url.replace('offline://', ''),
+                isOfflinePlaceholder: true
+              }
+            : undefined
 
-      const updateProjectId = transaction?.projectId || projectId
-      if (!currentAccountId) return
-      await transactionService.updateTransaction(currentAccountId, updateProjectId || '', transactionId, {
-        otherImages: updatedOtherImages
-      })
+          if (metadata?.offlineMediaId) {
+            otherImageTracker.trackMediaId(metadata.offlineMediaId)
+          }
 
-      // Refresh transaction data (use actual project_id from transaction)
-      const refreshProjectId = transaction?.projectId || projectId
-      const updatedTransaction = await transactionService.getTransaction(currentAccountId, refreshProjectId || '', transactionId)
-      setTransaction(updatedTransaction)
-      await refreshRealtimeAfterWrite()
+          newOtherImages.push({
+            url: uploadResult.url,
+            fileName: uploadResult.fileName,
+            uploadedAt: new Date(),
+            size: uploadResult.size,
+            mimeType: uploadResult.mimeType,
+            ...(metadata && { metadata })
+          } as TransactionImage & { metadata?: { offlineMediaId: string; isOfflinePlaceholder: boolean } })
+        } catch (uploadError) {
+          console.error(`Failed to upload other image ${file.name}:`, uploadError)
+          // Continue with other files
+        }
+      }
 
-      showSuccess('Other images uploaded successfully')
+      if (newOtherImages.length > 0) {
+        // Update transaction with new other images
+        const currentOtherImages = transaction?.otherImages || []
+        const updatedOtherImages = [...currentOtherImages, ...newOtherImages]
+
+        // Check if we're online to determine whether to queue the update or apply it immediately
+        const hasOfflinePlaceholders = newOtherImages.some(img => (img as any).metadata?.isOfflinePlaceholder)
+
+        // Always update local transaction record for immediate UI feedback
+        const offlineTransaction = await offlineStore.getTransactionById(transactionId).catch(() => null)
+        if (offlineTransaction) {
+          const updatedOfflineTransaction = {
+            ...offlineTransaction,
+            otherImages: updatedOtherImages
+          }
+          await offlineStore.saveTransactions([updatedOfflineTransaction])
+
+          // Update UI state immediately
+          setTransaction({
+            ...transaction,
+            otherImages: updatedOtherImages
+          } as Transaction)
+        }
+
+        const shouldQueueUpdate = hasOfflinePlaceholders || !isOnline
+
+        if (!shouldQueueUpdate) {
+          // Online with no placeholders - use normal transaction service
+          const updateProjectId = transaction?.projectId || projectId
+          await transactionService.updateTransaction(currentAccountId, updateProjectId || '', transactionId, {
+            otherImages: updatedOtherImages
+          })
+
+          // Remove tracked IDs after successful save
+          newOtherImages.forEach(img => {
+            if ((img as any).metadata?.offlineMediaId) {
+              otherImageTracker.removeMediaId((img as any).metadata.offlineMediaId)
+            }
+          })
+
+          // Refresh transaction data (use actual project_id from transaction)
+          const refreshProjectId = transaction?.projectId || projectId
+          const updatedTransaction = await transactionService.getTransaction(currentAccountId, refreshProjectId || '', transactionId)
+          setTransaction(updatedTransaction)
+          await refreshRealtimeAfterWrite()
+        } else {
+          // Offline or has placeholders - queue the update operation for sync
+          await offlineTransactionService.updateTransaction(currentAccountId, transactionId, {
+            otherImages: updatedOtherImages
+          })
+
+          // Keep tracked IDs for cleanup after sync
+          // They'll be removed when the queued operation completes successfully
+        }
+
+        // Show offline feedback if any images were queued
+        if (hasOfflinePlaceholders) {
+          showOfflineSaved()
+        } else {
+          showSuccess('Other images uploaded successfully')
+        }
+      }
     } catch (error) {
       console.error('Error uploading other images:', error)
       showError('Failed to upload other images. Please try again.')
@@ -699,6 +858,17 @@ export default function TransactionDetail() {
     if (!projectId || !transactionId || !transaction || !currentAccountId) return
 
     try {
+      // Handle offline media deletion if this is an offline placeholder
+      if (imageUrl.startsWith('offline://')) {
+        const mediaId = imageUrl.replace('offline://', '')
+        receiptTracker.removeMediaId(mediaId)
+        try {
+          await offlineMediaService.deleteMediaFile(mediaId)
+        } catch (error) {
+          console.warn('Failed to delete offline media file:', error)
+        }
+      }
+
       // Filter out the image to be deleted
       const currentReceiptImages = transaction.receiptImages || []
       const updatedReceiptImages = currentReceiptImages.filter(img => img.url !== imageUrl)
@@ -723,15 +893,25 @@ export default function TransactionDetail() {
   }
 
   const handleDeleteOtherImage = async (imageUrl: string) => {
-    if (!projectId || !transactionId || !transaction) return
+    if (!projectId || !transactionId || !transaction || !currentAccountId) return
 
     try {
+      // Handle offline media deletion if this is an offline placeholder
+      if (imageUrl.startsWith('offline://')) {
+        const mediaId = imageUrl.replace('offline://', '')
+        otherImageTracker.removeMediaId(mediaId)
+        try {
+          await offlineMediaService.deleteMediaFile(mediaId)
+        } catch (error) {
+          console.warn('Failed to delete offline media file:', error)
+        }
+      }
+
       // Filter out the image to be deleted
       const currentOtherImages = transaction.otherImages || []
       const updatedOtherImages = currentOtherImages.filter(img => img.url !== imageUrl)
 
       const updateProjectId = transaction?.projectId || projectId
-      if (!currentAccountId) return
       await transactionService.updateTransaction(currentAccountId, updateProjectId || '', transactionId, {
         otherImages: updatedOtherImages
       })
@@ -770,44 +950,63 @@ export default function TransactionDetail() {
     }
 
     try {
-      const uploadedImages = await Promise.all(
-        imageFiles.map(async (file, index) => {
-          try {
-            const uploadResult = await ImageUploadService.uploadItemImage(
-              file,
-              project ? project.name : 'Unknown Project',
-              targetItemId
-            )
+      const uploadedImages: ItemImage[] = []
+      const projectName = project ? project.name : 'Unknown Project'
 
-            return {
-              url: uploadResult.url,
-              alt: file.name,
-              isPrimary: index === 0,
-              uploadedAt: new Date(),
-              fileName: file.name,
-              size: file.size,
-              mimeType: file.type
-            }
-          } catch (uploadError) {
-            console.error(`Failed to upload ${file.name}:`, uploadError)
-            return {
-              url: '',
-              alt: file.name,
-              isPrimary: false,
-              uploadedAt: new Date(),
-              fileName: file.name,
-              size: file.size,
-              mimeType: file.type
-            }
+      // Upload sequentially to track offline media IDs properly
+      for (let i = 0; i < imageFiles.length; i++) {
+        const file = imageFiles[i]
+        try {
+          const uploadResult = await OfflineAwareImageService.uploadItemImage(
+            file,
+            projectName,
+            targetItemId,
+            currentAccountId
+          )
+
+          const metadata = uploadResult.url.startsWith('offline://')
+            ? {
+                offlineMediaId: uploadResult.url.replace('offline://', ''),
+                isOfflinePlaceholder: true
+              }
+            : undefined
+
+          if (metadata?.offlineMediaId) {
+            itemImageTracker.trackMediaId(metadata.offlineMediaId)
+          }
+
+          uploadedImages.push({
+            url: uploadResult.url,
+            alt: file.name,
+            isPrimary: i === 0,
+            uploadedAt: new Date(),
+            fileName: uploadResult.fileName,
+            size: uploadResult.size,
+            mimeType: uploadResult.mimeType,
+            metadata
+          })
+        } catch (uploadError) {
+          console.error(`Failed to upload ${file.name}:`, uploadError)
+          // Don't add failed uploads
+        }
+      }
+
+      if (uploadedImages.length > 0) {
+        await unifiedItemsService.updateItem(currentAccountId, targetItemId, { images: uploadedImages })
+        
+        // Remove tracked IDs after successful save
+        uploadedImages.forEach(img => {
+          if (img.metadata?.offlineMediaId) {
+            itemImageTracker.removeMediaId(img.metadata.offlineMediaId)
           }
         })
-      )
-
-      const validImages = uploadedImages.filter(img => img.url && img.url.trim() !== '')
-
-      if (validImages.length > 0) {
-        await unifiedItemsService.updateItem(currentAccountId, targetItemId, { images: validImages })
+        
         await refreshRealtimeAfterWrite()
+        
+        // Show offline feedback if any images were queued
+        if (uploadedImages.some(img => img.metadata?.isOfflinePlaceholder)) {
+          showOfflineSaved()
+        }
       }
     } catch (error) {
       console.error('Error in image upload process:', error)

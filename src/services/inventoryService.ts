@@ -38,11 +38,23 @@ export type CreateItemResult =
   | { mode: 'online'; itemId: string }
   | { mode: 'offline'; itemId: string; operationId: string }
 
+type CreateItemOptions = {
+  clientItemId?: string
+}
+
 const CANONICAL_TRANSACTION_PREFIXES = ['INV_PURCHASE_', 'INV_SALE_', 'INV_TRANSFER_'] as const
 
 export const isCanonicalTransactionId = (transactionId: string | null | undefined): boolean => {
   if (!transactionId) return false
   return CANONICAL_TRANSACTION_PREFIXES.some(prefix => transactionId.startsWith(prefix))
+}
+
+function generateCanonicalTransactionId(): string {
+  const cryptoImpl = typeof globalThis !== 'undefined' ? (globalThis.crypto as Crypto | undefined) : undefined
+  if (cryptoImpl?.randomUUID) {
+    return cryptoImpl.randomUUID()
+  }
+  return `tx-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 const transactionRealtimeEntries = new Map<string, SharedRealtimeEntry<Transaction>>()
@@ -1209,7 +1221,32 @@ export const transactionService = {
         void cacheTransactionsOffline(data || [])
 
         const transactions = (data || []).map(tx => _convertTransactionFromDb(tx))
-        return await _enrichTransactionsWithProjectNames(accountId, transactions)
+        
+        // Merge pending offline transactions that only exist in IndexedDB
+        const networkTransactionIds = new Set(transactions.map(tx => tx.transactionId))
+        const pendingIds = await operationQueue.getEntityIdsWithPendingWrites('transaction')
+        const pendingTransactions: Transaction[] = []
+        
+        for (const pendingId of pendingIds) {
+          // Skip if this transaction is already in the network payload
+          if (networkTransactionIds.has(pendingId)) {
+            continue
+          }
+          
+          try {
+            const cached = await offlineStore.getTransactionById(pendingId)
+            // Only include transactions for this project and account
+            if (cached && cached.projectId === projectId && cached.accountId === accountId) {
+              pendingTransactions.push(this._convertOfflineTransaction(cached))
+            }
+          } catch (error) {
+            console.warn(`Failed to load pending transaction ${pendingId} from IndexedDB:`, error)
+          }
+        }
+        
+        // Merge pending transactions into the result set
+        const mergedTransactions = [...transactions, ...pendingTransactions]
+        return await _enrichTransactionsWithProjectNames(accountId, mergedTransactions)
       } catch (error) {
         console.warn('Failed to fetch project transactions from network, using offline cache:', error)
       }
@@ -1240,7 +1277,33 @@ export const transactionService = {
         void cacheTransactionsOffline(data || [])
 
         const transactions = (data || []).map(tx => _convertTransactionFromDb(tx))
-        return await _enrichTransactionsWithProjectNames(accountId, transactions, projects)
+        
+        // Merge pending offline transactions that only exist in IndexedDB
+        const networkTransactionIds = new Set(transactions.map(tx => tx.transactionId))
+        const projectIdSet = new Set(projectIds)
+        const pendingIds = await operationQueue.getEntityIdsWithPendingWrites('transaction')
+        const pendingTransactions: Transaction[] = []
+        
+        for (const pendingId of pendingIds) {
+          // Skip if this transaction is already in the network payload
+          if (networkTransactionIds.has(pendingId)) {
+            continue
+          }
+          
+          try {
+            const cached = await offlineStore.getTransactionById(pendingId)
+            // Only include transactions for these projects and this account
+            if (cached && cached.accountId === accountId && cached.projectId && projectIdSet.has(cached.projectId)) {
+              pendingTransactions.push(this._convertOfflineTransaction(cached))
+            }
+          } catch (error) {
+            console.warn(`Failed to load pending transaction ${pendingId} from IndexedDB:`, error)
+          }
+        }
+        
+        // Merge pending transactions into the result set
+        const mergedTransactions = [...transactions, ...pendingTransactions]
+        return await _enrichTransactionsWithProjectNames(accountId, mergedTransactions, projects)
       } catch (error) {
         console.warn('Failed to fetch multi-project transactions, using offline cache:', error)
       }
@@ -1898,8 +1961,7 @@ export const transactionService = {
       }
 
       const now = new Date()
-      // Use the pre-generated optimistic ID for consistency
-      const transactionId = optimisticTransactionId
+      const transactionId = generateCanonicalTransactionId()
 
       // Convert camelCase transactionData to database format
       const dbTransaction = _convertTransactionToDb({
@@ -3135,14 +3197,18 @@ export const unifiedItemsService = {
   },
 
   // Create new item (account-scoped) - offline-aware orchestrator
-  async createItem(accountId: string, itemData: Omit<Item, 'itemId' | 'dateCreated' | 'lastUpdated'>): Promise<CreateItemResult> {
+  async createItem(
+    accountId: string,
+    itemData: Omit<Item, 'itemId' | 'dateCreated' | 'lastUpdated'>,
+    options?: CreateItemOptions
+  ): Promise<CreateItemResult> {
     // Generate optimistic ID upfront so we always have one, even if operations fail
-    const optimisticItemId = `I-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
+    const optimisticItemId = options?.clientItemId ?? `I-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
     
     const queueOfflineCreate = async (reason: 'offline' | 'fallback' | 'timeout'): Promise<CreateItemResult> => {
       try {
         const { offlineItemService } = await import('./offlineItemService')
-        const result = await offlineItemService.createItem(accountId, itemData)
+        const result = await offlineItemService.createItem(accountId, itemData, { itemId: optimisticItemId })
         if (import.meta.env.DEV) {
           console.info('[unifiedItemsService] createItem queued for offline processing', {
             accountId,

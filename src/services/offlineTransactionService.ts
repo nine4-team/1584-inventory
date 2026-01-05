@@ -105,6 +105,7 @@ export class OfflineTransactionService {
       transactionId,
       accountId,
       projectId: projectId ?? null,
+    projectName: transactionData.projectName ?? null,
       transactionDate: transactionData.transactionDate,
       source: transactionData.source || '',
       transactionType: transactionData.transactionType || '',
@@ -113,6 +114,9 @@ export class OfflineTransactionService {
       budgetCategory: transactionData.budgetCategory,
       categoryId: transactionData.categoryId,
       notes: transactionData.notes,
+      transactionImages: transactionData.transactionImages,
+      receiptImages: transactionData.receiptImages,
+      otherImages: transactionData.otherImages,
       receiptEmailed: transactionData.receiptEmailed ?? false,
       createdAt: timestamp,
       createdBy: transactionData.createdBy || '',
@@ -325,7 +329,10 @@ export class OfflineTransactionService {
           amount: updates.amount,
           categoryId: updates.categoryId,
           taxRatePreset: updates.taxRatePreset,
-          status: updates.status
+          status: updates.status,
+          receiptImages: updates.receiptImages,
+          otherImages: updates.otherImages,
+          transactionImages: updates.transactionImages
         }
       }
     }
@@ -358,6 +365,9 @@ export class OfflineTransactionService {
       ...(updates.needsReview !== undefined && { needsReview: updates.needsReview }),
       ...(updates.sumItemPurchasePrices !== undefined && { sumItemPurchasePrices: updates.sumItemPurchasePrices }),
       ...(updates.itemIds !== undefined && { itemIds: updates.itemIds || [] }),
+      ...(updates.transactionImages !== undefined && { transactionImages: updates.transactionImages }),
+      ...(updates.receiptImages !== undefined && { receiptImages: updates.receiptImages }),
+      ...(updates.otherImages !== undefined && { otherImages: updates.otherImages }),
       version: nextVersion
     }
     
