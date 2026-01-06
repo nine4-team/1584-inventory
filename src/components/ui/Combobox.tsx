@@ -84,6 +84,7 @@ export function Combobox({
                   'focus:ring-0 focus:outline-none cursor-pointer',
                   disabled || loading ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : 'bg-white cursor-pointer'
                 )}
+                autoComplete="off"
                 displayValue={(option: ComboboxOption) => option?.label || ''}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={loading ? 'Loading...' : placeholder}
