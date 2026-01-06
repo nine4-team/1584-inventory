@@ -208,18 +208,16 @@ export default function EditTransaction() {
         const queryClient = getGlobalQueryClient()
         const cachedTransaction = queryClient.getQueryData<Transaction>(['transaction', currentAccountId, transactionId])
         
-        let transactionData: Transaction | null = null
-        if (cachedTransaction) {
-          if (lastLoggedTransactionIdRef.current !== cachedTransaction.transactionId) {
-            console.log('✅ Transaction found in React Query cache:', cachedTransaction.transactionId)
-            lastLoggedTransactionIdRef.current = cachedTransaction.transactionId
-          }
-          transactionData = cachedTransaction
+        let transactionData: Transaction | null = cachedTransaction ?? null
+        if (cachedTransaction && lastLoggedTransactionIdRef.current !== cachedTransaction.transactionId) {
+          console.log('✅ Transaction found in React Query cache:', cachedTransaction.transactionId)
+          lastLoggedTransactionIdRef.current = cachedTransaction.transactionId
         }
 
-        // If not in cache, fetch from service (which will check cache/offlineStore/network)
-        if (!transactionData) {
-          transactionData = await transactionService.getTransaction(currentAccountId, projectId, transactionId)
+        // Always fetch the latest transaction so attachments stay in sync with Supabase
+        const fetchedTransaction = await transactionService.getTransaction(currentAccountId, projectId, transactionId)
+        if (fetchedTransaction) {
+          transactionData = fetchedTransaction
         }
 
         const project = await projectService.getProject(currentAccountId, projectId)
