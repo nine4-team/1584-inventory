@@ -988,6 +988,10 @@ export default function AddTransaction() {
 
           {/* Transaction Items */}
           <div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Transaction Items</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Add the items from your receipt now or later.
+            </p>
             <TransactionItemsList
               items={items}
               onItemsChange={(newItems) => {

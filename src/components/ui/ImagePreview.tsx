@@ -307,6 +307,8 @@ export function TransactionImagePreview({
   const [showGallery, setShowGallery] = useState(false)
   const [galleryInitialIndex, setGalleryInitialIndex] = useState(0)
   const [openMenuIndex, setOpenMenuIndex] = useState<number | null>(null)
+  const [resolvedUrls, setResolvedUrls] = useState<Record<string, string>>({})
+  const resolvedUrlsRef = useRef<Record<string, string>>({})
 
   const sizeClasses = {
     sm: 'w-20 h-20 sm:w-16 sm:h-16',
@@ -332,6 +334,81 @@ export function TransactionImagePreview({
     return images.filter(isRenderableImage)
   }, [images])
 
+  useEffect(() => {
+    resolvedUrlsRef.current = resolvedUrls
+  }, [resolvedUrls])
+
+  useEffect(() => {
+    let isMounted = true
+
+    const resolveOfflineAttachments = async () => {
+      for (const image of images) {
+        if (!image.url.startsWith('offline://')) continue
+        if (resolvedUrls[image.url]) continue
+
+        const mediaId = image.url.replace('offline://', '')
+        try {
+          const mediaFile = await offlineMediaService.getMediaFile(mediaId)
+          if (!mediaFile?.blob || !isMounted) continue
+
+          const objectUrl = URL.createObjectURL(mediaFile.blob)
+          setResolvedUrls(prev => {
+            if (prev[image.url]) {
+              URL.revokeObjectURL(objectUrl)
+              return prev
+            }
+            return {
+              ...prev,
+              [image.url]: objectUrl
+            }
+          })
+        } catch (error) {
+          console.warn('Failed to resolve offline transaction attachment:', error)
+        }
+      }
+    }
+
+    resolveOfflineAttachments()
+
+    return () => {
+      isMounted = false
+    }
+  }, [images, resolvedUrls])
+
+  useEffect(() => {
+    setResolvedUrls(prev => {
+      const currentUrls = new Set(images.map(image => image.url))
+      let changed = false
+      const next: Record<string, string> = {}
+
+      Object.entries(prev).forEach(([key, value]) => {
+        if (currentUrls.has(key)) {
+          next[key] = value
+        } else {
+          URL.revokeObjectURL(value)
+          changed = true
+        }
+      })
+
+      return changed ? next : prev
+    })
+  }, [images])
+
+  useEffect(() => {
+    return () => {
+      Object.values(resolvedUrlsRef.current).forEach(url => URL.revokeObjectURL(url))
+    }
+  }, [])
+
+  const getDisplayUrl = (image: TransactionImage) => resolvedUrls[image.url] || image.url
+
+  const resolvedGalleryImages = useMemo(() => {
+    return galleryImages.map(img => ({
+      ...img,
+      url: getDisplayUrl(img)
+    }))
+  }, [galleryImages, resolvedUrls])
+
   const openAttachment = (url: string) => {
     try {
       window.open(url, '_blank', 'noopener,noreferrer')
@@ -344,7 +421,7 @@ export function TransactionImagePreview({
   const handleImageClick = (image: TransactionImage) => {
     if (isRenderableImage(image)) {
       if (onImageClick) {
-        onImageClick(image.url)
+        onImageClick(getDisplayUrl(image))
         return
       }
 
@@ -355,7 +432,7 @@ export function TransactionImagePreview({
     }
 
     // Non-image attachments (e.g., PDFs) open in a new tab.
-    openAttachment(image.url)
+    openAttachment(getDisplayUrl(image))
   }
 
   const handleGalleryClose = () => {
@@ -373,7 +450,7 @@ export function TransactionImagePreview({
 
     switch (action) {
       case 'open':
-        openAttachment(imageUrl)
+        openAttachment(resolvedUrls[imageUrl] || imageUrl)
         break
       case 'delete':
         onRemoveImage?.(imageUrl)
@@ -410,7 +487,7 @@ export function TransactionImagePreview({
             >
               {isRenderableImage(image) ? (
                 <img
-                  src={image.url}
+                  src={getDisplayUrl(image)}
                   alt={image.fileName}
                   className="w-full h-full object-cover transition-transform group-hover:scale-105"
                 />
@@ -444,7 +521,7 @@ export function TransactionImagePreview({
                         overflowY: 'auto'
                       }}>
                         <button
-                          onClick={(e) => handleMenuAction(e, 'open', image.url, index)}
+                            onClick={(e) => handleMenuAction(e, 'open', image.url, index)}
                           className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
                         >
                           <ExternalLink className="h-4 w-4 mr-2" />
@@ -472,7 +549,7 @@ export function TransactionImagePreview({
       {/* Image gallery modal */}
       {showGallery && (
         <ImageGallery
-          images={galleryImages.map(img => ({
+          images={resolvedGalleryImages.map(img => ({
             url: img.url,
             alt: img.fileName,
             isPrimary: false,

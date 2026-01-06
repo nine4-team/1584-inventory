@@ -7,6 +7,7 @@ import { COMPANY_NAME, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/consta
 import { transactionService, projectService, unifiedItemsService } from '@/services/inventoryService'
 import { OfflineAwareImageService } from '@/services/offlineAwareImageService'
 import ImageUpload from '@/components/ui/ImageUpload'
+import { TransactionImagePreview } from '@/components/ui/ImagePreview'
 import { useAuth } from '../contexts/AuthContext'
 import ContextLink from '@/components/ContextLink'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
@@ -670,6 +671,22 @@ export default function EditTransaction() {
   }
 
 
+  const handleRemoveExistingReceiptImage = useCallback(
+    (imageUrl: string) => {
+      if (isSubmitting || isUploadingImages) return
+      setExistingReceiptImages(prev => prev.filter(image => image.url !== imageUrl))
+    },
+    [isSubmitting, isUploadingImages]
+  )
+
+  const handleRemoveExistingOtherImage = useCallback(
+    (imageUrl: string) => {
+      if (isSubmitting || isUploadingImages) return
+      setExistingOtherImages(prev => prev.filter(image => image.url !== imageUrl))
+    },
+    [isSubmitting, isUploadingImages]
+  )
+
   const handleReceiptImagesChange = (files: File[]) => {
     setFormData(prev => ({ ...prev, receiptImages: files }))
     // Clear any existing image errors
@@ -1149,6 +1166,15 @@ export default function EditTransaction() {
             <h3 className="text-lg font-medium text-gray-900 mb-2">
               Receipts
             </h3>
+            {existingReceiptImages.length > 0 && (
+              <TransactionImagePreview
+                images={existingReceiptImages}
+                onRemoveImage={handleRemoveExistingReceiptImage}
+                showControls={!isSubmitting && !isUploadingImages}
+                maxImages={5}
+                className="mb-4"
+              />
+            )}
             <ImageUpload
               onImagesChange={handleReceiptImagesChange}
               maxImages={5}
@@ -1202,6 +1228,15 @@ export default function EditTransaction() {
             <h3 className="text-lg font-medium text-gray-900 mb-2">
               Other Images
             </h3>
+            {existingOtherImages.length > 0 && (
+              <TransactionImagePreview
+                images={existingOtherImages}
+                onRemoveImage={handleRemoveExistingOtherImage}
+                showControls={!isSubmitting && !isUploadingImages}
+                maxImages={5}
+                className="mb-4"
+              />
+            )}
             <ImageUpload
               onImagesChange={(files) => handleInputChange('otherImages', files)}
               maxImages={5}

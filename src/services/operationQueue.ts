@@ -1161,9 +1161,6 @@ class OperationQueue {
         ...(data.updates.categoryId !== undefined && { categoryId: data.updates.categoryId }),
         ...(data.updates.taxRatePreset !== undefined && { taxRatePreset: data.updates.taxRatePreset }),
         ...(data.updates.status !== undefined && { status: data.updates.status as 'pending' | 'completed' | 'canceled' }),
-        ...(data.updates.receiptImages !== undefined && { receiptImages: data.updates.receiptImages }),
-        ...(data.updates.otherImages !== undefined && { otherImages: data.updates.otherImages }),
-        ...(data.updates.transactionImages !== undefined && { transactionImages: data.updates.transactionImages }),
         version: version
       }
 
