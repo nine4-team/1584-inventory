@@ -7,7 +7,8 @@ vi.mock('../offlineStore')
 vi.mock('../operationQueue', () => ({
   operationQueue: {
     add: vi.fn(),
-    processQueue: vi.fn()
+    processQueue: vi.fn(),
+    removeOperation: vi.fn()
   }
 }))
 
@@ -21,12 +22,14 @@ describe('offlineItemService.createItem', () => {
     mockedOfflineStore.deleteItem.mockReset()
     mockedOperationQueue.add.mockReset()
     mockedOperationQueue.processQueue.mockReset()
+    mockedOperationQueue.removeOperation.mockReset()
 
     mockedOfflineStore.init.mockResolvedValue()
     mockedOfflineStore.saveItems.mockResolvedValue()
     mockedOfflineStore.deleteItem.mockResolvedValue(undefined)
     mockedOperationQueue.add.mockResolvedValue('op-123')
     mockedOperationQueue.processQueue.mockResolvedValue(undefined)
+    mockedOperationQueue.removeOperation.mockResolvedValue(true)
 
     let onlineState = false
     Object.defineProperty(navigator, 'onLine', {
@@ -56,6 +59,16 @@ describe('offlineItemService.createItem', () => {
 
     expect(callOrder).toEqual(['save', 'queue'])
     expect(result.operationId).toBe('op-queued')
+  })
+
+  it('defaults the disposition to purchased when omitted', async () => {
+    await offlineItemService.createItem('acc-1', {
+      projectId: 'proj-1',
+      name: 'Offline Item'
+    } as any)
+
+    const savedItem = mockedOfflineStore.saveItems.mock.calls[0][0][0]
+    expect(savedItem.disposition).toBe('purchased')
   })
 
   it('throws OfflineStorageError when offline store init fails', async () => {

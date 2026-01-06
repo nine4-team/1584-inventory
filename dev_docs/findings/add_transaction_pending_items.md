@@ -113,3 +113,17 @@ setItemImages(prev => [...prev, ...previewImages])
 3. Add a defensive default inside `operationQueue.executeCreateItem` to cover any legacy offline entries that still lack a disposition.
 
 Let me know if you'd like me to implement the fixes or dig into the offline attachment TODOs next.
+
+---
+
+## Troubleshooting Log
+
+- **2026-01-05 18:30 PT** — Applied the recommended code fixes: `TransactionItemForm` now seeds `disposition: 'purchased'`, offline transaction and item services coerce missing dispositions before queueing, and preview thumbnails are generated with real blob URLs plus proper cleanup. Targeted unit tests (`offlineItemService.createItem`) pass with the new defaulting behavior.
+- **2026-01-05 18:42 PT** — Field report after going back online: the freshly created item's preview thumbnail rendered correctly while composing the transaction, but the item itself disappeared after the offline queue resynced. This suggests the queue or reconciliation layer is still dropping the record even though the optimistic preview path is fixed. Need to trace `offlineTransactionService.createTransaction` → `operationQueue.executeCreateTransaction` for mismatched IDs or failed inserts despite passing validation.
+ - **2026-01-06 09:10 PT** — Root cause traced and fixed: the transaction-create queueing order and cached sum were the mismatch. Fixes applied:
+   - Enqueue the `CREATE_TRANSACTION` operation immediately after persisting the optimistic transaction (before creating child items) so child-item operations reference a queued parent operation.
+   - Recompute and persist `sumItemPurchasePrices` after creating optimistic child items so the executor never inserts null into `sum_item_purchase_prices`.
+   - Make executor defensive: `operationQueue.executeCreateTransaction` now uses `localTransaction.sumItemPurchasePrices ?? '0.00'` when inserting.
+   - Rollback hygiene: if child item creation fails, the code now removes the queued transaction operation (`operationQueue.removeOperation`) and rolls back optimistic child items to avoid orphaned queued ops.
+   - Added unit tests covering queued child-item creation and rollback of the queued transaction operation.
+ Results: Offline-created transactions with items now survive reconnect and sync to Supabase without disappearing; thumbnails render correctly and dispositions persist as `purchased`.

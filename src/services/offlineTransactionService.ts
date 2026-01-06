@@ -173,10 +173,37 @@ export class OfflineTransactionService {
     }
 
     // Create child items if provided (delegate to offlineItemService)
+    const operation: Omit<Operation, 'id' | 'timestamp' | 'retryCount' | 'accountId' | 'updatedBy' | 'version'> = {
+      type: 'CREATE_TRANSACTION',
+      data: {
+        id: transactionId,
+        accountId,
+        projectId: projectId ?? null
+      }
+    }
+
+    let operationId: string
+    try {
+      operationId = await operationQueue.add(operation, {
+        accountId,
+        version: 1,
+        timestamp
+      })
+    } catch (error) {
+      console.error('Failed to enqueue CREATE_TRANSACTION operation after caching optimistic data', error)
+      try {
+        await offlineStore.deleteTransaction(transactionId)
+      } catch (rollbackError) {
+        console.warn('Unable to roll back optimistic transaction after queue failure', rollbackError)
+      }
+      throw error
+    }
+
     const createdChildItems: CreatedChildItem[] = []
     if (items && items.length > 0) {
       try {
         for (const itemData of items) {
+          const disposition = itemData.disposition ?? 'purchased'
           const itemResult = await offlineItemService.createItem(accountId, {
             projectId: projectId ?? undefined,
             transactionId: transactionId,
@@ -188,7 +215,7 @@ export class OfflineTransactionService {
             projectPrice: itemData.projectPrice,
             marketValue: itemData.marketValue,
             paymentMethod: transactionData.paymentMethod || '',
-            disposition: itemData.disposition as any,
+            disposition,
             notes: itemData.notes,
             space: itemData.space,
             dateCreated: transactionData.transactionDate || timestamp,
@@ -241,37 +268,16 @@ export class OfflineTransactionService {
           console.warn('Failed to rollback transaction after item creation failure', rollbackError)
         }
         await this.rollbackChildItems(createdChildItems)
+        try {
+          await operationQueue.removeOperation(operationId)
+        } catch (removeError) {
+          console.warn('Failed to remove queued transaction operation during rollback', {
+            operationId,
+            removeError
+          })
+        }
         throw itemError
       }
-    }
-
-    // Convert Transaction to operation format
-    const operation: Omit<Operation, 'id' | 'timestamp' | 'retryCount' | 'accountId' | 'updatedBy' | 'version'> = {
-      type: 'CREATE_TRANSACTION',
-      data: {
-        id: transactionId,
-        accountId,
-        projectId: projectId ?? null
-      }
-    }
-
-    let operationId: string
-    try {
-      operationId = await operationQueue.add(operation, {
-        accountId,
-        version: 1,
-        timestamp
-      })
-    } catch (error) {
-      console.error('Failed to enqueue CREATE_TRANSACTION operation after caching optimistic data', error)
-      // Attempt to roll back local cache entry so we do not keep orphaned transactions
-      try {
-        await offlineStore.deleteTransaction(transactionId)
-      } catch (rollbackError) {
-        console.warn('Unable to roll back optimistic transaction after queue failure', rollbackError)
-      }
-      await this.rollbackChildItems(createdChildItems)
-      throw error
     }
 
     // Trigger immediate processing if online

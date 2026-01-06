@@ -677,7 +677,7 @@ class OperationQueue {
           payment_method: localItem.paymentMethod ?? null, // NO DEFAULTS - send null if missing
           qr_key: localItem.qrKey ?? null, // NO DEFAULTS - send null if missing (should be set during creation)
           bookmark: localItem.bookmark ?? false,
-          disposition: localItem.disposition ?? null,
+          disposition: localItem.disposition ?? 'purchased',
           notes: localItem.notes ?? undefined,
           space: localItem.space ?? undefined,
           purchase_price: localItem.purchasePrice ?? undefined,
@@ -718,7 +718,7 @@ class OperationQueue {
         source: serverItem.source ?? localItem.source ?? null, // NO DEFAULTS
         sku: serverItem.sku ?? localItem.sku ?? null, // NO DEFAULTS
         paymentMethod: serverItem.payment_method ?? localItem.paymentMethod ?? null, // NO DEFAULTS
-        disposition: serverItem.disposition ?? localItem.disposition ?? null,
+        disposition: serverItem.disposition ?? localItem.disposition ?? 'purchased',
         notes: serverItem.notes ?? localItem.notes ?? undefined,
         space: serverItem.space ?? localItem.space ?? undefined,
         qrKey: serverItem.qr_key ?? localItem.qrKey,

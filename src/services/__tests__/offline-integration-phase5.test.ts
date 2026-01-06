@@ -12,6 +12,7 @@ vi.mock('../operationQueue', () => ({
   operationQueue: {
     add: vi.fn(),
     processQueue: vi.fn(),
+    removeOperation: vi.fn(),
     getPendingOperations: vi.fn(() => [])
   }
 }))
@@ -54,6 +55,7 @@ describe('Offline Integration: Queued Child Item Creation', () => {
     mockedOfflineStore.init.mockResolvedValue()
     mockedOfflineStore.saveTransactions.mockResolvedValue()
     mockedOperationQueue.add.mockResolvedValue('op-123')
+    mockedOperationQueue.removeOperation.mockResolvedValue(true)
     mockedGetCachedBudgetCategoryById.mockResolvedValue({ id: 'cat-1', name: 'Test Category' } as any)
     mockedGetCachedTaxPresetById.mockResolvedValue({ id: 'preset-1', rate: 0.08 } as any)
   })
@@ -155,6 +157,7 @@ describe('Offline Integration: Conflict Resolution', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockedOfflineStore.init.mockResolvedValue()
+    mockedOperationQueue.removeOperation.mockResolvedValue(true)
   })
 
   it('detects conflicts for transactions when syncing', async () => {
@@ -268,6 +271,7 @@ describe('Offline Integration: Cache Hydration', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockedOfflineStore.init.mockResolvedValue()
+    mockedOperationQueue.removeOperation.mockResolvedValue(true)
   })
 
   it('hydrates transaction cache from offlineStore before rendering', async () => {
