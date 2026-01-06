@@ -7,7 +7,8 @@ vi.mock('../offlineStore')
 vi.mock('../operationQueue', () => ({
   operationQueue: {
     add: vi.fn(),
-    processQueue: vi.fn()
+    processQueue: vi.fn(),
+    removeOperation: vi.fn()
   }
 }))
 vi.mock('../networkStatusService', () => ({
@@ -26,12 +27,14 @@ describe('OfflineProjectService.createProject', () => {
     mockedOfflineStore.deleteProject.mockReset()
     mockedOperationQueue.add.mockReset()
     mockedOperationQueue.processQueue.mockReset()
+    mockedOperationQueue.removeOperation.mockReset()
 
     mockedOfflineStore.init.mockResolvedValue()
     mockedOfflineStore.saveProjects.mockResolvedValue()
     mockedOfflineStore.deleteProject.mockResolvedValue(undefined)
     mockedOperationQueue.add.mockResolvedValue('op-123')
     mockedOperationQueue.processQueue.mockResolvedValue(undefined)
+    mockedOperationQueue.removeOperation.mockResolvedValue(true)
   })
 
   it('persists the optimistic project before queueing the operation', async () => {

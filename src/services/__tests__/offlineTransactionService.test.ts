@@ -9,7 +9,8 @@ vi.mock('../offlineStore')
 vi.mock('../operationQueue', () => ({
   operationQueue: {
     add: vi.fn(),
-    processQueue: vi.fn()
+    processQueue: vi.fn(),
+    removeOperation: vi.fn()
   }
 }))
 vi.mock('../offlineItemService', () => ({
@@ -40,6 +41,7 @@ describe('OfflineTransactionService.createTransaction', () => {
     mockedOfflineStore.deleteTransaction.mockReset()
     mockedOperationQueue.add.mockReset()
     mockedOperationQueue.processQueue.mockReset()
+    mockedOperationQueue.removeOperation.mockReset()
     mockedOfflineItemService.createItem.mockReset()
     mockedGetCachedBudgetCategoryById.mockReset()
     mockedGetCachedTaxPresetById.mockReset()
@@ -49,6 +51,7 @@ describe('OfflineTransactionService.createTransaction', () => {
     mockedOfflineStore.deleteTransaction.mockResolvedValue(undefined)
     mockedOperationQueue.add.mockResolvedValue('op-123')
     mockedOperationQueue.processQueue.mockResolvedValue(undefined)
+    mockedOperationQueue.removeOperation.mockResolvedValue(true)
     mockedGetCachedBudgetCategoryById.mockResolvedValue({ id: 'cat-1', name: 'Test Category' } as any)
     mockedGetCachedTaxPresetById.mockResolvedValue({ id: 'preset-1', rate: 0.08 } as any)
   })
@@ -169,6 +172,21 @@ describe('OfflineTransactionService.createTransaction', () => {
     const itemCalls = mockedOfflineItemService.createItem.mock.calls
     expect(itemCalls[0][1].transactionId).toBe(result.transactionId)
     expect(itemCalls[1][1].transactionId).toBe(result.transactionId)
+  })
+
+  it('removes queued transaction operation if child item creation fails', async () => {
+    mockedOfflineItemService.createItem.mockRejectedValueOnce(new Error('child fail'))
+
+    await expect(
+      service.createTransaction('acc-1', 'proj-1', {
+        transactionDate: '2024-01-01',
+        source: 'Test Source',
+        amount: '100.00'
+      } as any, [{ description: 'Item 1', purchasePrice: '50.00' } as any])
+    ).rejects.toThrow('child fail')
+
+    expect(mockedOperationQueue.removeOperation).toHaveBeenCalledTimes(1)
+    expect(mockedOperationQueue.removeOperation).toHaveBeenCalledWith('op-123')
   })
 })
 

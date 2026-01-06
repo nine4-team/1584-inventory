@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { X, Camera } from 'lucide-react'
 import { TransactionItemFormData, TransactionItemValidationErrors, ItemImage } from '@/types'
 import { ImageUploadService } from '@/services/imageService'
@@ -38,6 +38,7 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
     marketValue: source?.marketValue ?? '',
     space: source?.space ?? '',
     notes: source?.notes ?? '',
+    disposition: source?.disposition ?? 'purchased',
     taxAmountPurchasePrice: source?.taxAmountPurchasePrice ?? '',
     taxAmountProjectPrice: source?.taxAmountProjectPrice ?? ''
   })
@@ -49,17 +50,43 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
   const [isUploadingImage, setIsUploadingImage] = useState(false)
 
   const [errors, setErrors] = useState<TransactionItemValidationErrors>({})
+  const unsavedPreviewUrlsRef = useRef<Set<string>>(new Set())
   const { showError } = useToast()
+
+  const trackUnsavedPreviewUrl = (url: string) => {
+    unsavedPreviewUrlsRef.current.add(url)
+  }
+
+  const releaseUnsavedPreviewUrl = (url?: string) => {
+    if (!url) return
+    if (!unsavedPreviewUrlsRef.current.has(url)) return
+    ImageUploadService.revokePreviewUrl(url)
+    unsavedPreviewUrlsRef.current.delete(url)
+  }
 
   // Update state when item prop changes (for editing existing items)
   useEffect(() => {
+    unsavedPreviewUrlsRef.current.forEach(url => ImageUploadService.revokePreviewUrl(url))
+    unsavedPreviewUrlsRef.current.clear()
+
     if (item) {
       console.log('TransactionItemForm: Editing item with images:', item.images?.length || 0, 'imageFiles:', item.imageFiles?.length || 0)
       setItemImages(item.images || [])
       setImageFiles(item.imageFiles || [])
       setFormData(buildFormData(item))
+    } else {
+      setItemImages([])
+      setImageFiles([])
+      setFormData(buildFormData())
     }
   }, [item])
+
+  useEffect(() => {
+    return () => {
+      unsavedPreviewUrlsRef.current.forEach(url => ImageUploadService.revokePreviewUrl(url))
+      unsavedPreviewUrlsRef.current.clear()
+    }
+  }, [])
 
 
   const handleSelectFromGallery = async () => {
@@ -78,16 +105,28 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
           // Store the files for later upload when the transaction is submitted
           setImageFiles(prev => [...prev, ...newFiles])
 
-          // Create preview image objects (without URLs until uploaded)
-          const previewImages: ItemImage[] = newFiles.map((file, index) => ({
-            url: `preview_${file.name}_${file.size}_${Date.now()}_${index}`, // Unique key for preview images
-            alt: file.name,
-            isPrimary: itemImages.length === 0 && index === 0, // First image is primary if no images exist
-            uploadedAt: new Date(),
-            fileName: file.name,
-            size: file.size,
-            mimeType: file.type
-          }))
+          const baseImageCount = itemImages.length
+
+          const previewImages: ItemImage[] = newFiles.map((file, index) => {
+            let previewUrl: string
+            try {
+              previewUrl = ImageUploadService.createPreviewUrl(file)
+              trackUnsavedPreviewUrl(previewUrl)
+            } catch (error) {
+              console.warn('Failed to create preview URL, falling back to placeholder key', error)
+              previewUrl = `preview_${file.name}_${file.size}_${Date.now()}_${index}`
+            }
+
+            return {
+              url: previewUrl,
+              alt: file.name,
+              isPrimary: baseImageCount === 0 && index === 0,
+              uploadedAt: new Date(),
+              fileName: file.name,
+              size: file.size,
+              mimeType: file.type
+            }
+          })
 
           setItemImages(prev => [...prev, ...previewImages])
           console.log('Added', previewImages.length, 'new preview images')
@@ -119,7 +158,10 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
       // Remove both the image and the corresponding file
       setItemImages(prev => prev.filter(img => img.url !== imageUrl))
       setImageFiles(prev => prev.filter((_, index) => index !== imageIndex))
+    } else {
+      setItemImages(prev => prev.filter(img => img.url !== imageUrl))
     }
+    releaseUnsavedPreviewUrl(imageUrl)
   }
 
   const handleSetPrimaryImage = (imageUrl: string) => {
@@ -168,6 +210,7 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
       onImageFilesChange(stableTempId, imageFiles)
     }
 
+    unsavedPreviewUrlsRef.current.clear()
     onSave(itemWithImages)
   }
 

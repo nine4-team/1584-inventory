@@ -144,6 +144,7 @@ export class OfflineItemService {
     const timestamp = new Date().toISOString()
     const itemId = options?.itemId ?? `I-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
     const qrKey = itemData.qrKey || `QR-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
+    const disposition = itemData.disposition ?? 'purchased'
 
     // Optimistically update local store with full item data
     const tempItem: DBItem = {
@@ -161,7 +162,7 @@ export class OfflineItemService {
       projectPrice: itemData.projectPrice ?? null,
       marketValue: itemData.marketValue ?? null,
       paymentMethod: itemData.paymentMethod ?? null,
-      disposition: itemData.disposition ?? null,
+      disposition,
       notes: itemData.notes,
       space: itemData.space,
       qrKey,
