@@ -120,4 +120,96 @@ describe('TransactionAudit amount immutability', () => {
     })
     expect(subtotalDisplays.length).toBeGreaterThan(0)
   })
+
+  it('filters out items already linked to the transaction from suggestions', async () => {
+    const transaction = {
+      transactionId: 'txn-2',
+      projectId: 'project-9',
+      amount: '500.00',
+      transactionType: 'Purchase',
+      source: 'Vendor',
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      createdBy: 'user-1',
+      paymentMethod: 'Card'
+    } as unknown as Transaction
+
+    const attachedItem = {
+      itemId: 'suggest-1',
+      description: 'Attached Vase',
+      purchasePrice: '100.00'
+    } as unknown as Item
+
+    const otherSuggestion = {
+      itemId: 'suggest-2',
+      description: 'Loose Mirror',
+      purchasePrice: '80.00'
+    } as unknown as Item
+
+    inventoryServiceMocks.getSuggestedItemsForTransaction.mockResolvedValueOnce([
+      attachedItem,
+      otherSuggestion
+    ])
+
+    render(
+      <TransactionAudit
+        transaction={transaction}
+        projectId="project-9"
+        transactionItems={[attachedItem]}
+        onItemsUpdated={vi.fn()}
+      />
+    )
+
+    await waitFor(() => expect(inventoryServiceMocks.getTransactionCompleteness).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(inventoryServiceMocks.getSuggestedItemsForTransaction).toHaveBeenCalledTimes(1))
+
+    expect(screen.queryByText(attachedItem.description)).not.toBeInTheDocument()
+    expect(screen.getByText(otherSuggestion.description)).toBeInTheDocument()
+  })
+
+  it('filters suggestions using transaction.itemIds even before items load', async () => {
+    const transaction = {
+      transactionId: 'txn-3',
+      projectId: 'project-10',
+      amount: '500.00',
+      transactionType: 'Purchase',
+      source: 'Vendor',
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      createdBy: 'user-1',
+      paymentMethod: 'Card',
+      itemIds: ['suggest-3']
+    } as unknown as Transaction
+
+    const suggestionInTransaction = {
+      itemId: 'suggest-3',
+      description: 'Already Linked',
+      purchasePrice: '100.00'
+    } as unknown as Item
+
+    const newSuggestion = {
+      itemId: 'suggest-4',
+      description: 'Fresh Item',
+      purchasePrice: '80.00'
+    } as unknown as Item
+
+    inventoryServiceMocks.getSuggestedItemsForTransaction.mockResolvedValueOnce([
+      suggestionInTransaction,
+      newSuggestion
+    ])
+
+    render(
+      <TransactionAudit
+        transaction={transaction}
+        projectId="project-10"
+        transactionItems={[]} // simulate items still loading
+        onItemsUpdated={vi.fn()}
+      />
+    )
+
+    await waitFor(() => expect(inventoryServiceMocks.getSuggestedItemsForTransaction).toHaveBeenCalledTimes(1))
+
+    expect(screen.queryByText(suggestionInTransaction.description)).not.toBeInTheDocument()
+    expect(screen.getByText(newSuggestion.description)).toBeInTheDocument()
+  })
 })

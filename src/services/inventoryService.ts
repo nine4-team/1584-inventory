@@ -9,7 +9,7 @@ import { isNetworkOnline, withNetworkTimeout, NetworkTimeoutError } from './netw
 import { OfflineQueueUnavailableError } from './offlineItemService'
 import { operationQueue, OfflineContextError } from './operationQueue'
 import { refreshProjectSnapshot } from '@/utils/realtimeSnapshotUpdater'
-import { removeTransactionFromCaches } from '@/utils/queryCacheHelpers'
+import { removeTransactionFromCaches, removeItemFromCaches } from '@/utils/queryCacheHelpers'
 import type { Item, Project, FilterOptions, PaginationOptions, Transaction, TransactionItemFormData, TransactionCompleteness, CompletenessStatus, ItemImage } from '@/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
@@ -152,6 +152,70 @@ async function filterRowsWithPendingWrites<T>(
     console.debug(`Unable to inspect pending ${entityType} writes before caching`, error)
     return rows
   }
+}
+
+async function syncProjectTransactionsOffline(
+  accountId: string,
+  projectId: string,
+  rows: any[],
+  options?: {
+    pendingWriteIds?: Set<string>
+    pendingCreateIds?: Set<string>
+  }
+): Promise<string[]> {
+  if (!projectId) {
+    return []
+  }
+
+  await offlineStore.init()
+
+  const keepIds = new Set<string>()
+  rows.forEach(row => {
+    const id = row?.transaction_id ?? row?.id ?? null
+    if (id) {
+      keepIds.add(id)
+    }
+  })
+  options?.pendingWriteIds?.forEach(id => keepIds.add(id))
+  options?.pendingCreateIds?.forEach(id => keepIds.add(id))
+
+  const filteredRows = await filterRowsWithPendingWrites(rows, 'transaction', row => row?.transaction_id ?? row?.id ?? null)
+  const records = filteredRows.map(mapSupabaseTransactionToOfflineRecord)
+  return await offlineStore.replaceTransactionsForProject(accountId, projectId, records, {
+    keepTransactionIds: keepIds
+  })
+}
+
+async function syncProjectItemsOffline(
+  accountId: string,
+  projectId: string,
+  rows: any[],
+  options?: {
+    pendingWriteIds?: Set<string>
+    pendingCreateIds?: Set<string>
+  }
+): Promise<string[]> {
+  if (!projectId) {
+    return []
+  }
+
+  await offlineStore.init()
+
+  const keepIds = new Set<string>()
+  rows.forEach(row => {
+    const id = row?.item_id ?? row?.id ?? null
+    if (id) {
+      keepIds.add(id)
+    }
+  })
+  options?.pendingWriteIds?.forEach(id => keepIds.add(id))
+  options?.pendingCreateIds?.forEach(id => keepIds.add(id))
+
+  const filteredRows = await filterRowsWithPendingWrites(rows, 'item', row => row?.item_id ?? row?.id ?? null)
+  const records = filteredRows.map(mapSupabaseItemToOfflineRecord)
+  return await offlineStore.replaceItemsForProject(accountId, projectId, records, {
+    keepItemIds: keepIds
+  })
 }
 
 function mapSupabaseItemToOfflineRecord(row: any): DBItem {
@@ -1226,9 +1290,25 @@ export const transactionService = {
           .order('created_at', { ascending: false })
 
         if (error) throw error
-        void cacheTransactionsOffline(data || [])
 
-        const transactions = (data || []).map(tx => _convertTransactionFromDb(tx))
+        const supabaseRows = data || []
+        const pendingWriteIds = await operationQueue.getEntityIdsWithPendingWrites('transaction')
+        const pendingCreateIds = await operationQueue.getEntityIdsWithPendingCreates('transaction')
+        const removedIds = await syncProjectTransactionsOffline(accountId, projectId, supabaseRows, {
+          pendingWriteIds,
+          pendingCreateIds
+        })
+
+        if (removedIds.length > 0) {
+          const queryClient = tryGetQueryClient()
+          if (queryClient) {
+            removedIds.forEach(id => {
+              removeTransactionFromCaches(queryClient, accountId, id, projectId)
+            })
+          }
+        }
+
+        const transactions = supabaseRows.map(tx => _convertTransactionFromDb(tx))
         
         // Merge pending offline transactions that only exist in IndexedDB
         const networkTransactionIds = new Set(transactions.map(tx => tx.transactionId))
@@ -1282,9 +1362,36 @@ export const transactionService = {
           .order('created_at', { ascending: false })
 
         if (error) throw error
-        void cacheTransactionsOffline(data || [])
 
-        const transactions = (data || []).map(tx => _convertTransactionFromDb(tx))
+        const supabaseRows = data || []
+        const pendingWriteIds = await operationQueue.getEntityIdsWithPendingWrites('transaction')
+        const pendingCreateIds = await operationQueue.getEntityIdsWithPendingCreates('transaction')
+        const queryClient = tryGetQueryClient()
+        const rowsByProject = new Map<string, any[]>()
+
+        for (const row of supabaseRows) {
+          const projectId = row?.project_id ?? null
+          if (!projectId) continue
+          if (!rowsByProject.has(projectId)) {
+            rowsByProject.set(projectId, [])
+          }
+          rowsByProject.get(projectId)!.push(row)
+        }
+
+        for (const projectId of projectIds) {
+          const rowsForProject = rowsByProject.get(projectId) ?? []
+          const removedIds = await syncProjectTransactionsOffline(accountId, projectId, rowsForProject, {
+            pendingWriteIds,
+            pendingCreateIds
+          })
+          if (removedIds.length > 0 && queryClient) {
+            removedIds.forEach(id => {
+              removeTransactionFromCaches(queryClient, accountId, id, projectId)
+            })
+          }
+        }
+
+        const transactions = supabaseRows.map(tx => _convertTransactionFromDb(tx))
         
         // Merge pending offline transactions that only exist in IndexedDB
         const networkTransactionIds = new Set(transactions.map(tx => tx.transactionId))
@@ -2435,6 +2542,32 @@ export const transactionService = {
                   }
                   return true
                 })
+
+                if (oldTransactionId) {
+                  try {
+                    await offlineStore.deleteTransaction(oldTransactionId)
+                    await offlineStore.deleteConflictsForTransactions(accountId, [oldTransactionId])
+                    refreshProjectSnapshot(projectId)
+                  } catch (cleanupError) {
+                    console.warn('Failed to purge transaction from offline store after realtime delete', {
+                      accountId,
+                      projectId,
+                      transactionId: oldTransactionId,
+                      cleanupError
+                    })
+                  }
+
+                  const queryClient = tryGetQueryClient()
+                  if (queryClient) {
+                    removeTransactionFromCaches(queryClient, accountId, oldTransactionId, projectId)
+                  }
+                } else if (oldRowId) {
+                  console.warn('Received realtime delete without transaction_id; unable to purge offline cache', {
+                    accountId,
+                    projectId,
+                    rowId: oldRowId
+                  })
+                }
               }
             }
 
@@ -3016,8 +3149,37 @@ export const unifiedItemsService = {
         const { data, error } = await query
         if (error) throw error
 
-        void cacheItemsOffline(data || [])
-        return (data || []).map(item => this._convertItemFromDb(item))
+        const supabaseRows = data || []
+        const hasFilters =
+          Boolean(filters?.status) ||
+          Boolean(filters?.category) ||
+          Boolean(filters?.disposition) ||
+          Boolean(filters?.source) ||
+          Boolean(filters?.tags && filters.tags.length > 0) ||
+          Boolean(filters?.priceRange) ||
+          Boolean(filters?.searchQuery)
+        const canPrune = !hasFilters && !pagination
+
+        if (canPrune) {
+          const pendingWriteIds = await operationQueue.getEntityIdsWithPendingWrites('item')
+          const pendingCreateIds = await operationQueue.getEntityIdsWithPendingCreates('item')
+          const removedIds = await syncProjectItemsOffline(accountId, projectId, supabaseRows, {
+            pendingWriteIds,
+            pendingCreateIds
+          })
+          if (removedIds.length > 0) {
+            const queryClient = tryGetQueryClient()
+            if (queryClient) {
+              removedIds.forEach(id => {
+                removeItemFromCaches(queryClient, accountId, id, { projectId })
+              })
+            }
+          }
+        } else {
+          void cacheItemsOffline(supabaseRows)
+        }
+
+        return supabaseRows.map(item => this._convertItemFromDb(item))
       } catch (error) {
         console.warn('Failed to fetch project items from network, falling back to offline cache:', error)
       }
@@ -3054,7 +3216,7 @@ export const unifiedItemsService = {
             schema: 'public',
             table: 'items'
           },
-          (payload) => {
+          async (payload) => {
             const { eventType, new: newRecord, old: oldRecord } = payload
             const recordAccountId = (eventType === 'DELETE' ? oldRecord?.account_id : newRecord?.account_id) ?? null
             if (recordAccountId && recordAccountId !== accountId) {
@@ -3082,7 +3244,26 @@ export const unifiedItemsService = {
               }
             } else if (eventType === 'DELETE') {
               if (oldRecord.item_id && oldRecord.account_id === accountId) {
-                nextItems = nextItems.filter(i => i.itemId !== oldRecord.item_id)
+                const oldItemId = oldRecord.item_id
+                nextItems = nextItems.filter(i => i.itemId !== oldItemId)
+
+                try {
+                  await offlineStore.deleteItem(oldItemId)
+                  await offlineStore.deleteConflictsForItems(accountId, [oldItemId])
+                  refreshProjectSnapshot(projectId)
+                } catch (cleanupError) {
+                  console.warn('Failed to purge item from offline store after realtime delete', {
+                    accountId,
+                    projectId,
+                    itemId: oldItemId,
+                    cleanupError
+                  })
+                }
+
+                const queryClient = tryGetQueryClient()
+                if (queryClient) {
+                  removeItemFromCaches(queryClient, accountId, oldItemId, { projectId })
+                }
               }
             }
 
