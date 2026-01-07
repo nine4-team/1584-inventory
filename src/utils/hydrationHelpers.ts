@@ -42,7 +42,8 @@ export async function hydrateItemCache(
 export async function hydrateProjectItemsCache(
   queryClient: QueryClient,
   accountId: string,
-  projectId: string
+  projectId: string,
+  options?: { deletedIds?: string[] }
 ): Promise<void> {
   try {
     await offlineStore.init()
@@ -72,9 +73,14 @@ export async function hydrateProjectItemsCache(
         }
       }
 
-      if (validItems.length > 0) {
+      let itemsToCache = validItems
+      if (options?.deletedIds?.length) {
+        const deletedSet = new Set(options.deletedIds)
+        itemsToCache = itemsToCache.filter(item => !deletedSet.has(item.itemId))
+      }
+      if (itemsToCache.length > 0) {
         // Prime the React Query cache
-        queryClient.setQueryData(['project-items', accountId, projectId], validItems)
+        queryClient.setQueryData(['project-items', accountId, projectId], itemsToCache)
       }
     }
   } catch (error) {
@@ -467,7 +473,8 @@ export async function hydrateProjectsListCache(
 export async function hydrateProjectTransactionsCache(
   queryClient: QueryClient,
   accountId: string,
-  projectId: string
+  projectId: string,
+  options?: { deletedIds?: string[] }
 ): Promise<void> {
   try {
     await offlineStore.init()
@@ -481,6 +488,7 @@ export async function hydrateProjectTransactionsCache(
     // Convert each cached transaction using the service helper
     const { transactionService } = await import('../services/inventoryService')
     const transactions: Transaction[] = []
+    const deletedSet = new Set(options?.deletedIds ?? [])
 
     for (const txId of projectTxIds) {
       try {
@@ -495,7 +503,7 @@ export async function hydrateProjectTransactionsCache(
         }
 
         const { transaction } = await transactionService._getTransactionByIdOffline(accountId, txId)
-        if (transaction) {
+        if (transaction && !deletedSet.has(transaction.transactionId)) {
           transactions.push(transaction)
         }
       } catch (error) {

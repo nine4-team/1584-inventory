@@ -778,6 +778,54 @@ class OfflineStore {
     })
   }
 
+  async replaceItemsForProject(
+    accountId: string,
+    projectId: string,
+    items: DBItem[],
+    options?: { keepItemIds?: Set<string> }
+  ): Promise<string[]> {
+    if (!this.db) throw new Error('Database not initialized')
+    if (!projectId) {
+      return []
+    }
+
+    const keepIds = new Set<string>()
+    if (options?.keepItemIds) {
+      options.keepItemIds.forEach(id => {
+        if (id) keepIds.add(id)
+      })
+    }
+    items.forEach(item => {
+      if (item.itemId) {
+        keepIds.add(item.itemId)
+      }
+    })
+
+    const existing = await this.getItems(projectId)
+    const removedIds: string[] = []
+    for (const record of existing) {
+      if (record.accountId && record.accountId !== accountId) {
+        continue
+      }
+      const id = record.itemId
+      if (id && !keepIds.has(id)) {
+        removedIds.push(id)
+      }
+    }
+
+    if (removedIds.length > 0) {
+      for (const id of removedIds) {
+        await this.deleteItem(id)
+      }
+    }
+
+    if (items.length > 0) {
+      await this.saveItems(items)
+    }
+
+    return removedIds
+  }
+
   // Transactions CRUD
   async getTransactions(projectId: string): Promise<DBTransaction[]> {
     if (!this.db) throw new Error('Database not initialized')
@@ -811,6 +859,54 @@ class OfflineStore {
       transaction.oncomplete = () => resolve()
       transaction.onerror = () => reject(transaction.error)
     })
+  }
+
+  async replaceTransactionsForProject(
+    accountId: string,
+    projectId: string,
+    transactions: DBTransaction[],
+    options?: { keepTransactionIds?: Set<string> }
+  ): Promise<string[]> {
+    if (!this.db) throw new Error('Database not initialized')
+    if (!projectId) {
+      return []
+    }
+
+    const keepIds = new Set<string>()
+    if (options?.keepTransactionIds) {
+      options.keepTransactionIds.forEach(id => {
+        if (id) keepIds.add(id)
+      })
+    }
+    transactions.forEach(tx => {
+      if (tx.transactionId) {
+        keepIds.add(tx.transactionId)
+      }
+    })
+
+    const existing = await this.getTransactions(projectId)
+    const removedIds: string[] = []
+    for (const record of existing) {
+      if (record.accountId && record.accountId !== accountId) {
+        continue
+      }
+      const id = record.transactionId
+      if (id && !keepIds.has(id)) {
+        removedIds.push(id)
+      }
+    }
+
+    if (removedIds.length > 0) {
+      for (const id of removedIds) {
+        await this.deleteTransaction(id)
+      }
+    }
+
+    if (transactions.length > 0) {
+      await this.saveTransactions(transactions)
+    }
+
+    return removedIds
   }
 
   // Projects CRUD

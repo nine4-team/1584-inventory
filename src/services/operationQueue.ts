@@ -1631,6 +1631,31 @@ class OperationQueue {
     return pendingIds
   }
 
+  async getEntityIdsWithPendingCreates(
+    entityType: 'item' | 'transaction' | 'project'
+  ): Promise<Set<string>> {
+    await this.init()
+
+    const pendingIds = new Set<string>()
+    const createTypes = this.getCreateOperationTypes(entityType)
+
+    if (createTypes.length === 0) {
+      return pendingIds
+    }
+
+    for (const operation of this.queue) {
+      if (!createTypes.includes(operation.type)) {
+        continue
+      }
+      const entityId = this.extractEntityId(operation)
+      if (entityId) {
+        pendingIds.add(entityId)
+      }
+    }
+
+    return pendingIds
+  }
+
   async removeOperation(operationId: string): Promise<boolean> {
     await this.init()
 
@@ -1748,6 +1773,19 @@ class OperationQueue {
         return ['UPDATE_TRANSACTION', 'DELETE_TRANSACTION']
       case 'project':
         return ['UPDATE_PROJECT', 'DELETE_PROJECT']
+      default:
+        return []
+    }
+  }
+
+  private getCreateOperationTypes(entityType: 'item' | 'transaction' | 'project'): Operation['type'][] {
+    switch (entityType) {
+      case 'item':
+        return ['CREATE_ITEM']
+      case 'transaction':
+        return ['CREATE_TRANSACTION']
+      case 'project':
+        return ['CREATE_PROJECT']
       default:
         return []
     }

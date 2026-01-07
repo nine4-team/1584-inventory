@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Transaction, Item, TransactionCompleteness } from '@/types'
 import { transactionService, unifiedItemsService } from '@/services/inventoryService'
 import { formatCurrency } from '@/utils/dateUtils'
@@ -27,6 +27,25 @@ export default function TransactionAudit({
   const [showSuggested, setShowSuggested] = useState(true)
   const [suggestedItems, setSuggestedItems] = useState<Item[]>([])
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false)
+  const transactionItemIds = useMemo(() => {
+    const ids = new Set<string>()
+
+    const canonicalIds = Array.isArray(transaction.itemIds) ? transaction.itemIds : []
+    for (const id of canonicalIds) {
+      if (typeof id === 'string' && id.length > 0) {
+        ids.add(id)
+      }
+    }
+
+    for (const item of transactionItems) {
+      const id = item.itemId
+      if (typeof id === 'string' && id.length > 0) {
+        ids.add(id)
+      }
+    }
+
+    return ids
+  }, [transaction.itemIds, transactionItems])
 
   // Filter out transaction types that don't require item attribution
   const shouldShowAudit = transaction.transactionType !== 'Return' && 
@@ -87,11 +106,12 @@ export default function TransactionAudit({
           transaction.source,
           5
         )
+        const dedupedItems = (items || []).filter(it => !it.itemId || !transactionItemIds.has(it.itemId))
         // Filter out items whose purchasePrice exceeds remaining amount (subtotal - items total)
-        let filteredItems = items
+        let filteredItems = dedupedItems
         if (completeness) {
           const remaining = completeness.transactionSubtotal - completeness.itemsNetTotal
-          filteredItems = (items || []).filter(it => {
+          filteredItems = dedupedItems.filter(it => {
             const price = parseFloat((it.purchasePrice as any) || '0')
             // If price is NaN treat as 0 (include). Exclude only when price > remaining.
             if (isNaN(price)) return true
@@ -107,7 +127,11 @@ export default function TransactionAudit({
     }
 
     loadSuggestions()
-  }, [currentAccountId, transaction.source, completeness?.completenessStatus])
+  }, [currentAccountId, transaction.source, completeness?.completenessStatus, transactionItemIds])
+
+  useEffect(() => {
+    setSuggestedItems(prev => prev.filter(item => !item.itemId || !transactionItemIds.has(item.itemId)))
+  }, [transactionItemIds])
 
   const handleAddItemToTransaction = async (item: Item) => {
     if (!currentAccountId || !transaction.transactionId) return
@@ -135,11 +159,12 @@ export default function TransactionAudit({
           transaction.source,
           5
         )
+        const dedupedFreshItems = (freshItems || []).filter(it => !it.itemId || !transactionItemIds.has(it.itemId))
         // Apply the same remaining-price filter used by loadSuggestions
-        let filteredItems = freshItems
+        let filteredItems = dedupedFreshItems
         if (completeness) {
           const remaining = completeness.transactionSubtotal - completeness.itemsNetTotal
-          filteredItems = (freshItems || []).filter(it => {
+          filteredItems = dedupedFreshItems.filter(it => {
             const price = parseFloat((it.purchasePrice as any) || '0')
             if (isNaN(price)) return true
             return price <= remaining
