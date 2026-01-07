@@ -19,6 +19,8 @@ import { COMPANY_NAME } from '@/constants/company'
 import type { ItemImage, TransactionItemFormData } from '@/types'
 import { projectTransactionDetail, projectTransactions } from '@/utils/routes'
 import { navigateToReturnToOrFallback } from '@/utils/navigationReturnTo'
+import { loadTransactionItemsWithReconcile } from '@/utils/hydrationHelpers'
+import { getGlobalQueryClient } from '@/utils/queryClient'
 
 function getTodayIsoDate(): string {
   const today = new Date()
@@ -733,7 +735,10 @@ export default function ImportWayfairInvoice() {
     showInfo(`Uploading ${totalUploads} ${assetLabel} in the background. We'll notify you when done.`)
 
     try {
-      const createdItems = await unifiedItemsService.getItemsForTransaction(accountId, workerProjectId, transactionId)
+      const queryClient = getGlobalQueryClient()
+      const createdItems = queryClient
+        ? await loadTransactionItemsWithReconcile(queryClient, accountId, transactionId, { projectId: workerProjectId })
+        : await unifiedItemsService.getItemsForTransaction(accountId, workerProjectId, transactionId)
       const itemsByDescription = new Map<string, string[]>()
       for (const created of createdItems) {
         const key = (created.description || '').trim().toLowerCase()

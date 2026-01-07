@@ -27,6 +27,8 @@ import { projectTransactions } from '@/utils/routes'
 import { navigateToReturnToOrFallback } from '@/utils/navigationReturnTo'
 import { useNetworkState } from '@/hooks/useNetworkState'
 import { getCachedTaxPresets, getCachedVendorDefaults } from '@/services/offlineMetadataService'
+import { loadTransactionItemsWithReconcile } from '@/utils/hydrationHelpers'
+import { getGlobalQueryClient } from '@/utils/queryClient'
 
 export default function AddTransaction() {
   const { id, projectId: routeProjectId } = useParams<{ id?: string; projectId?: string }>()
@@ -438,7 +440,10 @@ export default function AddTransaction() {
         try {
           console.log('Starting image upload process...')
           // Get the created items and extract their IDs
-          const createdItems = await unifiedItemsService.getItemsForTransaction(currentAccountId, projectId, transactionId)
+          const queryClient = getGlobalQueryClient()
+          const createdItems = queryClient
+            ? await loadTransactionItemsWithReconcile(queryClient, currentAccountId, transactionId, { projectId })
+            : await unifiedItemsService.getItemsForTransaction(currentAccountId, projectId, transactionId)
           const createdItemIds = createdItems.map(item => item.itemId)
           console.log('Created item IDs:', createdItemIds)
           console.log('Form items:', items.map(item => ({ id: item.id, description: item.description })))

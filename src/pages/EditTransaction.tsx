@@ -25,7 +25,7 @@ import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { useSyncError } from '@/hooks/useSyncError'
 import { projectTransactionDetail, projectTransactions } from '@/utils/routes'
 import { getReturnToFromLocation, navigateToReturnToOrFallback } from '@/utils/navigationReturnTo'
-import { hydrateTransactionCache } from '@/utils/hydrationHelpers'
+import { hydrateTransactionCache, loadTransactionItemsWithReconcile } from '@/utils/hydrationHelpers'
 import { getGlobalQueryClient } from '@/utils/queryClient'
 
 export default function EditTransaction() {
@@ -276,7 +276,9 @@ export default function EditTransaction() {
 
           // Load transaction items
           try {
-            const transactionItems = await unifiedItemsService.getItemsForTransaction(currentAccountId, projectId, transactionId)
+            const transactionItems = queryClient
+              ? await loadTransactionItemsWithReconcile(queryClient, currentAccountId, transactionId, { projectId })
+              : await unifiedItemsService.getItemsForTransaction(currentAccountId, projectId, transactionId)
             const shouldLogItems = lastLoggedItemsRef.current !== transactionId
             if (shouldLogItems) {
               console.log('Loaded transaction items:', transactionItems)

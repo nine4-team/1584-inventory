@@ -8,6 +8,20 @@ import { offlineStore } from '../services/offlineStore'
 import { unifiedItemsService, transactionService, projectService } from '../services/inventoryService'
 import type { Item, Transaction, Project } from '../types'
 
+type ReconcileCallbacks = {
+  onHydrated?: (items: Item[]) => void
+  onReconciled?: (items: Item[]) => void
+  logLabel?: string
+}
+
+type LoadProjectItemsOptions = ReconcileCallbacks & {
+  hydrateOptions?: Parameters<typeof hydrateProjectItemsCache>[3]
+}
+
+type LoadTransactionItemsOptions = ReconcileCallbacks & {
+  projectId?: string | null
+}
+
 /**
  * Hydrate React Query cache for a single item from offlineStore
  * This should be called synchronously before rendering to prevent empty state flashes
@@ -173,6 +187,89 @@ export async function hydrateBusinessInventoryCache(
     }
   } catch (error) {
     console.warn('Failed to hydrate business inventory cache:', error)
+  }
+}
+
+/**
+ * Hydrate project items cache and always reconcile with Supabase afterwards.
+ * This mirrors the TransactionsList fix to prevent stale IndexedDB snapshots from persisting.
+ */
+export async function loadProjectItemsWithReconcile(
+  queryClient: QueryClient,
+  accountId: string,
+  projectId: string,
+  options?: LoadProjectItemsOptions
+): Promise<Item[]> {
+  const cacheKey = ['project-items', accountId, projectId] as const
+
+  await hydrateProjectItemsCache(queryClient, accountId, projectId, options?.hydrateOptions)
+
+  let cachedItems = queryClient.getQueryData<Item[]>(cacheKey) ?? []
+  if (cachedItems.length > 0) {
+    options?.onHydrated?.(cachedItems)
+  }
+
+  try {
+    const fetchedItems = await unifiedItemsService.getItemsByProject(accountId, projectId)
+    queryClient.setQueryData(cacheKey, fetchedItems)
+    options?.onReconciled?.(fetchedItems)
+    return fetchedItems
+  } catch (error) {
+    console.warn(
+      `[loadProjectItemsWithReconcile] Falling back to offline project items for ${projectId}`,
+      error
+    )
+    if (cachedItems.length === 0) {
+      cachedItems = await unifiedItemsService._getProjectItemsOffline(accountId, projectId)
+      if (cachedItems.length > 0) {
+        queryClient.setQueryData(cacheKey, cachedItems)
+      }
+    }
+    options?.onReconciled?.(cachedItems)
+    return cachedItems
+  }
+}
+
+/**
+ * Hydrate transaction items cache and always reconcile with Supabase afterwards.
+ */
+export async function loadTransactionItemsWithReconcile(
+  queryClient: QueryClient,
+  accountId: string,
+  transactionId: string,
+  options?: LoadTransactionItemsOptions
+): Promise<Item[]> {
+  const cacheKey = ['transaction-items', accountId, transactionId] as const
+
+  await hydrateTransactionItemsCache(queryClient, accountId, transactionId)
+
+  let cachedItems = queryClient.getQueryData<Item[]>(cacheKey) ?? []
+  if (cachedItems.length > 0) {
+    options?.onHydrated?.(cachedItems)
+  }
+
+  try {
+    const fetchedItems = await unifiedItemsService.getItemsForTransaction(
+      accountId,
+      options?.projectId ?? '',
+      transactionId
+    )
+    queryClient.setQueryData(cacheKey, fetchedItems)
+    options?.onReconciled?.(fetchedItems)
+    return fetchedItems
+  } catch (error) {
+    console.warn(
+      `[loadTransactionItemsWithReconcile] Falling back to offline transaction items for ${transactionId}`,
+      error
+    )
+    if (cachedItems.length === 0) {
+      cachedItems = await unifiedItemsService._getTransactionItemsOffline(accountId, transactionId)
+      if (cachedItems.length > 0) {
+        queryClient.setQueryData(cacheKey, cachedItems)
+      }
+    }
+    options?.onReconciled?.(cachedItems)
+    return cachedItems
   }
 }
 
