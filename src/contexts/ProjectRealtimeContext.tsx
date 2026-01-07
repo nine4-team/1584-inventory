@@ -7,6 +7,8 @@ import { isNetworkOnline, subscribeToNetworkStatus, getNetworkStatusSnapshot } f
 import { offlineStore } from '@/services/offlineStore'
 import { registerSnapshotRefreshCallback } from '@/utils/realtimeSnapshotUpdater'
 import { onSyncEvent } from '@/services/serviceWorker'
+import { loadProjectItemsWithReconcile } from '@/utils/hydrationHelpers'
+import { getGlobalQueryClient } from '@/utils/queryClient'
 
 type ProjectRealtimeTelemetry = {
   activeChannelCount: number
@@ -322,7 +324,26 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
   const fetchAndStoreItems = useCallback(
     async (projectId: string): Promise<Item[]> => {
       if (!currentAccountId) return []
-      const itemsData = await unifiedItemsService.getItemsByProject(currentAccountId, projectId)
+      const queryClient = getGlobalQueryClient()
+      let itemsData: Item[] = []
+
+      if (queryClient) {
+        itemsData = await loadProjectItemsWithReconcile(queryClient, currentAccountId, projectId, {
+          onHydrated: hydrated => {
+            if (!hydrated.length) return
+            setEntry(projectId, entry => {
+              if (entry.items.length > 0) return entry
+              return {
+                ...entry,
+                items: hydrated,
+              }
+            })
+          },
+        })
+      } else {
+        itemsData = await unifiedItemsService.getItemsByProject(currentAccountId, projectId)
+      }
+
       setEntry(projectId, entry => ({
         ...entry,
         items: itemsData,

@@ -2,7 +2,7 @@
 
 **Author:** GPT-5.1 Codex  
 **Date:** 2026-01-07  
-**Status:** Draft
+**Status:** Implemented (2026-01-07)
 
 ## Context
 - Transaction lists now hydrate from `offlineStore` but always follow with `transactionService.getTransactions`, preventing deleted rows from resurfacing after navigation.
@@ -52,4 +52,10 @@
 - Every item list that previously relied on cache-only hydration now issues a follow-up fetch and seeds subscriptions with the result.
 - No “ghost” items remain after deleting/moving entries and immediately returning to the list without a hard refresh.
 - Documentation (this doc + relevant findings) updated with verification notes and any follow-up actions.
+
+## Implementation Notes (2026-01-07)
+- Added `loadProjectItemsWithReconcile` / `loadTransactionItemsWithReconcile` helpers that hydrate React Query from IndexedDB, then always run a Supabase fetch with offline fallback logging.
+- `ProjectRealtimeContext.fetchAndStoreItems` now uses the helper so the realtime seed never stalls on stale cache entries.
+- `ItemDetail` no longer returns early when cached data exists; it serves the cache immediately but still awaits the network reconciliation before finishing the effect.
+- Transaction-driven entry points (`TransactionDetail`, `EditTransaction`, `AddTransaction`, `ImportWayfairInvoice`) now call the reconcile helper whenever they need authoritative transaction items, so wizards, detail views, and background uploads all receive fresh IDs even if React Query already had data.
 

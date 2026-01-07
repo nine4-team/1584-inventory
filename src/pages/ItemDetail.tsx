@@ -117,6 +117,7 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
           // Check React Query cache first (for optimistic items created offline)
           const queryClient = getGlobalQueryClient()
           const cachedItem = queryClient.getQueryData<Item>(['item', currentAccountId, actualItemId])
+          const servedFromCache = Boolean(cachedItem)
           
           if (cachedItem) {
             console.log('✅ Item found in React Query cache:', cachedItem.itemId)
@@ -135,22 +136,6 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
               }
             }
             setIsLoadingItem(false)
-
-            // Background refresh to replace stale cache entry
-            ;(async () => {
-              try {
-                const freshItem = await unifiedItemsService.getItemById(currentAccountId, actualItemId)
-                if (freshItem) {
-                  queryClient.setQueryData(['item', currentAccountId, actualItemId], freshItem)
-                  setItem(freshItem)
-                }
-              } catch (error) {
-                console.warn('Failed to refresh item after serving cache:', error)
-              }
-            })().catch(() => {
-              // errors already logged above
-            })
-            return
           }
           
           if (isBusinessInventoryItem) {
@@ -159,9 +144,10 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
 
             if (fetchedItem) {
               console.log('✅ Business inventory item loaded successfully:', fetchedItem.itemId)
+              queryClient.setQueryData(['item', currentAccountId, actualItemId], fetchedItem)
               setItem(fetchedItem)
               setProjectName('Business Inventory') // Set a default project name for UI display
-            } else {
+            } else if (!servedFromCache) {
               console.error('❌ Business inventory item not found with ID:', actualItemId)
               setItem(null)
             }
@@ -174,8 +160,9 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
 
             if (fetchedItem) {
               console.log('✅ Item loaded successfully:', fetchedItem.itemId)
+              queryClient.setQueryData(['item', currentAccountId, actualItemId], fetchedItem)
               setItem(fetchedItem)
-            } else {
+            } else if (!servedFromCache) {
               console.error('❌ Item not found in project:', projectId, 'with ID:', actualItemId)
               setItem(null)
             }
@@ -186,7 +173,9 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
             }
           } else {
             console.error('❌ No project ID found in URL parameters')
-            setItem(null)
+            if (!servedFromCache) {
+              setItem(null)
+            }
           }
         } catch (error) {
           console.error('❌ Failed to fetch item:', error)

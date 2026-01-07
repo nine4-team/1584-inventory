@@ -25,7 +25,7 @@ import { useAccount } from '@/contexts/AccountContext'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
 import { useNetworkState } from '@/hooks/useNetworkState'
-import { hydrateOptimisticItem, hydrateTransactionCache } from '@/utils/hydrationHelpers'
+import { hydrateOptimisticItem, hydrateTransactionCache, loadTransactionItemsWithReconcile } from '@/utils/hydrationHelpers'
 import { getGlobalQueryClient } from '@/utils/queryClient'
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import TransactionAudit from '@/components/ui/TransactionAudit'
@@ -259,6 +259,24 @@ export default function TransactionDetail() {
     return `/business-inventory/transaction/null/${transactionId}/edit`
   }, [projectId, transaction?.projectId, transactionId])
 
+  const fetchItemsViaReconcile = useCallback(
+    async (projectScope?: string | null) => {
+      if (!currentAccountId || !transactionId) return []
+      const queryClient = getGlobalQueryClient()
+      if (queryClient) {
+        return await loadTransactionItemsWithReconcile(queryClient, currentAccountId, transactionId, {
+          projectId: projectScope ?? undefined,
+        })
+      }
+      return await unifiedItemsService.getItemsForTransaction(
+        currentAccountId,
+        projectScope ?? '',
+        transactionId
+      )
+    },
+    [currentAccountId, transactionId]
+  )
+
   // Refresh transaction items
   const refreshTransactionItems = useCallback(async () => {
     if (!currentAccountId || !transactionId) return
@@ -276,7 +294,7 @@ export default function TransactionDetail() {
         itemIds = itemIdsFromTransaction
       } else {
         // Fallback: query items by transaction_id when itemIds is empty or missing
-        const transactionItems = await unifiedItemsService.getItemsForTransaction(currentAccountId, actualProjectId, transactionId)
+        const transactionItems = await fetchItemsViaReconcile(actualProjectId)
         itemIds = transactionItems.map(item => item.itemId)
       }
       const itemsPromises = itemIds.map(id => unifiedItemsService.getItemById(currentAccountId, id))
@@ -302,7 +320,7 @@ export default function TransactionDetail() {
     } catch (error) {
       console.error('Error refreshing transaction items:', error)
     }
-  }, [currentAccountId, projectId, transactionId])
+  }, [currentAccountId, projectId, transactionId, fetchItemsViaReconcile])
 
   const handleDeletePersistedItem = async (itemId: string) => {
     if (!currentAccountId) {
@@ -449,7 +467,7 @@ export default function TransactionDetail() {
             // Fallback: query items by transaction_id when itemIds is empty or missing
             console.log('TransactionDetail - itemIds empty, falling back to getItemsForTransaction')
             try {
-              const transactionItems = await unifiedItemsService.getItemsForTransaction(currentAccountId, actualProjectId || undefined, transactionId)
+              const transactionItems = await fetchItemsViaReconcile(actualProjectId)
               const itemIds = transactionItems.map(item => item.itemId)
               const itemsPromises = itemIds.map(id => unifiedItemsService.getItemById(currentAccountId, id))
               const items = await Promise.all(itemsPromises)
@@ -495,7 +513,7 @@ export default function TransactionDetail() {
     }
 
     loadTransaction()
-  }, [projectId, transactionId, currentAccountId])
+  }, [projectId, transactionId, currentAccountId, fetchItemsViaReconcile])
 
   useEffect(() => {
     if (!currentAccountId || !transactionId) return
