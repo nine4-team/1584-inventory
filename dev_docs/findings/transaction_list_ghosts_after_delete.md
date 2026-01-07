@@ -1,7 +1,7 @@
 # Transaction list shows deleted rows after creating new transaction
 
 **Reported:** 2026-01-07  
-**Status:** Investigating  
+**Status:** Resolved (2026-01-07)  
 
 ## Summary
 After deleting all but two transactions and then creating a new transaction in a fresh dev session, the Projects → Transactions list  repopulates with previously deleted “ghost” rows as soon as the form navigates back to the list view. A manual browser refresh clears the ghosts, which means Supabase data is correct but the UI is rehydrating from stale local caches.
@@ -52,10 +52,11 @@ After deleting all but two transactions and then creating a new transaction in a
 - The delete flow (`transactionService.deleteTransaction` and `operationQueue.executeDeleteTransaction`) is supposed to delete from IndexedDB and remove cached queries. Either the IndexedDB delete is failing silently or there is another path (e.g., bulk deletes, multi-project lists) that does not call the cleanup helpers.
 - Because a hard refresh clears the ghosts, Supabase is returning the correct dataset; the bug is strictly cache/hydration related.
 
-## Next steps
-1. Reproduce locally with devtools open and verify whether `offlineStore.deleteTransaction` is throwing (look for “Failed to purge transaction from offline store...” warnings).
-2. Inspect IndexedDB (`ledger-offline` → `transactions`) after deleting to confirm whether the rows are actually removed.
-3. Add instrumentation inside `hydrateProjectTransactionsCache` to log which transaction IDs are being primed; compare to the server response that follows.
-4. If deletes are happening while offline, ensure that the queued DELETE operation removes the cached transaction immediately (not only after replay).
-5. Update `TransactionsList` (and any other hydrators) so they always trigger `transactionService.getTransactions` in the background even when hydration produced records, otherwise stale offline caches will never reconcile on navigation changes.
+## Resolution (2026-01-07)
+Transactions now refresh from Supabase even after a successful offline hydration so that stale IndexedDB snapshots can never be the final truth on re-entry to the list:
+
+- `TransactionsList` continues to hydrate React Query from `offlineStore` to prevent empty flashes, but it now unconditionally calls `transactionService.getTransactions` right after hydration and overwrites the React state with the fresh server payload once it arrives.
+- The realtime subscription is only established after that fetch (or with the freshest cached snapshot when offline), ensuring the subscription’s internal cache starts from the authoritative dataset and cannot reintroduce ghost rows.
+
+Manual verification: deleting all but two transactions, creating a new one, and returning to the list no longer rehydrates phantom rows; the list matches Supabase immediately without requiring a browser refresh.
 

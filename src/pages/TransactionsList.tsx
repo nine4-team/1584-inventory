@@ -92,7 +92,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     let unsubscribe: (() => void) | undefined
 
     const setupSubscription = (initialTransactions: Transaction[]) => {
-      if (!projectId || !currentAccountId) return
+      if (!projectId || !currentAccountId || unsubscribe) return
       unsubscribe = transactionService.subscribeToTransactions(
         currentAccountId,
         projectId,
@@ -111,6 +111,9 @@ export default function TransactionsList({ projectId: propProjectId, transaction
 
       // Only load if transactions were not passed in props
       if (!propTransactions) {
+        let subscriptionSeed: Transaction[] = []
+        let hasCachedSnapshot = false
+
         try {
           // First, try to hydrate from offlineStore to React Query cache
           // This ensures optimistic transactions created offline are available
@@ -124,22 +127,26 @@ export default function TransactionsList({ projectId: propProjectId, transaction
           const queryClient = getGlobalQueryClient()
           const cachedTransactions = queryClient.getQueryData<Transaction[]>(['project-transactions', currentAccountId, projectId])
           
-          let transactionData: Transaction[] = []
           if (cachedTransactions && cachedTransactions.length > 0) {
+            hasCachedSnapshot = true
+            subscriptionSeed = cachedTransactions
             console.log('✅ Transactions found in React Query cache:', cachedTransactions.length)
-            transactionData = cachedTransactions
-          } else {
-            // If not in cache, fetch from service (which will check cache/offlineStore/network)
-            transactionData = await transactionService.getTransactions(currentAccountId, projectId)
+            setTransactions(cachedTransactions)
           }
-          
-          setTransactions(transactionData)
-          setupSubscription(transactionData)
+
+          // Always fetch latest transactions to reconcile any stale cache entries
+          const fetchedTransactions = await transactionService.getTransactions(currentAccountId, projectId)
+          subscriptionSeed = fetchedTransactions
+          setTransactions(fetchedTransactions)
         } catch (error) {
           console.error('Error loading transactions:', error)
-          setTransactions([])
+          if (!hasCachedSnapshot) {
+            setTransactions([])
+          }
         } finally {
           setIsLoading(false)
+          // Start realtime subscription once we have the best-known snapshot
+          setupSubscription(subscriptionSeed)
         }
       }
     }
