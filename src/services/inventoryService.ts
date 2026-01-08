@@ -3844,21 +3844,7 @@ export const unifiedItemsService = {
         })
       }
 
-      // Adjust persisted sum and recompute for the transaction the item belonged to (if any)
-      try {
-        const txId = existingItem?.transactionId ?? null
-        if (txId) {
-          if (!transactionService._isBatchActive(accountId, txId)) {
-            const prevPrice = parseFloat(existingItem?.purchasePrice || '0')
-            const delta = -prevPrice
-            transactionService.notifyTransactionChanged(accountId, txId, { deltaSum: delta }).catch((e: any) => {
-              console.warn('Failed to notifyTransactionChanged after deleting item:', e)
-            })
-          }
-        }
-      } catch (e) {
-        console.warn('Failed to notifyTransactionChanged after deleting item:', e)
-      }
+      // Do not mutate transaction totals here. Transaction amounts are managed independently.
     } catch (error) {
       // Network request failed - fall back to offline queue
       console.warn('Failed to delete item online, falling back to offline queue:', error)
