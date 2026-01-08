@@ -9,14 +9,21 @@ import { Combobox } from '@/components/ui/Combobox'
 
 interface BulkItemControlsProps {
   selectedItemIds: Set<string>
-  projectId: string
-  onAssignToTransaction: (transactionId: string) => Promise<void>
-  onSetLocation: (location: string) => Promise<void>
-  onSetDisposition: (disposition: ItemDisposition) => Promise<void>
-  onSetSku: (sku: string) => Promise<void>
-  onDelete: () => Promise<void>
+  projectId?: string
+  onAssignToTransaction?: (transactionId: string) => Promise<void>
+  onSetLocation?: (location: string) => Promise<void>
+  onSetDisposition?: (disposition: ItemDisposition) => Promise<void>
+  onSetSku?: (sku: string) => Promise<void>
+  onDelete?: () => Promise<void>
   onClearSelection: () => void
   itemListContainerWidth?: number
+  enableAssignToTransaction?: boolean
+  enableLocation?: boolean
+  enableDisposition?: boolean
+  enableSku?: boolean
+  enableDelete?: boolean
+  deleteButtonLabel?: string
+  placement?: 'fixed' | 'container'
 }
 
 export default function BulkItemControls({
@@ -28,9 +35,21 @@ export default function BulkItemControls({
   onSetSku,
   onDelete,
   onClearSelection,
-  itemListContainerWidth
+  itemListContainerWidth,
+  enableAssignToTransaction = true,
+  enableLocation = true,
+  enableDisposition = true,
+  enableSku = true,
+  enableDelete = true,
+  deleteButtonLabel = 'Delete',
+  placement = 'fixed'
 }: BulkItemControlsProps) {
   const { currentAccountId } = useAccount()
+  const canAssign = enableAssignToTransaction && !!onAssignToTransaction
+  const canSetLocation = enableLocation && !!onSetLocation
+  const canSetDisposition = enableDisposition && !!onSetDisposition
+  const canSetSku = enableSku && !!onSetSku
+  const canDelete = enableDelete && !!onDelete
   const [showTransactionDialog, setShowTransactionDialog] = useState(false)
   const [showLocationDialog, setShowLocationDialog] = useState(false)
   const [showDispositionDialog, setShowDispositionDialog] = useState(false)
@@ -46,13 +65,14 @@ export default function BulkItemControls({
 
   // Load transactions when dialog opens
   useEffect(() => {
-    if (showTransactionDialog && currentAccountId && transactions.length === 0) {
+    if (!canAssign) return
+    if (showTransactionDialog && currentAccountId && projectId && transactions.length === 0) {
       loadTransactions()
     }
-  }, [showTransactionDialog, currentAccountId])
+  }, [showTransactionDialog, currentAccountId, canAssign, projectId, transactions.length])
 
   const loadTransactions = async () => {
-    if (!currentAccountId) return
+    if (!currentAccountId || !projectId) return
     setLoadingTransactions(true)
     try {
       const txs = await transactionService.getTransactions(currentAccountId, projectId)
@@ -75,7 +95,7 @@ export default function BulkItemControls({
   }
 
   const handleAssignToTransaction = async () => {
-    if (!selectedTransactionId) return
+    if (!canAssign || !onAssignToTransaction || !selectedTransactionId) return
     setIsProcessing(true)
     try {
       await onAssignToTransaction(selectedTransactionId)
@@ -90,6 +110,7 @@ export default function BulkItemControls({
   }
 
   const handleSetLocation = async () => {
+    if (!canSetLocation || !onSetLocation) return
     setIsProcessing(true)
     try {
       await onSetLocation(locationValue)
@@ -104,7 +125,7 @@ export default function BulkItemControls({
   }
 
   const handleSetDisposition = async () => {
-    if (!selectedDisposition) return
+    if (!canSetDisposition || !onSetDisposition || !selectedDisposition) return
     setIsProcessing(true)
     try {
       await onSetDisposition(selectedDisposition)
@@ -119,6 +140,7 @@ export default function BulkItemControls({
   }
 
   const handleSetSku = async () => {
+    if (!canSetSku || !onSetSku) return
     setIsProcessing(true)
     try {
       await onSetSku(skuValue)
@@ -133,6 +155,7 @@ export default function BulkItemControls({
   }
 
   const handleDelete = async () => {
+    if (!canDelete || !onDelete) return
     setIsProcessing(true)
     try {
       await onDelete()
@@ -149,18 +172,25 @@ export default function BulkItemControls({
     return null
   }
 
+  const isFixedPlacement = placement === 'fixed'
+  const containerClasses = isFixedPlacement
+    ? 'fixed bottom-0 z-50 bg-white border-t border-gray-200 shadow-lg'
+    : 'sticky bottom-0 z-40 bg-white border-t border-gray-200 shadow-lg'
+  const containerStyle = isFixedPlacement
+    ? {
+        width: itemListContainerWidth ? `${itemListContainerWidth}px` : '100%',
+        left: itemListContainerWidth ? '50%' : '0',
+        transform: itemListContainerWidth ? `translateX(-50%)` : 'none',
+        maxWidth: '100%'
+      }
+    : {
+        width: '100%'
+      }
+
   return (
     <>
       {/* Sticky Bulk Controls Container */}
-      <div
-        className="fixed bottom-0 z-50 bg-white border-t border-gray-200 shadow-lg"
-        style={{
-          width: itemListContainerWidth ? `${itemListContainerWidth}px` : '100%',
-          left: itemListContainerWidth ? '50%' : '0',
-          transform: itemListContainerWidth ? `translateX(-50%)` : 'none',
-          maxWidth: '100%'
-        }}
-      >
+      <div className={containerClasses} style={containerStyle}>
         <div className="px-4 py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-gray-700">
@@ -177,55 +207,65 @@ export default function BulkItemControls({
 
           <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             {/* Assign to Transaction */}
-            <button
-              onClick={() => setShowTransactionDialog(true)}
-              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-            >
-              <Receipt className="h-4 w-4" />
-              Assign to Transaction
-            </button>
+            {canAssign && (
+              <button
+                onClick={() => setShowTransactionDialog(true)}
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+              >
+                <Receipt className="h-4 w-4" />
+                Assign to Transaction
+              </button>
+            )}
 
             {/* Set Location */}
-            <button
-              onClick={() => setShowLocationDialog(true)}
-              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-            >
-              <MapPin className="h-4 w-4" />
-              Set Location
-            </button>
+            {canSetLocation && (
+              <button
+                onClick={() => setShowLocationDialog(true)}
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+              >
+                <MapPin className="h-4 w-4" />
+                Set Location
+              </button>
+            )}
 
             {/* Set Disposition */}
-            <button
-              onClick={() => setShowDispositionDialog(true)}
-              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-            >
-              <Tag className="h-4 w-4" />
-              Set Disposition
-            </button>
+            {canSetDisposition && (
+              <button
+                onClick={() => setShowDispositionDialog(true)}
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+              >
+                <Tag className="h-4 w-4" />
+                Set Disposition
+              </button>
+            )}
 
             {/* Set SKU */}
-            <button
-              onClick={() => setShowSkuDialog(true)}
-              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-            >
-              <Tag className="h-4 w-4" />
-              Set SKU
-            </button>
+            {canSetSku && (
+              <button
+                onClick={() => setShowSkuDialog(true)}
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+              >
+                <Tag className="h-4 w-4" />
+                Set SKU
+              </button>
+            )}
 
             {/* Delete */}
-            <button
-              onClick={() => setShowDeleteConfirm(true)}
-              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-700 bg-red-50 border border-red-300 rounded-md hover:bg-red-100 transition-colors"
-            >
-              <Trash2 className="h-4 w-4" />
-              Delete
-            </button>
+            {canDelete && (
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-700 bg-red-50 border border-red-300 rounded-md hover:bg-red-100 transition-colors"
+              >
+                <Trash2 className="h-4 w-4" />
+                {deleteButtonLabel}
+              </button>
+            )}
           </div>
         </div>
       </div>
 
       {/* Transaction Selection Dialog */}
-      {showTransactionDialog && (
+      {canAssign && showTransactionDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
             <div className="px-6 py-4 border-b border-gray-200">
@@ -276,7 +316,7 @@ export default function BulkItemControls({
       )}
 
       {/* Location Input Dialog */}
-      {showLocationDialog && (
+      {canSetLocation && showLocationDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
             <div className="px-6 py-4 border-b border-gray-200">
@@ -322,7 +362,7 @@ export default function BulkItemControls({
       )}
 
       {/* Disposition Selection Dialog */}
-      {showDispositionDialog && (
+      {canSetDisposition && showDispositionDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
             <div className="px-6 py-4 border-b border-gray-200">
@@ -370,7 +410,7 @@ export default function BulkItemControls({
       )}
 
       {/* SKU Input Dialog */}
-      {showSkuDialog && (
+      {canSetSku && showSkuDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
             <div className="px-6 py-4 border-b border-gray-200">
@@ -416,7 +456,7 @@ export default function BulkItemControls({
       )}
 
       {/* Delete Confirmation Dialog */}
-      {showDeleteConfirm && (
+      {canDelete && showDeleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
             <div className="px-6 py-4 border-b border-gray-200">
@@ -440,7 +480,7 @@ export default function BulkItemControls({
                 disabled={isProcessing}
                 className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isProcessing ? 'Deleting...' : 'Delete'}
+                {isProcessing ? 'Deleting...' : deleteButtonLabel}
               </button>
             </div>
           </div>

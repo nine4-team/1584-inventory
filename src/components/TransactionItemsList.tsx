@@ -16,6 +16,7 @@ import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import ContextLink from './ContextLink'
 import type { ItemDisposition } from '@/types'
 import ItemPreviewCard, { type ItemPreviewData } from './items/ItemPreviewCard'
+import BulkItemControls from '@/components/ui/BulkItemControls'
 
 interface TransactionItemsListProps {
   items: TransactionItemFormData[]
@@ -63,6 +64,8 @@ export default function TransactionItemsList({
   const [sortMode, setSortMode] = useState<'alphabetical' | 'price'>('alphabetical')
   const [showSortMenu, setShowSortMenu] = useState(false)
   const [shouldStick, setShouldStick] = useState(true)
+  const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null)
+  const [bulkControlsWidth, setBulkControlsWidth] = useState<number | undefined>(undefined)
   const { currentAccountId } = useAccount()
   const { buildContextUrl } = useNavigationContext()
   const { refreshCollections: refreshProjectCollections } = useProjectRealtime(projectId)
@@ -180,6 +183,42 @@ export default function TransactionItemsList({
       window.removeEventListener('resize', checkScrollPosition)
     }
   }, [containerId])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !containerId) {
+      setBulkControlsWidth(undefined)
+      return
+    }
+
+    const updateWidth = () => {
+      const container = document.getElementById(containerId)
+      if (container) {
+        setBulkControlsWidth(container.getBoundingClientRect().width)
+      }
+    }
+
+    updateWidth()
+
+    const containerElement = document.getElementById(containerId)
+    if (containerElement && 'ResizeObserver' in window) {
+      const resizeObserver = new ResizeObserver(() => updateWidth())
+      resizeObserver.observe(containerElement)
+      return () => {
+        resizeObserver.disconnect()
+      }
+    }
+
+    window.addEventListener('resize', updateWidth)
+    return () => {
+      window.removeEventListener('resize', updateWidth)
+    }
+  }, [containerId])
+
+  useEffect(() => {
+    if (selectedItemIds.size === 0 && bulkDeleteError) {
+      setBulkDeleteError(null)
+    }
+  }, [selectedItemIds, bulkDeleteError])
 
   // Close menus when clicking outside
   useEffect(() => {
@@ -758,6 +797,63 @@ export default function TransactionItemsList({
     closeMergeDialog()
   }
 
+  const handleBulkDeleteSelected = async () => {
+    if (selectedItemIds.size === 0) {
+      return
+    }
+
+    const itemsToDelete = items.filter(item => item.id && selectedItemIds.has(item.id))
+    if (itemsToDelete.length === 0) {
+      return
+    }
+
+    setBulkDeleteError(null)
+    const successfullyDeleted = new Set<string>()
+    const failedDeletes: string[] = []
+
+    for (const item of itemsToDelete) {
+      const itemId = item.id
+      if (!itemId) {
+        continue
+      }
+
+      let shouldRemove = true
+      if (onDeleteItem) {
+        try {
+          const result = await onDeleteItem(itemId, item)
+          if (result === false) {
+            shouldRemove = false
+          }
+        } catch (error) {
+          console.error('TransactionItemsList: failed to delete item via bulk action', error)
+          shouldRemove = false
+        }
+      }
+
+      if (shouldRemove) {
+        successfullyDeleted.add(itemId)
+      } else {
+        failedDeletes.push(itemId)
+      }
+    }
+
+    if (successfullyDeleted.size > 0) {
+      const remainingItems = items.filter(item => !successfullyDeleted.has(item.id))
+      onItemsChange(remainingItems)
+      setSelectedItemIds(prev => {
+        const next = new Set(prev)
+        successfullyDeleted.forEach(id => next.delete(id))
+        return next
+      })
+    }
+
+    if (failedDeletes.length > 0) {
+      setBulkDeleteError(`Failed to delete ${failedDeletes.length} item${failedDeletes.length > 1 ? 's' : ''}. Please try again.`)
+    } else {
+      setBulkDeleteError(null)
+    }
+  }
+
   if (isAddingItem || editingItemId) {
     const itemToEdit = getItemToEdit()
     return (
@@ -784,7 +880,7 @@ export default function TransactionItemsList({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="relative space-y-4">
       {items.length > 0 && showSelectionControls && (
         <div className={`z-10 bg-white border-b border-gray-200 py-3 mb-4 ${shouldStick ? 'sticky top-0' : ''}`}>
           <div className="flex flex-wrap items-center gap-3">
@@ -915,6 +1011,9 @@ export default function TransactionItemsList({
               />
             </div>
           </div>
+          {bulkDeleteError && (
+            <p className="mt-2 text-sm text-red-600">{bulkDeleteError}</p>
+          )}
         </div>
       )}
 
@@ -1049,7 +1148,21 @@ export default function TransactionItemsList({
           </div>
         )}
       </div>
-
+      {showSelectionControls && (
+        <BulkItemControls
+          selectedItemIds={selectedItemIds}
+          projectId={projectId}
+          onDelete={handleBulkDeleteSelected}
+          onClearSelection={() => setSelectedItemIds(new Set())}
+          itemListContainerWidth={bulkControlsWidth}
+          enableAssignToTransaction={false}
+          enableLocation={false}
+          enableDisposition={false}
+          enableSku={false}
+          deleteButtonLabel="Delete selected items"
+          placement="container"
+        />
+      )}
     </div>
   )
 }
