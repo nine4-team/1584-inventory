@@ -107,7 +107,7 @@ export default function TransactionDetail() {
   const [project, setProject] = useState<Project | null>(null)
   const transactionRef = useRef<Transaction | null>(null)
   const derivedRealtimeProjectId = projectId || transaction?.projectId || null
-  const { refreshCollections: refreshRealtimeCollections } = useProjectRealtime(derivedRealtimeProjectId)
+  const { refreshCollections: refreshRealtimeCollections, items: realtimeProjectItems } = useProjectRealtime(derivedRealtimeProjectId)
   const refreshRealtimeAfterWrite = useCallback(
     (includeProject = false) => {
       if (!derivedRealtimeProjectId) return Promise.resolve()
@@ -134,10 +134,12 @@ export default function TransactionDetail() {
   // Transaction items state - using TransactionItemFormData like the edit screen
   const [items, setItems] = useState<TransactionItemFormData[]>([])
   const initialItemsRef = useRef<TransactionItemFormData[] | null>(null)
+  const realtimeTransactionItemIdsRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     transactionRef.current = transaction
   }, [transaction])
+
 
   const snapshotInitialItems = (displayItems: TransactionItemFormData[]) => {
     try {
@@ -286,20 +288,8 @@ export default function TransactionDetail() {
     if (!actualProjectId || !activeTransaction) return
 
     try {
-      // Use transaction.itemIds to include moved items (same logic as main useEffect)
-      const itemIdsFromTransaction = Array.isArray(activeTransaction.itemIds) ? activeTransaction.itemIds : []
-      let itemIds: string[]
-
-      if (itemIdsFromTransaction.length > 0) {
-        itemIds = itemIdsFromTransaction
-      } else {
-        // Fallback: query items by transaction_id when itemIds is empty or missing
-        const transactionItems = await fetchItemsViaReconcile(actualProjectId)
-        itemIds = transactionItems.map(item => item.itemId)
-      }
-      const itemsPromises = itemIds.map(id => unifiedItemsService.getItemById(currentAccountId, id))
-      const fetchedItems = await Promise.all(itemsPromises)
-      let validItems = fetchedItems.filter(item => item !== null) as Item[]
+      const transactionItems = await fetchItemsViaReconcile(actualProjectId)
+      let validItems = transactionItems.filter(item => item !== null) as Item[]
 
       // Include items that were moved out of this transaction by consulting lineage edges.
       // The UI displays both "in transaction" and "moved out" items; we need to load moved items too.
@@ -322,24 +312,83 @@ export default function TransactionDetail() {
     }
   }, [currentAccountId, projectId, transactionId, fetchItemsViaReconcile])
 
-  const handleDeletePersistedItem = async (itemId: string) => {
-    if (!currentAccountId) {
-      showError('You must belong to an account to delete items.')
-      return false
+  useEffect(() => {
+    if (!transactionId || !realtimeProjectItems || realtimeProjectItems.length === 0) {
+      realtimeTransactionItemIdsRef.current = new Set()
+      return
     }
 
-    try {
-      await unifiedItemsService.deleteItem(currentAccountId, itemId)
-      await refreshTransactionItems()
-      await refreshRealtimeAfterWrite()
-      showSuccess('Item deleted successfully')
-      return true
-    } catch (error) {
-      console.error('Error deleting item:', error)
-      showError('Failed to delete item. Please try again.')
-      return false
+    const relevantItemIds = new Set(
+      realtimeProjectItems
+        .filter(item => item?.transactionId === transactionId || item?.latestTransactionId === transactionId)
+        .map(item => item.itemId)
+        .filter((id): id is string => Boolean(id))
+    )
+
+    const prevIds = realtimeTransactionItemIdsRef.current
+    let hasChange = relevantItemIds.size !== prevIds.size
+
+    if (!hasChange) {
+      for (const id of relevantItemIds) {
+        if (!prevIds.has(id)) {
+          hasChange = true
+          break
+        }
+      }
     }
-  }
+
+    if (hasChange) {
+      realtimeTransactionItemIdsRef.current = relevantItemIds
+      refreshTransactionItems().catch(err => console.debug('TransactionDetail: realtime refresh failed', err))
+    }
+  }, [realtimeProjectItems, transactionId, refreshTransactionItems])
+
+  const handleDeletePersistedItems = useCallback(
+    async (itemIds: string[]) => {
+      if (!currentAccountId) {
+        showError('You must belong to an account to delete items.')
+        return false
+      }
+
+      if (itemIds.length === 0) {
+        return true
+      }
+
+      const deletionResults = await Promise.allSettled(
+        itemIds.map(itemId => unifiedItemsService.deleteItem(currentAccountId, itemId))
+      )
+
+      let successCount = 0
+      let errorCount = 0
+
+      deletionResults.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          successCount++
+          return
+        }
+
+        errorCount++
+        console.error(`Error deleting item ${itemIds[index]}:`, result.reason)
+      })
+
+      if (successCount > 0) {
+        await refreshTransactionItems()
+        await refreshRealtimeAfterWrite()
+        const message =
+          successCount === 1
+            ? 'Item deleted successfully'
+            : `${successCount} items deleted successfully`
+        showSuccess(message)
+      }
+
+      if (errorCount > 0) {
+        showError('Failed to delete some items. Please try again.')
+      }
+
+      return errorCount === 0
+    },
+    [currentAccountId, refreshRealtimeAfterWrite, refreshTransactionItems, showError, showSuccess]
+  )
 
   useEffect(() => {
     const loadTransaction = async () => {
@@ -1040,29 +1089,36 @@ export default function TransactionDetail() {
     }
   }
 
+  const buildCreateItemPayload = (item: TransactionItemFormData) => {
+    if (!projectId || !transactionId || !transaction) {
+      throw new Error('Transaction context is missing for item creation')
+    }
+    const { disposition, ...rest } = item
+    return {
+      ...rest,
+      projectId,
+      transactionId,
+      dateCreated: transaction.transactionDate || new Date().toISOString(),
+      source: transaction.source,
+      inventoryStatus: 'available' as const,
+      paymentMethod: 'Unknown',
+      qrKey: `QR-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      bookmark: false,
+      sku: item.sku || '',
+      purchasePrice: item.purchasePrice || '',
+      projectPrice: item.projectPrice || '',
+      marketValue: item.marketValue || '',
+      notes: item.notes || '',
+      space: item.space || '',
+      disposition: normalizeDisposition(disposition)
+    }
+  }
+
   const handleCreateItem = async (item: TransactionItemFormData) => {
     if (!projectId || !transactionId || !transaction || !currentAccountId) return
 
     try {
-      const { disposition, ...rest } = item
-      const itemData = {
-        ...rest,
-        projectId: projectId,
-        transactionId: transactionId,
-        dateCreated: transaction.transactionDate || new Date().toISOString(),
-        source: transaction.source,
-        inventoryStatus: 'available' as const,
-        paymentMethod: 'Unknown',
-        qrKey: `QR-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-        bookmark: false,
-        sku: item.sku || '',
-        purchasePrice: item.purchasePrice || '',
-        projectPrice: item.projectPrice || '',
-        marketValue: item.marketValue || '',
-        notes: item.notes || '',
-        space: item.space || '',
-        disposition: normalizeDisposition(disposition)
-      }
+      const itemData = buildCreateItemPayload(item)
 
       const createResult = await unifiedItemsService.createItem(currentAccountId, itemData)
       const itemId = createResult.itemId
@@ -1084,6 +1140,28 @@ export default function TransactionDetail() {
     } catch (error) {
       console.error('Error adding item:', error)
       showError('Failed to add item. Please try again.')
+    }
+  }
+
+  const handleDuplicateTransactionItem = async (item: TransactionItemFormData) => {
+    if (!projectId || !transactionId || !transaction || !currentAccountId) return
+
+    try {
+      const duplicatePayload = buildCreateItemPayload(item)
+      const createResult = await unifiedItemsService.createItem(currentAccountId, duplicatePayload)
+      await hydrateOptimisticItem(currentAccountId, createResult.itemId, duplicatePayload)
+
+      await refreshTransactionItems()
+      await refreshRealtimeAfterWrite()
+
+      if (createResult.mode === 'offline') {
+        showOfflineSaved(createResult.operationId)
+      } else {
+        showSuccess('Item duplicated successfully')
+      }
+    } catch (error) {
+      console.error('Error duplicating item:', error)
+      showError('Failed to duplicate item. Please try again.')
     }
   }
 
@@ -1499,18 +1577,14 @@ export default function TransactionDetail() {
                 <div>
                   <TransactionItemsList
                     items={itemsInTransaction}
-                    onItemsChange={(updatedItems) => {
-                      // Handle item updates, deletions, additions
-                      console.log('Items changed:', updatedItems)
-                      // For now, just refresh the transaction items
-                      refreshTransactionItems()
-                    }}
+                    onItemsChange={() => {}}
                     onAddItem={handleCreateItem}
                     onUpdateItem={handleUpdateItem}
+                    onDuplicateItem={handleDuplicateTransactionItem}
                     projectId={projectId}
                     projectName={project?.name}
                     onImageFilesChange={handleImageFilesChange}
-                    onDeleteItem={handleDeletePersistedItem}
+                    onDeleteItems={handleDeletePersistedItems}
                     containerId="transaction-items-container"
                   />
                 </div>
@@ -1523,18 +1597,14 @@ export default function TransactionDetail() {
                   <div className="opacity-60">
                     <TransactionItemsList
                       items={itemsMovedOut}
-                      onItemsChange={(updatedItems) => {
-                        // Handle item updates, deletions, additions for moved items too
-                        console.log('Moved items changed:', updatedItems)
-                        // For now, just refresh the transaction items
-                        refreshTransactionItems()
-                      }}
+                      onItemsChange={() => {}}
                       onAddItem={handleCreateItem}
                       onUpdateItem={handleUpdateItem}
+                      onDuplicateItem={handleDuplicateTransactionItem}
                       projectId={projectId}
                       projectName={project?.name}
                       onImageFilesChange={handleImageFilesChange}
-                      onDeleteItem={handleDeletePersistedItem}
+                      onDeleteItems={handleDeletePersistedItems}
                       showSelectionControls={false}
                     />
                   </div>
