@@ -23,12 +23,14 @@ interface TransactionItemsListProps {
   onItemsChange: (items: TransactionItemFormData[]) => void
   onAddItem?: (item: TransactionItemFormData) => Promise<void> | void
   onUpdateItem?: (item: TransactionItemFormData) => Promise<void> | void
+  onDuplicateItem?: (item: TransactionItemFormData) => Promise<void> | void
   projectId?: string
   projectName?: string
   onImageFilesChange?: (itemId: string, imageFiles: File[]) => void
   totalAmount?: string // Optional total amount to display instead of calculating from items
   showSelectionControls?: boolean // Whether to show select/merge buttons and checkboxes
   onDeleteItem?: (itemId: string, item: TransactionItemFormData) => Promise<boolean | void> | boolean | void
+  onDeleteItems?: (itemIds: string[], items: TransactionItemFormData[]) => Promise<boolean | void> | boolean | void
   enablePersistedItemFeatures?: boolean // Whether to enable bookmark/disposition features that require persisted items
   containerId?: string // ID of the container element to track for sticky behavior
 }
@@ -38,15 +40,19 @@ export default function TransactionItemsList({
   onItemsChange,
   onAddItem,
   onUpdateItem,
+  onDuplicateItem,
   projectId,
   projectName,
   onImageFilesChange,
   totalAmount,
   showSelectionControls = true,
   onDeleteItem,
+  onDeleteItems,
   enablePersistedItemFeatures = true,
   containerId
 }: TransactionItemsListProps) {
+  const generateTempItemId = () => `item-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+
   const [isAddingItem, setIsAddingItem] = useState(false)
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
   const [viewingItemId, setViewingItemId] = useState<string | null>(null)
@@ -409,6 +415,38 @@ export default function TransactionItemsList({
     const itemToDelete = items.find(item => item.id === itemId)
     if (!itemToDelete) return
 
+    if (onDeleteItems) {
+      setDeletingItemIds(prev => {
+        const next = new Set(prev)
+        next.add(itemId)
+        return next
+      })
+
+      try {
+        const result = await onDeleteItems([itemId], [itemToDelete])
+        if (result === false) {
+          return
+        }
+
+        setSelectedItemIds(prev => {
+          if (!prev.has(itemId)) return prev
+          const next = new Set(prev)
+          next.delete(itemId)
+          return next
+        })
+      } catch (error) {
+        console.error('TransactionItemsList: failed to delete item via batch callback', error)
+      } finally {
+        setDeletingItemIds(prev => {
+          const next = new Set(prev)
+          next.delete(itemId)
+          return next
+        })
+      }
+
+      return
+    }
+
     let shouldRemove = true
 
     if (onDeleteItem) {
@@ -451,10 +489,16 @@ export default function TransactionItemsList({
     const itemToDuplicate = items.find(item => item.id === itemId)
     if (!itemToDuplicate) return
 
+    const isDraftItem = itemToDuplicate.id?.toString().startsWith('item-')
+
+    if (!isDraftItem && onDuplicateItem) {
+      return onDuplicateItem(itemToDuplicate)
+    }
+
     // Create a duplicate with a new ID
     const duplicatedItem: TransactionItemFormData = {
       ...itemToDuplicate,
-      id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: generateTempItemId(),
       // Clear any transaction-specific fields that shouldn't be duplicated
       transactionId: itemToDuplicate.transactionId, // Keep the same transaction ID
     }
@@ -808,6 +852,23 @@ export default function TransactionItemsList({
     }
 
     setBulkDeleteError(null)
+
+    if (onDeleteItems) {
+      try {
+        const itemIds = itemsToDelete.map(item => item.id).filter((id): id is string => Boolean(id))
+        const result = await onDeleteItems(itemIds, itemsToDelete)
+        if (result === false) {
+          setBulkDeleteError('Failed to delete selected items. Please try again.')
+          return
+        }
+        setSelectedItemIds(new Set())
+      } catch (error) {
+        console.error('TransactionItemsList: failed to delete items via batch callback', error)
+        setBulkDeleteError('Failed to delete selected items. Please try again.')
+      }
+      return
+    }
+
     const successfullyDeleted = new Set<string>()
     const failedDeletes: string[] = []
 
