@@ -12,14 +12,17 @@ import { refreshProjectSnapshot } from '@/utils/realtimeSnapshotUpdater'
 import { removeTransactionFromCaches, removeItemFromCaches } from '@/utils/queryCacheHelpers'
 import type { Item, Project, FilterOptions, PaginationOptions, Transaction, TransactionItemFormData, TransactionCompleteness, CompletenessStatus, ItemImage } from '@/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
+import type { QueryClient } from '@tanstack/react-query'
 
 // Lazy import to avoid circular dependencies
-let getGlobalQueryClient: (() => any) | null = null
-function tryGetQueryClient() {
+let getGlobalQueryClient: (() => QueryClient) | null = null
+function tryGetQueryClient(): QueryClient | null {
   try {
     if (!getGlobalQueryClient) {
-      const queryClientModule = require('@/utils/queryClient')
-      getGlobalQueryClient = queryClientModule?.getGlobalQueryClient || null
+      const queryClientModule = require('@/utils/queryClient') as {
+        getGlobalQueryClient?: () => QueryClient
+      }
+      getGlobalQueryClient = queryClientModule?.getGlobalQueryClient ?? null
     }
     if (!getGlobalQueryClient) {
       return null
@@ -45,7 +48,6 @@ type CreateItemOptions = {
 }
 
 const CANONICAL_TRANSACTION_PREFIXES = ['INV_PURCHASE_', 'INV_SALE_', 'INV_TRANSFER_'] as const
-const CANONICAL_AMOUNT_PREFIXES = ['INV_PURCHASE_', 'INV_SALE_'] as const
 
 export const isCanonicalTransactionId = (transactionId: string | null | undefined): boolean => {
   if (!transactionId) return false
@@ -54,7 +56,7 @@ export const isCanonicalTransactionId = (transactionId: string | null | undefine
 
 const isCanonicalAmountTransactionId = (transactionId: string | null | undefined): boolean => {
   if (!transactionId) return false
-  return CANONICAL_AMOUNT_PREFIXES.some(prefix => transactionId.startsWith(prefix))
+  return transactionId.startsWith('INV_PURCHASE_') || transactionId.startsWith('INV_SALE_')
 }
 
 function generateCanonicalTransactionId(): string {
@@ -1477,7 +1479,6 @@ export const transactionService = {
   async getTransactionById(accountId: string, transactionId: string): Promise<{ transaction: Transaction | null; projectId: string | null }> {
     // Check React Query cache first (for optimistic transactions created offline)
     try {
-      const { tryGetQueryClient } = await import('../utils/queryClient')
       const queryClient = tryGetQueryClient()
       if (queryClient) {
         const cachedTransaction = queryClient.getQueryData<Transaction>(['transaction', accountId, transactionId])
@@ -1517,7 +1518,6 @@ export const transactionService = {
 
         // Update React Query cache with fetched transaction
         try {
-          const { tryGetQueryClient } = await import('../utils/queryClient')
           const queryClient = tryGetQueryClient()
           if (queryClient) {
             queryClient.setQueryData(['transaction', accountId, transactionId], enriched[0] || transaction)
@@ -1836,7 +1836,7 @@ export const transactionService = {
     // If a timer is already set, return a promise that will resolve when that timer's work completes.
     if (this._needsReviewTimers[key]) {
       // Create proxy promise that resolves when the existing ongoing promise finishes (if any).
-      const proxy = new Promise<void>((resolve, reject) => {
+      const proxy = new Promise<void>((resolve) => {
         const checkInterval = setInterval(() => {
           if (!this._needsReviewTimers[key] && !this._ongoingNeedsReviewPromises[key]) {
             clearInterval(checkInterval)
@@ -1984,7 +1984,7 @@ export const transactionService = {
           return bTime - aTime
         })
         .slice(0, limit)
-        .map(item => this._convertOfflineItem(item))
+        .map(item => unifiedItemsService._convertOfflineItem(item))
       return filtered
     } catch (error) {
       console.warn('Failed to read offline suggested items:', error)
@@ -3757,7 +3757,6 @@ export const unifiedItemsService = {
 
     // Adjust persisted derived sums and recompute needs_review for affected transactions (old and new)
     try {
-      const projectForTx = (updates.projectId !== undefined ? updates.projectId : existingItem?.projectId) ?? null
       const affected = Array.from(new Set([previousTransactionId, nextTransactionId]).values()).filter(Boolean) as string[]
       const prevPrice = parseFloat(existingItem?.purchasePrice || '0')
       const newPrice = updates.purchasePrice !== undefined ? parseFloat(String(updates.purchasePrice || '0')) : prevPrice
@@ -5175,16 +5174,18 @@ export const unifiedItemsService = {
           .select('*')
           .eq('account_id', accountId)
           .eq('item_id', itemId)
-          .single()
+          .maybeSingle()
 
         if (error) {
-          if (error.code === 'PGRST116') {
-            return null
-          }
           throw error
         }
 
-        if (!data) return null
+        if (!data) {
+          console.warn(
+            `[getItemById] Item ${itemId} not found on server for account ${accountId}; falling back to offline cache`
+          )
+          return null
+        }
         void cacheItemsOffline([data])
         return this._convertItemFromDb(data)
       } catch (error) {
@@ -5411,7 +5412,6 @@ export const unifiedItemsService = {
 // Deallocation Service - Handles inventory designation automation
 export const deallocationService = {
   async _resolvePreviousProjectLink(
-    accountId: string,
     item: Item,
     projectId: string
   ): Promise<{
@@ -5461,7 +5461,7 @@ export const deallocationService = {
       const {
         previousProjectTransactionId,
         previousProjectId
-      } = await this._resolvePreviousProjectLink(accountId, item, projectId)
+      } = await this._resolvePreviousProjectLink(item, projectId)
 
       // If the item is currently linked to an INV_PURCHASE for the same project,
       // this is a purchase-reversion: remove it from the purchase and return it

@@ -6,6 +6,7 @@
   - The only database trigger in place (`remove_deleted_item_ref`) runs _after delete_ and was previously applied to every transaction. No triggers exist for insert/update, so canonical totals are never recomputed when items are created or edited.
   - Client-side services call `transactionService.notifyTransactionChanged` with `deltaSum`, but that logic is bypassed for many flows (older data, offline queues, direct SQL migrations, business inventory imports, etc.).
   - Historical canonical rows were never backfilled after the bug zeroed them out.
+  - Canonical transactions still rely on `transaction.item_ids` being accurate so recompute jobs know which items to sum. Those arrays currently keep stale IDs when deletes happen outside the canonical triggers, so recomputes can’t tell whether a missing item means “no longer part of this transaction” or “never synced.”
 
 ## Remediation Strategy (Best Practices)
 
@@ -62,6 +63,10 @@
 6. **Monitoring & Observability**
    - Add lightweight logging inside the new trigger function (using `RAISE LOG`) for unexpected NULL sums or missing transactions.
    - Consider a nightly job that scans canonical transactions for mismatches between `amount` and the item sum, raising an alert if any drift is detected.
+
+7. **Keep canonical `item_ids` authoritative**
+   - Whenever canonical transactions are recomputed (via trigger or backfill job), validate that each ID still exists in `public.items`. If a row is missing, remove that ID from `transaction.item_ids` before summing and log it so cache hygiene can be addressed separately.
+   - If recompute encounters duplicate rows for the same `item_id`, raise an alert before applying the sum; canonical totals should reflect the deduped set, not double-counted entries.
 
 ## Deliverables
 1. `supabase/migrations/2026xxxx_sync_canonical_transaction_amounts.sql`
