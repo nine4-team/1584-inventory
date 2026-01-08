@@ -49,7 +49,7 @@ After deleting all but two transactions and then creating a new transaction in a
     }
 ```
   Hard-refresh works only because the new browser session instantiates a fresh React Query client, forcing at least one Supabase fetch (which re-syncs the offline cache) before hydration can reapply stale rows.
-- The delete flow (`transactionService.deleteTransaction` and `operationQueue.executeDeleteTransaction`) is supposed to delete from IndexedDB and remove cached queries. Either the IndexedDB delete is failing silently or there is another path (e.g., bulk deletes, multi-project lists) that does not call the cleanup helpers. Bulk deleting items previously zeroed out transaction totals; fixed in Jan 2026 by removing the delta adjustment in `inventoryService.deleteItem`.
+- The delete flow (`transactionService.deleteTransaction` and `operationQueue.executeDeleteTransaction`) is supposed to delete from IndexedDB and remove cached queries. Either the IndexedDB delete is failing silently or there is another path (e.g., bulk deletes, multi-project lists) that does not call the cleanup helpers. Bulk deleting items previously zeroed out transaction totals; fixed in Jan 2026 by removing the delta adjustment in `inventoryService.deleteItem`, scoping the `remove_deleted_item_ref` trigger to canonical inventory transactions only (`20260107_update_remove_deleted_item_ref.sql`), and eliminating the market-value fallback when recomputing canonical totals (`20260107_remove_market_value_fallback.sql`).
 - Because a hard refresh clears the ghosts, Supabase is returning the correct dataset; the bug is strictly cache/hydration related.
 
 ## Resolution (2026-01-07)
