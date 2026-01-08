@@ -189,6 +189,10 @@ describe('transactionService', () => {
     vi.clearAllMocks()
   })
 
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   describe('_recomputeNeedsReview', () => {
     it('should never flag canonical sale transactions for review', async () => {
       const mockQueryBuilder = createMockSupabaseClient().from('transactions')
@@ -236,6 +240,36 @@ describe('transactionService', () => {
       await (transactionService as any)._recomputeNeedsReview('test-account', 'project-1', 'INV_PURCHASE_project-1')
 
       expect(capturedNeedsReview).toBe(false)
+    })
+  })
+
+  describe('notifyTransactionChanged', () => {
+    it('applies delta adjustments for non-canonical transactions', async () => {
+      const adjustSpy = vi
+        .spyOn(transactionService, 'adjustSumItemPurchasePrices')
+        .mockResolvedValue('0.00')
+      const enqueueSpy = vi
+        .spyOn(transactionService as any, '_enqueueRecomputeNeedsReview')
+        .mockResolvedValue(undefined)
+
+      await transactionService.notifyTransactionChanged('acct-1', 'CUSTOM_TX_123', { deltaSum: 42.5 })
+
+      expect(adjustSpy).toHaveBeenCalledWith('acct-1', 'CUSTOM_TX_123', 42.5)
+      expect(enqueueSpy).toHaveBeenCalledWith('acct-1', null, 'CUSTOM_TX_123')
+    })
+
+    it('skips delta adjustments for canonical transactions', async () => {
+      const adjustSpy = vi
+        .spyOn(transactionService, 'adjustSumItemPurchasePrices')
+        .mockResolvedValue('0.00')
+      const enqueueSpy = vi
+        .spyOn(transactionService as any, '_enqueueRecomputeNeedsReview')
+        .mockResolvedValue(undefined)
+
+      await transactionService.notifyTransactionChanged('acct-1', 'INV_PURCHASE_project-123', { deltaSum: 10 })
+
+      expect(adjustSpy).not.toHaveBeenCalled()
+      expect(enqueueSpy).toHaveBeenCalledWith('acct-1', null, 'INV_PURCHASE_project-123')
     })
   })
 })

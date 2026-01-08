@@ -45,10 +45,16 @@ type CreateItemOptions = {
 }
 
 const CANONICAL_TRANSACTION_PREFIXES = ['INV_PURCHASE_', 'INV_SALE_', 'INV_TRANSFER_'] as const
+const CANONICAL_AMOUNT_PREFIXES = ['INV_PURCHASE_', 'INV_SALE_'] as const
 
 export const isCanonicalTransactionId = (transactionId: string | null | undefined): boolean => {
   if (!transactionId) return false
   return CANONICAL_TRANSACTION_PREFIXES.some(prefix => transactionId.startsWith(prefix))
+}
+
+const isCanonicalAmountTransactionId = (transactionId: string | null | undefined): boolean => {
+  if (!transactionId) return false
+  return CANONICAL_AMOUNT_PREFIXES.some(prefix => transactionId.startsWith(prefix))
 }
 
 function generateCanonicalTransactionId(): string {
@@ -1249,17 +1255,21 @@ export const transactionService = {
     return await _adjustSumItemPurchasePrices(accountId, transactionId, delta)
   },
   async notifyTransactionChanged(accountId: string, transactionId: string, opts?: { deltaSum?: number | string; flushImmediately?: boolean }): Promise<void> {
-    // If a delta for the derived sum was provided, adjust the persisted sum first
-    if (opts && opts.deltaSum !== undefined) {
+    const deltaSum = opts?.deltaSum
+    const flushImmediately = opts?.flushImmediately
+    const isCanonicalAmount = isCanonicalAmountTransactionId(transactionId)
+
+    // Only non-canonical transactions rely on client-provided deltas
+    if (deltaSum !== undefined && !isCanonicalAmount) {
       try {
-        await _adjustSumItemPurchasePrices(accountId, transactionId, opts.deltaSum)
+        await transactionService.adjustSumItemPurchasePrices(accountId, transactionId, deltaSum)
       } catch (e) {
         console.warn('notifyTransactionChanged - failed to adjust sum_item_purchase_prices:', e)
       }
     }
 
     // Enqueue recompute; if flushImmediately requested, set debounceMs = 0
-    const debounceMs = opts && opts.flushImmediately ? 0 : undefined
+    const debounceMs = flushImmediately ? 0 : undefined
     try {
       // projectId unknown here; pass null so recompute reads transaction directly
       if (debounceMs === 0) {
