@@ -37,6 +37,10 @@ export default defineConfig({
       strategies: 'injectManifest',
       srcDir: 'public',
       filename: 'sw-custom.js',
+      injectManifest: {
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest,json}'],
+        maximumFileSizeToCacheInBytes: 10 * 1024 * 1024
+      },
       // Registration handled manually via virtual:pwa-register helper
       registerType: 'autoUpdate',
       injectRegister: null,
