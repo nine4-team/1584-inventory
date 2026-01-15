@@ -4,13 +4,13 @@ import { toDateOnlyString } from '@/utils/dateUtils'
 import { getTaxPresetById } from './taxPresetsService'
 import { CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { lineageService } from './lineageService'
-import { offlineStore, type DBItem, type DBTransaction, type DBProject } from './offlineStore'
+import { offlineStore, type DBItem, type DBTransaction, type DBProject, mapItemToDBItem, mapProjectToDBProject } from './offlineStore'
 import { isNetworkOnline, withNetworkTimeout, NetworkTimeoutError } from './networkStatusService'
 import { OfflineQueueUnavailableError } from './offlineItemService'
 import { operationQueue, OfflineContextError } from './operationQueue'
 import { refreshProjectSnapshot } from '@/utils/realtimeSnapshotUpdater'
 import { removeTransactionFromCaches, removeItemFromCaches } from '@/utils/queryCacheHelpers'
-import type { Item, Project, FilterOptions, PaginationOptions, Transaction, TransactionItemFormData, TransactionCompleteness, CompletenessStatus, ItemImage } from '@/types'
+import type { Item, Project, FilterOptions, PaginationOptions, Transaction, TransactionItemFormData, TransactionCompleteness, CompletenessStatus, ItemImage, ItemDisposition } from '@/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import type { QueryClient } from '@tanstack/react-query'
 
@@ -103,11 +103,12 @@ async function cacheTransactionsOffline(rows: any[]) {
       'transaction',
       row => row?.transaction_id ?? row?.id ?? null
     )
-    if (filteredRows.length === 0) {
+    const pendingFilteredRows = await filterTransactionRowsWithPendingItemIds(filteredRows)
+    if (pendingFilteredRows.length === 0) {
       return
     }
     await offlineStore.init()
-    const dbTransactions: DBTransaction[] = filteredRows.map(mapSupabaseTransactionToOfflineRecord)
+    const dbTransactions: DBTransaction[] = pendingFilteredRows.map(mapSupabaseTransactionToOfflineRecord)
     await offlineStore.saveTransactions(dbTransactions)
   } catch (error) {
     console.warn('Failed to cache transactions offline:', error)
@@ -162,6 +163,177 @@ async function filterRowsWithPendingWrites<T>(
   }
 }
 
+async function filterTransactionRowsWithPendingItemIds(rows: any[]): Promise<any[]> {
+  if (!rows || rows.length === 0) {
+    return rows
+  }
+
+  try {
+    await offlineStore.init()
+    const filtered: any[] = []
+
+    for (const row of rows) {
+      const transactionId = row?.transaction_id ?? row?.id ?? null
+      if (!transactionId) {
+        filtered.push(row)
+        continue
+      }
+
+      let cached: DBTransaction | null = null
+      try {
+        cached = await offlineStore.getTransactionById(transactionId)
+      } catch {
+        cached = null
+      }
+
+      if (cached?.pendingItemIds && cached.pendingItemIds.length > 0) {
+        if (import.meta.env.DEV) {
+          console.info('[cache] skipping transaction cache update due to pending item_ids', {
+            transactionId
+          })
+        }
+        continue
+      }
+
+      filtered.push(row)
+    }
+
+    return filtered
+  } catch (error) {
+    console.debug('Unable to inspect pending transaction item_ids before caching', error)
+    return rows
+  }
+}
+
+async function enqueueTransactionItemIdsRetry(
+  accountId: string,
+  transactionId: string,
+  version?: number
+): Promise<void> {
+  try {
+    const pendingWriteIds = await operationQueue.getEntityIdsWithPendingWrites('transaction')
+    if (pendingWriteIds.has(transactionId)) {
+      return
+    }
+  } catch (e) {
+    console.debug('Unable to inspect pending transaction writes before queueing retry', e)
+  }
+
+  try {
+    await operationQueue.add(
+      {
+        type: 'UPDATE_TRANSACTION',
+        data: {
+          id: transactionId,
+          accountId,
+          updates: {}
+        }
+      },
+      {
+        accountId,
+        version: version ?? 1,
+        timestamp: new Date().toISOString()
+      }
+    )
+  } catch (error) {
+    if (error instanceof OfflineContextError) {
+      console.warn('Unable to queue transaction item_ids retry (offline context unavailable).', error.message)
+    } else {
+      console.warn('Failed to queue transaction item_ids retry:', error)
+    }
+  }
+}
+
+async function queueTransactionItemsOffline(
+  accountId: string,
+  projectId: string | null | undefined,
+  transactionId: string,
+  transactionData: Omit<Transaction, 'transactionId' | 'createdAt'>,
+  items: TransactionItemFormData[],
+  taxRatePct?: number | null
+): Promise<string[]> {
+  if (!items || items.length === 0) {
+    return []
+  }
+
+  const { offlineItemService } = await import('./offlineItemService')
+  const timestamp = new Date().toISOString()
+  const createdItemIds: string[] = []
+
+  for (const itemData of items) {
+    const disposition: ItemDisposition = (itemData.disposition ?? 'purchased') as ItemDisposition
+    const qrKey = `QR-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
+    const result = await offlineItemService.createItem(accountId, {
+      projectId: projectId ?? undefined,
+      transactionId,
+      name: itemData.description || '',
+      description: itemData.description || '',
+      source: transactionData.source || '',
+      sku: itemData.sku || '',
+      purchasePrice: itemData.purchasePrice,
+      projectPrice: itemData.projectPrice,
+      marketValue: itemData.marketValue,
+      paymentMethod: transactionData.paymentMethod || '',
+      disposition,
+      notes: itemData.notes,
+      space: itemData.space,
+      qrKey,
+      bookmark: false,
+      createdAt: transactionData.transactionDate ? new Date(transactionData.transactionDate) : new Date(timestamp),
+      taxRatePct: taxRatePct ?? transactionData.taxRatePct,
+      taxAmountPurchasePrice: itemData.taxAmountPurchasePrice,
+      taxAmountProjectPrice: itemData.taxAmountProjectPrice,
+      images: itemData.images || [],
+      inventoryStatus: 'available',
+      createdBy: transactionData.createdBy || ''
+    })
+
+    if (result.itemId) {
+      createdItemIds.push(result.itemId)
+    }
+  }
+
+  return createdItemIds
+}
+
+async function markTransactionItemIdsPending(
+  accountId: string,
+  transactionId: string,
+  itemIds: string[]
+): Promise<void> {
+  const pendingItemIds = itemIds.filter(id => Boolean(id && id.trim()))
+  if (pendingItemIds.length === 0) {
+    return
+  }
+
+  const nowIso = new Date().toISOString()
+  let localTransaction: DBTransaction | null = null
+
+  try {
+    await offlineStore.init()
+    localTransaction = await offlineStore.getTransactionById(transactionId)
+    if (localTransaction) {
+      const currentLocalIds = Array.isArray(localTransaction.itemIds) ? localTransaction.itemIds : []
+      const nextIds = [...currentLocalIds]
+      for (const id of pendingItemIds) {
+        if (!nextIds.includes(id)) {
+          nextIds.push(id)
+        }
+      }
+
+      localTransaction.itemIds = nextIds
+      localTransaction.pendingItemIds = pendingItemIds
+      localTransaction.pendingItemIdsAction = 'add'
+      localTransaction.pendingItemIdsUpdatedAt = nowIso
+      await offlineStore.upsertTransaction(localTransaction)
+    }
+  } catch (e) {
+    console.warn('Failed to persist pending transaction item_ids locally:', e)
+  }
+
+  await enqueueTransactionItemIdsRetry(accountId, transactionId, localTransaction?.version)
+}
+
 async function syncProjectTransactionsOffline(
   accountId: string,
   projectId: string,
@@ -188,7 +360,8 @@ async function syncProjectTransactionsOffline(
   options?.pendingCreateIds?.forEach(id => keepIds.add(id))
 
   const filteredRows = await filterRowsWithPendingWrites(rows, 'transaction', row => row?.transaction_id ?? row?.id ?? null)
-  const records = filteredRows.map(mapSupabaseTransactionToOfflineRecord)
+  const pendingFilteredRows = await filterTransactionRowsWithPendingItemIds(filteredRows)
+  const records = pendingFilteredRows.map(mapSupabaseTransactionToOfflineRecord)
   return await offlineStore.replaceTransactionsForProject(accountId, projectId, records, {
     keepTransactionIds: keepIds
   })
@@ -791,13 +964,13 @@ export const projectService = {
             name: projectData.name,
             description: projectData.description || null,
             client_name: projectData.clientName || null,
-            budget: projectData.budget || null,
-            design_fee: projectData.designFee || null,
-            budget_categories: projectData.budgetCategories || {},
+            budget: projectData.budget ?? null,
+            design_fee: projectData.designFee ?? null,
+            budget_categories: projectData.budgetCategories ?? {},
             main_image_url: projectData.mainImageUrl || null,
             // default_category_id removed - default category is now account-wide preset
-            settings: projectData.settings || {},
-            metadata: projectData.metadata || {},
+            settings: projectData.settings ?? {},
+            metadata: projectData.metadata ?? {},
             created_by: projectData.createdBy,
             item_count: 0,
             transaction_count: 0,
@@ -810,6 +983,26 @@ export const projectService = {
       })
 
       if (error) throw error
+
+      // Write-Through Cache: Update offlineStore immediately
+      try {
+        const timestamp = new Date().toISOString()
+        const newProject = {
+            id: data.id,
+            accountId,
+            ...projectData,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            itemCount: 0,
+            transactionCount: 0,
+            totalValue: 0
+        }
+        const dbProject = mapProjectToDBProject(newProject)
+        await offlineStore.saveProjects([dbProject])
+      } catch (cacheError) {
+        console.warn('Failed to update offline store after createProject:', cacheError)
+      }
+
       return data.id
     } catch (error) {
       if (error instanceof NetworkTimeoutError) {
@@ -865,13 +1058,26 @@ export const projectService = {
       if (updates.metadata !== undefined) updateData.metadata = updates.metadata
 
       await withNetworkTimeout(async () => {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('projects')
           .update(updateData)
           .eq('id', projectId)
           .eq('account_id', accountId)
+          .select()
+          .single()
 
         if (error) throw error
+
+        // Write-Through Cache: Update offlineStore immediately
+        if (data) {
+          try {
+            const project = projectService._convertProjectFromDb(data)
+            const dbProject = mapProjectToDBProject(project)
+            await offlineStore.saveProjects([dbProject])
+          } catch (cacheError) {
+            console.warn('Failed to update offline store after updateProject:', cacheError)
+          }
+        }
       })
     } catch (error) {
       if (error instanceof NetworkTimeoutError) {
@@ -921,6 +1127,13 @@ export const projectService = {
           .eq('account_id', accountId)
 
         if (error) throw error
+
+        // Write-Through Cache: Remove from offlineStore immediately
+        try {
+          await offlineStore.deleteProject(projectId)
+        } catch (cacheError) {
+          console.warn('Failed to delete project from offline store after deleteProject:', cacheError)
+        }
       })
     } catch (error) {
       if (error instanceof NetworkTimeoutError) {
@@ -1184,6 +1397,18 @@ async function _adjustSumItemPurchasePrices(accountId: string, transactionId: st
     .eq('transaction_id', transactionId)
 
   if (updateError) throw updateError
+
+  // Write-Through Cache: Update local transaction
+  try {
+    const tx = await offlineStore.getTransactionById(transactionId)
+    if (tx) {
+      tx.sumItemPurchasePrices = newSumStr
+      await offlineStore.upsertTransaction(tx)
+    }
+  } catch (e) {
+    console.warn('Failed to update local transaction sum:', e)
+  }
+
   return newSumStr
 }
 
@@ -1204,22 +1429,66 @@ async function _updateTransactionItemIds(
     .filter((id): id is string => Boolean(id && id.trim()))
   if (pendingItemIds.length === 0) return
 
+  const nowIso = new Date().toISOString()
+  let localTransaction: DBTransaction | null = null
+  try {
+    await offlineStore.init()
+    localTransaction = await offlineStore.getTransactionById(transactionId)
+    if (localTransaction) {
+      const currentLocalIds = Array.isArray(localTransaction.itemIds) ? localTransaction.itemIds : []
+      let optimisticItemIds = currentLocalIds
+      if (action === 'add') {
+        optimisticItemIds = [...currentLocalIds]
+        for (const id of pendingItemIds) {
+          if (!optimisticItemIds.includes(id)) {
+            optimisticItemIds.push(id)
+          }
+        }
+      } else {
+        const removalSet = new Set(pendingItemIds)
+        optimisticItemIds = currentLocalIds.filter(id => !removalSet.has(id))
+      }
+
+      localTransaction.itemIds = optimisticItemIds
+      localTransaction.pendingItemIds = pendingItemIds
+      localTransaction.pendingItemIdsAction = action
+      localTransaction.pendingItemIdsUpdatedAt = nowIso
+      await offlineStore.upsertTransaction(localTransaction)
+    }
+  } catch (e) {
+    console.warn('Failed to apply optimistic item_ids update locally:', e)
+  }
+
   await ensureAuthenticatedForDatabase()
 
-  const { data, error } = await supabase
-    .from('transactions')
-    .select('item_ids')
-    .eq('account_id', accountId)
-    .eq('transaction_id', transactionId)
-    .single()
+  let data: any = null
+  let error: any = null
+  try {
+    const response = await withNetworkTimeout(async () => {
+      return await supabase
+        .from('transactions')
+        .select('item_ids')
+        .eq('account_id', accountId)
+        .eq('transaction_id', transactionId)
+        .single()
+    })
+    data = response?.data
+    error = response?.error
+  } catch (e) {
+    console.warn('⚠️ Failed to load transaction for item_ids sync:', transactionId, e)
+    await enqueueTransactionItemIdsRetry(accountId, transactionId, localTransaction?.version)
+    return
+  }
 
   if (error || !data) {
     console.warn('⚠️ Failed to load transaction for item_ids sync:', transactionId, error)
+    await enqueueTransactionItemIdsRetry(accountId, transactionId, localTransaction?.version)
     return
   }
 
   const currentItemIds: string[] = Array.isArray(data.item_ids) ? data.item_ids : []
   let updatedItemIds: string[] = currentItemIds
+  let needsUpdate = false
 
   if (action === 'add') {
     let mutated = false
@@ -1230,24 +1499,63 @@ async function _updateTransactionItemIds(
         mutated = true
       }
     }
-    if (!mutated) return
+    needsUpdate = mutated
   } else {
     const removalSet = new Set(pendingItemIds)
     updatedItemIds = currentItemIds.filter(id => !removalSet.has(id))
-    if (updatedItemIds.length === currentItemIds.length) return
+    needsUpdate = updatedItemIds.length !== currentItemIds.length
   }
 
-  const { error: updateError } = await supabase
-    .from('transactions')
-    .update({
-      item_ids: updatedItemIds,
-      updated_at: new Date().toISOString()
+  if (!needsUpdate) {
+    try {
+      const tx = await offlineStore.getTransactionById(transactionId)
+      if (tx) {
+        tx.itemIds = currentItemIds
+        tx.pendingItemIds = undefined
+        tx.pendingItemIdsAction = undefined
+        tx.pendingItemIdsUpdatedAt = undefined
+        await offlineStore.upsertTransaction(tx)
+      }
+    } catch (e) {
+      console.warn('Failed to clear pending item_ids after no-op sync:', e)
+    }
+    return
+  }
+
+  let updateError: any = null
+  try {
+    const response = await withNetworkTimeout(async () => {
+      return await supabase
+        .from('transactions')
+        .update({
+          item_ids: updatedItemIds,
+          updated_at: new Date().toISOString()
+        })
+        .eq('account_id', accountId)
+        .eq('transaction_id', transactionId)
     })
-    .eq('account_id', accountId)
-    .eq('transaction_id', transactionId)
+    updateError = response?.error
+  } catch (e) {
+    updateError = e
+  }
 
   if (updateError) {
     console.warn('⚠️ Failed to update transaction item_ids during sync:', transactionId, updateError)
+    await enqueueTransactionItemIdsRetry(accountId, transactionId, localTransaction?.version)
+  } else {
+    // Write-Through Cache: Update local transaction
+    try {
+      const tx = await offlineStore.getTransactionById(transactionId)
+      if (tx) {
+        tx.itemIds = updatedItemIds
+        tx.pendingItemIds = undefined
+        tx.pendingItemIdsAction = undefined
+        tx.pendingItemIdsUpdatedAt = undefined
+        await offlineStore.upsertTransaction(tx)
+      }
+    } catch (e) {
+      console.warn('Failed to update local transaction item_ids:', e)
+    }
   }
 }
 
@@ -1346,7 +1654,9 @@ export const transactionService = {
         
         // Merge pending transactions into the result set
         const mergedTransactions = [...transactions, ...pendingTransactions]
-        return await _enrichTransactionsWithProjectNames(accountId, mergedTransactions)
+        // Sort the merged transactions to ensure consistent ordering (most recent first)
+        const sortedTransactions = sortTransactionsOffline(mergedTransactions)
+        return await _enrichTransactionsWithProjectNames(accountId, sortedTransactions)
       } catch (error) {
         console.warn('Failed to fetch project transactions from network, using offline cache:', error)
       }
@@ -1430,7 +1740,9 @@ export const transactionService = {
         
         // Merge pending transactions into the result set
         const mergedTransactions = [...transactions, ...pendingTransactions]
-        return await _enrichTransactionsWithProjectNames(accountId, mergedTransactions, projects)
+        // Sort the merged transactions to ensure consistent ordering (most recent first)
+        const sortedTransactions = sortTransactionsOffline(mergedTransactions)
+        return await _enrichTransactionsWithProjectNames(accountId, sortedTransactions, projects)
       } catch (error) {
         console.warn('Failed to fetch multi-project transactions, using offline cache:', error)
       }
@@ -2172,6 +2484,13 @@ export const transactionService = {
 
       console.log('Transaction created successfully:', transactionId)
 
+      // Cache the transaction immediately so offline fallbacks can update item_ids locally
+      try {
+        await cacheTransactionsOffline([dbTransaction])
+      } catch (e) {
+        console.warn('Failed to cache created transaction:', e)
+      }
+
       // Create items linked to this transaction if provided
       if (items && items.length > 0) {
         console.log('Creating items for transaction:', transactionId)
@@ -2180,36 +2499,60 @@ export const transactionService = {
         
         // Check if we're still online before creating items
         if (!isNetworkOnline()) {
-          // If we went offline during transaction creation, queue the whole thing offline
-          console.warn('Network went offline during transaction creation, queuing for offline sync')
-          return queueOfflineCreate('fallback')
-        }
-        
-        const createdItemIds = await unifiedItemsService.createTransactionItems(
-          accountId,
-          projectId || '',
-          transactionId,
-          transactionData.transactionDate,
-          transactionData.source, // Pass transaction source to items
-          itemsToCreate,
-          dbTransaction.tax_rate_pct
-        )
-        console.log('Created items:', createdItemIds)
+          // If we went offline after creating the transaction, only queue the items.
+          // This avoids creating a duplicate transaction.
+          console.warn('Network went offline during item creation; queueing items only')
+          try {
+            const queuedItemIds = await queueTransactionItemsOffline(
+              accountId,
+              projectId,
+              transactionId,
+              transactionData,
+              itemsToCreate,
+              dbTransaction.tax_rate_pct
+            )
+            await markTransactionItemIdsPending(accountId, transactionId, queuedItemIds)
+          } catch (queueError) {
+            console.warn('Failed to queue transaction items offline:', queueError)
+          }
+        } else {
+          const createdItemIds = await unifiedItemsService.createTransactionItems(
+            accountId,
+            projectId || '',
+            transactionId,
+            transactionData.transactionDate,
+            transactionData.source, // Pass transaction source to items
+            itemsToCreate,
+            dbTransaction.tax_rate_pct
+          )
+          console.log('Created items:', createdItemIds)
 
-        // Update the transaction's itemIds field to include the newly created items
-        if (createdItemIds.length > 0) {
-          const { error: updateError } = await supabase
-            .from('transactions')
-            .update({ item_ids: createdItemIds })
-            .eq('account_id', accountId)
-            .eq('transaction_id', transactionId)
+          // Update the transaction's itemIds field to include the newly created items
+          if (createdItemIds.length > 0) {
+            const { error: updateError } = await supabase
+              .from('transactions')
+              .update({ item_ids: createdItemIds })
+              .eq('account_id', accountId)
+              .eq('transaction_id', transactionId)
 
-          if (updateError) {
-            console.warn('Failed to update transaction itemIds:', updateError)
-            // Don't fail the transaction creation if this update fails
+            if (updateError) {
+              console.warn('Failed to update transaction itemIds:', updateError)
+              // Don't fail the transaction creation if this update fails
+            } else {
+              // Update the local object too so cache is correct
+              dbTransaction.item_ids = createdItemIds
+            }
           }
         }
       }
+
+      // Refresh cached transaction so item_ids stay in sync
+      try {
+        await cacheTransactionsOffline([dbTransaction])
+      } catch (e) {
+        console.warn('Failed to refresh cached transaction after item creation:', e)
+      }
+
       // Ensure the denormalized needs_review flag is computed and persisted
       try {
         // Fire-and-forget: schedule recompute but don't block the mutation flow
@@ -2523,7 +2866,20 @@ export const transactionService = {
               if (matchesProject(newProjectId)) {
                 const newTransaction = _convertTransactionFromDb(newRecord)
                 const [enrichedTransaction] = await _enrichTransactionsWithProjectNames(accountId, [newTransaction])
-                nextTransactions = [enrichedTransaction, ...nextTransactions.filter(t => t.transactionId !== enrichedTransaction.transactionId)]
+                // Insert the new transaction in the correct position to minimize re-sorting
+                const newTransactionTime = new Date(enrichedTransaction.createdAt).getTime()
+                const insertIndex = nextTransactions.findIndex(t => new Date(t.createdAt).getTime() < newTransactionTime)
+                if (insertIndex === -1) {
+                  // Newest transaction - add to beginning
+                  nextTransactions = [enrichedTransaction, ...nextTransactions]
+                } else {
+                  // Insert at correct position to maintain sort order
+                  nextTransactions = [
+                    ...nextTransactions.slice(0, insertIndex),
+                    enrichedTransaction,
+                    ...nextTransactions.slice(insertIndex).filter(t => t.transactionId !== enrichedTransaction.transactionId)
+                  ]
+                }
               }
             } else if (eventType === 'UPDATE') {
               const updatedTransaction = _convertTransactionFromDb(newRecord)
@@ -2582,11 +2938,17 @@ export const transactionService = {
             }
 
             if (entry) {
-              entry.data = nextTransactions
-              const sortedTransactions = [...nextTransactions].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+              // Only sort if the array order may have been disrupted (UPDATE or DELETE operations)
+              let finalTransactions = nextTransactions
+              if (eventType === 'UPDATE' || eventType === 'DELETE') {
+                finalTransactions = [...nextTransactions].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+              }
+              // For INSERT, we already placed the transaction in the correct position
+              
+              entry.data = finalTransactions
               entry.callbacks.forEach(cb => {
                 try {
-                  cb(sortedTransactions)
+                  cb(finalTransactions)
                 } catch (err) {
                   console.error('subscribeToTransactions callback failed', err)
                 }
@@ -3732,13 +4094,33 @@ export const unifiedItemsService = {
       dbUpdates.tax_amount_project_price = computeTaxString(effectiveProject, effectiveRate)
     }
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('items')
       .update(dbUpdates)
       .eq('account_id', accountId)
       .eq('item_id', itemId)
+      .select()
+      .single()
 
     if (error) throw error
+
+    // Write-Through Cache: Update offlineStore immediately
+    try {
+      if (data) {
+        const dbItem = mapItemToDBItem(data)
+        await offlineStore.saveItems([dbItem])
+      } else if (existingItem) {
+        const mergedItem = {
+          ...existingItem,
+          ...updates,
+          lastUpdated: new Date().toISOString()
+        }
+        const dbItem = mapItemToDBItem(mergedItem)
+        await offlineStore.saveItems([dbItem])
+      }
+    } catch (cacheError) {
+      console.warn('Failed to update offline store after updateItem:', cacheError)
+    }
 
     if (previousTransactionId !== nextTransactionId) {
       try {
@@ -3844,6 +4226,13 @@ export const unifiedItemsService = {
         .eq('item_id', itemId)
 
       if (error) throw error
+
+      // Write-Through Cache: Remove from offlineStore immediately
+      try {
+        await offlineStore.deleteItem(itemId)
+      } catch (cacheError) {
+        console.warn('Failed to delete item from offline store after deleteItem:', cacheError)
+      }
 
       if (existingItem?.transactionId) {
         // The Postgres trigger handles hard deletes performed outside the app, but we
@@ -5369,6 +5758,14 @@ export const unifiedItemsService = {
         .insert(itemsToInsert)
 
       if (error) throw error
+
+      // Write-Through Cache: Update offlineStore immediately
+      try {
+        const dbItems = itemsToInsert.map((item: any) => mapItemToDBItem(item))
+        await offlineStore.saveItems(dbItems)
+      } catch (cacheError) {
+        console.warn('Failed to update offline store after createTransactionItems:', cacheError)
+      }
 
       if (transactionId && createdItemIds.length > 0) {
         try {
