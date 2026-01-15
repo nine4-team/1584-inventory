@@ -97,6 +97,7 @@ export default function EditItem() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [loadingTransactions, setLoadingTransactions] = useState(false)
   const [availableVendors, setAvailableVendors] = useState<string[]>([])
+  const [hasExistingImages, setHasExistingImages] = useState(false)
 
   // Track if user has manually edited project_price
   const projectPriceEditedRef = useRef(false)
@@ -140,6 +141,7 @@ export default function EditItem() {
           const fetchedItem = await unifiedItemsService.getItemById(currentAccountId, itemId)
           console.log('Fetched item data:', fetchedItem)
           if (fetchedItem) {
+            setHasExistingImages(Boolean(fetchedItem.images && fetchedItem.images.length > 0))
             setFormData({
               description: String(fetchedItem.description || ''),
               source: String(fetchedItem.source || ''),
@@ -212,8 +214,8 @@ export default function EditItem() {
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {}
 
-    if (!formData.description.trim()) {
-      newErrors.description = 'Description is required'
+    if (!formData.description.trim() && !hasExistingImages) {
+      newErrors.description = 'Add a description or at least one image'
     }
 
     setErrors(newErrors)
@@ -373,7 +375,7 @@ export default function EditItem() {
               {/* Description */}
               <div>
                 <label htmlFor="description" className="block text-sm font-medium text-gray-700">
-                  Description *
+                  Description
                 </label>
                 <input
                   type="text"

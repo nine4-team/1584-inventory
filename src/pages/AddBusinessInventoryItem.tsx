@@ -174,12 +174,19 @@ export default function AddBusinessInventoryItem() {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
 
+  useEffect(() => {
+    if (!errors.description) return
+    if (formData.description.trim() || images.length > 0) {
+      setErrors(prev => ({ ...prev, description: '' }))
+    }
+  }, [errors.description, formData.description, images.length])
+
   // Validation function
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {}
 
-    if (!formData.description.trim()) {
-      newErrors.description = 'Description is required'
+    if (!formData.description.trim() && images.length === 0) {
+      newErrors.description = 'Add a description or at least one image'
     }
 
     setErrors(newErrors)
@@ -464,10 +471,10 @@ export default function AddBusinessInventoryItem() {
                 </div>
 
           {/* Description */}
-            <div>
-                  <label htmlFor="description" className="block text-sm font-medium text-gray-700">
-                    Description *
-                  </label>
+          <div>
+            <label htmlFor="description" className="block text-sm font-medium text-gray-700">
+              Description
+            </label>
                   <input
                     type="text"
                     id="description"

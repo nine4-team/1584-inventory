@@ -1087,7 +1087,7 @@ export default function TransactionItemsList({
             <div>
               <p className="text-sm font-medium text-gray-900">No items added yet</p>
               <p className="mt-1 text-xs text-gray-500">
-                Create line items to mirror your receipts and attach photos to each purchase.
+                Create line items to mirror your receipts and attach photos to each purchase. Add a description or at least one image to create an item.
               </p>
             </div>
             <button
