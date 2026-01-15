@@ -761,13 +761,14 @@ export class ImageUploadService {
       // Note: capture attribute not set to allow gallery selection
 
       // Set up timeout to prevent infinite hanging
+      // Increased to 5 minutes to give users time to find photos
       const timeoutId = setTimeout(() => {
         // Clean up the input element
         if (document.body.contains(input)) {
           document.body.removeChild(input)
         }
         reject(new Error('File selection timeout - user may have canceled'))
-      }, 10000) // 10 second timeout
+      }, 300000) // 5 minute timeout
 
       // Handle successful file selection
       const handleChange = (e: Event) => {
