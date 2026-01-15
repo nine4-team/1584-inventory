@@ -12,6 +12,30 @@ clientsClaim()
 // Precache static assets
 precacheAndRoute(self.__WB_MANIFEST)
 
+// Runtime caching for offline service modules (no hard-coded precache list)
+registerRoute(
+  ({ request, url }) => {
+    return request.destination === 'script' && url.pathname.includes('offline') && url.pathname.endsWith('.js')
+  },
+  new CacheFirst({
+    cacheName: 'offline-services-v1'
+  })
+)
+
+// Cache script/style assets to support offline navigation
+registerRoute(
+  ({ request }) => request.destination === 'script' || request.destination === 'style',
+  new CacheFirst({
+    cacheName: 'asset-chunks-v1',
+    plugins: [
+      new ExpirationPlugin({
+        maxEntries: 200,
+        maxAgeSeconds: 60 * 60 * 24 * 30 // 30 days
+      })
+    ]
+  })
+)
+
 // Runtime caching for Supabase storage (images, etc.)
 registerRoute(
   /^https:\/\/.*\.supabase\.co\/storage\/v1\/object\/public\/.*/i,

@@ -39,6 +39,17 @@ function App() {
 
         await initSyncScheduler()
 
+        // Preload offline services when online to ensure they're available when offline
+        if (navigator.onLine) {
+          Promise.all([
+            import('./services/offlineTransactionService')
+          ]).then(() => {
+            console.log('[App] Offline services preloaded')
+          }).catch(err => {
+            console.warn('[App] Failed to preload offline services:', err)
+          })
+        }
+
         // Cleanup expired media files on app start
         try {
           const cleanedCount = await offlineMediaService.cleanupExpiredMedia()
