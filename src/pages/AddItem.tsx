@@ -202,12 +202,19 @@ export default function AddItem() {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
 
+  useEffect(() => {
+    if (!errors.description) return
+    if (formData.description.trim() || images.length > 0) {
+      setErrors(prev => ({ ...prev, description: '' }))
+    }
+  }, [errors.description, formData.description, images.length])
+
   // Validation function
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {}
 
-    if (!formData.description.trim()) {
-      newErrors.description = 'Description is required'
+    if (!formData.description.trim() && images.length === 0) {
+      newErrors.description = 'Add a description or at least one image'
     }
 
     setErrors(newErrors)
@@ -456,6 +463,7 @@ export default function AddItem() {
       <div className="bg-white shadow rounded-lg">
         <div className="px-6 py-4 border-b border-gray-200">
           <h1 className="text-2xl font-bold text-gray-900">Add Item</h1>
+          <p className="mt-1 text-sm text-gray-600">Add a description or at least one image to create an item.</p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-8 p-8">
           {/* Item Images */}
@@ -533,7 +541,7 @@ export default function AddItem() {
           {/* Description */}
           <div>
             <label htmlFor="description" className="block text-sm font-medium text-gray-700">
-              Description *
+              Description
             </label>
             <input
               type="text"

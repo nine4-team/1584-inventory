@@ -53,6 +53,14 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
   const unsavedPreviewUrlsRef = useRef<Set<string>>(new Set())
   const { showError } = useToast()
 
+  useEffect(() => {
+    if (!errors.description) return
+    const hasRequiredContent = Boolean(formData.description.trim() || itemImages.length > 0 || imageFiles.length > 0)
+    if (hasRequiredContent) {
+      setErrors(prev => ({ ...prev, description: undefined }))
+    }
+  }, [errors.description, formData.description, itemImages.length, imageFiles.length])
+
   const trackUnsavedPreviewUrl = (url: string) => {
     unsavedPreviewUrlsRef.current.add(url)
   }
@@ -174,8 +182,8 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
   const validateForm = (): boolean => {
     const newErrors: TransactionItemValidationErrors = {}
 
-    if (!formData.description.trim()) {
-      newErrors.description = 'Description is required'
+    if (!formData.description.trim() && itemImages.length === 0 && imageFiles.length === 0) {
+      newErrors.description = 'Add a description or at least one image'
     }
 
     if (formData.purchasePrice && (isNaN(Number(formData.purchasePrice)) || Number(formData.purchasePrice) <= 0)) {
@@ -232,9 +240,14 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
   return (
     <div className="bg-white border border-gray-200 rounded-lg p-6">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-medium text-gray-900">
-          {isEditing ? 'Edit Item' : 'Add Item'}
-        </h3>
+        <div>
+          <h3 className="text-lg font-medium text-gray-900">
+            {isEditing ? 'Edit Item' : 'Add Item'}
+          </h3>
+          {!isEditing && (
+            <p className="mt-1 text-sm text-gray-600">Add a description or at least one image to create an item.</p>
+          )}
+        </div>
         <div className="flex items-center gap-3">
           {hasSyncError && <RetrySyncButton size="sm" variant="secondary" showPendingCount={false} />}
           <button
@@ -284,7 +297,7 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
         {/* Description */}
         <div>
           <label htmlFor="description" className="block text-sm font-medium text-gray-700">
-            Description *
+            Description
           </label>
           <input
             type="text"
