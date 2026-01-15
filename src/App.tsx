@@ -39,14 +39,21 @@ function App() {
 
         await initSyncScheduler()
 
-        // Preload offline services when online to ensure they're available when offline
+        // Preload offline-critical services and routes when online to warm caches
         if (navigator.onLine) {
           Promise.all([
-            import('./services/offlineTransactionService')
+            import('./services/offlineTransactionService'),
+            import('./pages/Projects'),
+            import('./pages/ProjectLayout'),
+            import('./pages/ProjectItemsPage'),
+            import('./pages/ProjectTransactionsPage'),
+            import('./pages/AddTransaction'),
+            import('./pages/TransactionDetail'),
+            import('./pages/ItemDetail')
           ]).then(() => {
-            console.log('[App] Offline services preloaded')
+            console.log('[App] Offline-critical modules preloaded')
           }).catch(err => {
-            console.warn('[App] Failed to preload offline services:', err)
+            console.warn('[App] Failed to preload offline-critical modules:', err)
           })
         }
 
