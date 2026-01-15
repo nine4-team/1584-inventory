@@ -65,6 +65,9 @@ interface DBTransaction {
   needsReview?: boolean
   sumItemPurchasePrices?: string
   itemIds?: string[]
+  pendingItemIds?: string[]
+  pendingItemIdsAction?: 'add' | 'remove'
+  pendingItemIdsUpdatedAt?: string
   version: number
   last_synced_at?: string
 }
@@ -2055,4 +2058,79 @@ class OfflineStore {
 }
 
 export const offlineStore = new OfflineStore()
+
+export function mapItemToDBItem(item: any): DBItem {
+  const purchasePrice = item.purchasePrice ?? item.purchase_price
+  const projectPrice = item.projectPrice ?? item.project_price
+  const marketValue = item.marketValue ?? item.market_value
+  const taxRatePct = item.taxRatePct ?? item.tax_rate_pct
+  const taxAmountPurchasePrice = item.taxAmountPurchasePrice ?? item.tax_amount_purchase_price
+  const taxAmountProjectPrice = item.taxAmountProjectPrice ?? item.tax_amount_project_price
+  return {
+    itemId: item.itemId || item.id || item.item_id,
+    accountId: item.accountId || item.account_id,
+    projectId: item.projectId || item.project_id || null,
+    transactionId: item.transactionId || item.transaction_id || null,
+    previousProjectTransactionId: item.previousProjectTransactionId ?? null,
+    previousProjectId: item.previousProjectId ?? null,
+    name: item.name,
+    description: item.description ?? '',
+    source: item.source ?? '',
+    sku: item.sku ?? '',
+    price: item.price !== undefined && item.price !== null ? String(item.price) : undefined,
+    purchasePrice: purchasePrice !== undefined && purchasePrice !== null ? String(purchasePrice) : undefined,
+    projectPrice: projectPrice !== undefined && projectPrice !== null ? String(projectPrice) : undefined,
+    marketValue: marketValue !== undefined && marketValue !== null ? String(marketValue) : undefined,
+    paymentMethod: item.paymentMethod || item.payment_method || '',
+    disposition: item.disposition ?? null,
+    notes: item.notes ?? '',
+    space: item.space ?? '',
+    qrKey: item.qrKey || item.qr_key || '',
+    bookmark: item.bookmark ?? false,
+    dateCreated: item.dateCreated || item.date_created || new Date().toISOString(),
+    lastUpdated: item.lastUpdated || item.last_updated || new Date().toISOString(),
+    createdAt: item.createdAt ? (item.createdAt instanceof Date ? item.createdAt.toISOString() : item.createdAt) : (item.created_at || new Date().toISOString()),
+    images: item.images ?? [],
+    taxRatePct,
+    taxAmountPurchasePrice,
+    taxAmountProjectPrice,
+    createdBy: item.createdBy || item.created_by,
+    inventoryStatus: item.inventoryStatus || item.inventory_status,
+    businessInventoryLocation: item.businessInventoryLocation || item.business_inventory_location,
+    originTransactionId: item.originTransactionId || item.origin_transaction_id || null,
+    latestTransactionId: item.latestTransactionId || item.latest_transaction_id || null,
+    version: item.version ?? 1,
+    last_synced_at: new Date().toISOString()
+  }
+}
+
+export function mapSupabaseItemToOfflineRecord(item: any): DBItem {
+  return mapItemToDBItem(item)
+}
+
+export function mapProjectToDBProject(project: any): DBProject {
+  return {
+    id: project.id,
+    accountId: project.accountId || project.account_id,
+    name: project.name,
+    description: project.description ?? '',
+    clientName: project.clientName || project.client_name || '',
+    budget: project.budget,
+    designFee: project.designFee ?? project.design_fee,
+    budgetCategories: project.budgetCategories ?? project.budget_categories ?? {},
+    defaultCategoryId: project.defaultCategoryId ?? project.default_category_id ?? null,
+    mainImageUrl: project.mainImageUrl || project.main_image_url,
+    createdAt: project.createdAt ? (project.createdAt instanceof Date ? project.createdAt.toISOString() : project.createdAt) : (project.created_at || new Date().toISOString()),
+    updatedAt: project.updatedAt ? (project.updatedAt instanceof Date ? project.updatedAt.toISOString() : project.updatedAt) : (project.updated_at || new Date().toISOString()),
+    createdBy: project.createdBy || project.created_by || '',
+    settings: project.settings ?? {},
+    metadata: project.metadata ?? {},
+    itemCount: project.itemCount ?? project.item_count ?? 0,
+    transactionCount: project.transactionCount ?? project.transaction_count ?? 0,
+    totalValue: project.totalValue ?? project.total_value ?? 0,
+    version: project.version ?? 1,
+    last_synced_at: new Date().toISOString()
+  }
+}
+
 export type { DBItem, DBTransaction, DBProject, DBOperation, DBContextRecord, DBMediaUploadQueueEntry, DBBudgetCategory, DBTaxPreset, DBTaxPresetsCache, DBVendorDefaultsCache }

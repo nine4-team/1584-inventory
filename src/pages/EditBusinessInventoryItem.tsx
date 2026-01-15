@@ -115,8 +115,8 @@ export default function EditBusinessInventoryItem() {
   const validateForm = () => {
     const errors: Record<string, string> = {}
 
-    if (!formData.description.trim()) {
-      errors.description = 'Description is required'
+    if (!formData.description.trim() && !(item?.images && item.images.length > 0)) {
+      errors.description = 'Add a description or at least one image'
     }
 
     setFormErrors(errors)
@@ -220,7 +220,7 @@ export default function EditBusinessInventoryItem() {
             {/* Description */}
             <div>
               <label htmlFor="description" className="block text-sm font-medium text-gray-700">
-                Description *
+                Description
               </label>
               <input
                 type="text"

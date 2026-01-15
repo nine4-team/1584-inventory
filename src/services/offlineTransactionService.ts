@@ -368,13 +368,6 @@ export class OfflineTransactionService {
       }
     }
 
-    const operationId = await operationQueue.add(operation, {
-      accountId,
-      version: nextVersion,
-      timestamp
-    })
-
-    // Optimistically update local store
     const optimisticTransaction: DBTransaction = {
       ...existingTransaction,
       ...(updates.projectId !== undefined && { projectId: updates.projectId ?? null }),
@@ -401,8 +394,33 @@ export class OfflineTransactionService {
       ...(updates.otherImages !== undefined && { otherImages: updates.otherImages }),
       version: nextVersion
     }
-    
-    await offlineStore.saveTransactions([optimisticTransaction])
+
+    try {
+      await offlineStore.saveTransactions([optimisticTransaction])
+    } catch (error) {
+      console.error('Failed to persist optimistic transaction before queueing UPDATE operation', error)
+      throw new OfflineQueueUnavailableError(
+        'Unable to save the transaction offline. Free some storage or retry online.',
+        error
+      )
+    }
+
+    let operationId: string
+    try {
+      operationId = await operationQueue.add(operation, {
+        accountId,
+        version: nextVersion,
+        timestamp
+      })
+    } catch (error) {
+      console.error('Failed to enqueue UPDATE_TRANSACTION operation after caching optimistic data', error)
+      try {
+        await offlineStore.saveTransactions([existingTransaction])
+      } catch (rollbackError) {
+        console.warn('Unable to roll back optimistic transaction after queue failure', rollbackError)
+      }
+      throw error
+    }
 
     // Trigger immediate processing if online
     if (isNetworkOnline()) {
