@@ -456,16 +456,13 @@ class OperationQueue {
       // Validate that the current user matches the operation's updatedBy
       // This ensures offline-queued operations can only be processed by the user who created them
       if (operation.updatedBy !== currentUser.id) {
-        console.warn(
-          `Operation ${operation.id} was queued by user ${operation.updatedBy} but current user is ${currentUser.id}. Skipping.`
-        )
-        // Remove the operation as it cannot be processed by this user
-        this.queue.shift()
+        const message = `Operation ${operation.id} was queued by user ${operation.updatedBy} but current user is ${currentUser.id}.`
+        console.warn(`${message} Keeping it queued until the original user signs in.`)
+        operation.lastError = 'Queued by a different user; cannot sync until they sign in.'
+        this.lastEnqueueError = operation.lastError
         await this.persistQueue()
         this.emitQueueChange()
         this.isProcessing = false
-        // Continue processing next operation
-        setTimeout(() => this.processQueue(), 100)
         return
       }
 
@@ -493,16 +490,14 @@ class OperationQueue {
         operation.lastError = 'Sync failed'
 
         if (operation.retryCount >= 5) {
-          // Give up after 5 retries, mark as failed
-          console.error('Operation failed permanently:', operation)
-          this.queue.shift()
-          await this.persistQueue()
-          this.emitQueueChange()
-        } else {
-          // Schedule retry
-          const delay = Math.min(1000 * Math.pow(2, operation.retryCount), 30000)
-          setTimeout(() => this.processQueue(), delay)
+          const message = `Operation ${operation.id} has failed ${operation.retryCount} times. Keeping it queued for retry.`
+          console.error(message, operation)
+          this.lastEnqueueError = message
         }
+
+        // Schedule retry
+        const delay = Math.min(1000 * Math.pow(2, operation.retryCount), 30000)
+        setTimeout(() => this.processQueue(), delay)
 
         await this.persistQueue()
         this.emitQueueChange()

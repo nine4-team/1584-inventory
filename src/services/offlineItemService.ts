@@ -287,13 +287,6 @@ export class OfflineItemService {
       }
     }
 
-    const operationId = await operationQueue.add(operation, {
-      accountId,
-      version: nextVersion,
-      timestamp
-    })
-
-    // Optimistically update local store
     const optimisticItem: DBItem = {
       ...itemToUpdate,
       ...(updates.projectId !== undefined && { projectId: updates.projectId ?? null }),
@@ -322,8 +315,33 @@ export class OfflineItemService {
       lastUpdated: timestamp,
       version: nextVersion
     }
-    
-    await offlineStore.saveItems([optimisticItem])
+
+    try {
+      await offlineStore.saveItems([optimisticItem])
+    } catch (error) {
+      console.error('Failed to persist optimistic item before queueing UPDATE operation', error)
+      throw new OfflineQueueUnavailableError(
+        'Unable to save the item offline. Free some storage or retry online.',
+        error
+      )
+    }
+
+    let operationId: string
+    try {
+      operationId = await operationQueue.add(operation, {
+        accountId,
+        version: nextVersion,
+        timestamp
+      })
+    } catch (error) {
+      console.error('Failed to enqueue UPDATE_ITEM operation after caching optimistic data', error)
+      try {
+        await offlineStore.saveItems([itemToUpdate])
+      } catch (rollbackError) {
+        console.warn('Unable to roll back optimistic item after queue failure', rollbackError)
+      }
+      throw error
+    }
 
     // Trigger immediate processing if online
     if (isNetworkOnline()) {

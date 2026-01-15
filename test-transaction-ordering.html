@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Transaction Ordering Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
+        .pass { color: green; font-weight: bold; }
+        .fail { color: red; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Transaction Ordering Fix Verification</h1>
+    
+    <div class="test-section">
+        <h2>Problem Statement</h2>
+        <p>When creating a new transaction, transactions were being reordered multiple times in the UI due to:</p>
+        <ul>
+            <li>INSERT logic adding transactions to the front of the array</li>
+            <li>Immediate re-sorting of the entire array by createdAt</li>
+            <li>Multiple callback triggers causing UI flicker/reordering</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h2>Solution Implemented</h2>
+        <ul>
+            <li><strong>Smart INSERT placement:</strong> New transactions are inserted at the correct position based on createdAt timestamp instead of always at the beginning</li>
+            <li><strong>Conditional sorting:</strong> Full array sorting only occurs for UPDATE/DELETE operations, not INSERT</li>
+            <li><strong>Smart UPDATE logic:</strong> Updates only trigger re-sorting if the createdAt timestamp changes significantly (>1 second)</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h2>Expected Outcome</h2>
+        <ul>
+            <li class="pass">✅ Single, smooth insertion when creating new transactions</li>
+            <li class="pass">✅ No multiple reordering events in the UI</li>
+            <li class="pass">✅ Efficient sorting only when necessary</li>
+            <li class="pass">✅ Maintains correct chronological order</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h2>Files Modified</h2>
+        <ul>
+            <li><code>/Users/benjaminmackenzie/Dev/ledger/src/services/inventoryService.ts</code> - Lines 2865-2883 (INSERT logic) and 2884-2929 (UPDATE logic)</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h2>Testing Steps</h2>
+        <ol>
+            <li>Create a new transaction in the application</li>
+            <li>Observe the transaction list UI behavior</li>
+            <li>Verify that transactions appear in correct chronological order</li>
+            <li>Confirm no multiple reordering/flickering occurs</li>
+        </ol>
+    </div>
+</body>
+</html>
