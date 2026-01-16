@@ -5,6 +5,7 @@ import { getTaxPresetById } from './taxPresetsService'
 import { CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { lineageService } from './lineageService'
 import { offlineStore, type DBItem, type DBTransaction, type DBProject, mapItemToDBItem, mapProjectToDBProject } from './offlineStore'
+import { offlineTransactionService } from './offlineTransactionService'
 import { isNetworkOnline, withNetworkTimeout, NetworkTimeoutError } from './networkStatusService'
 import { OfflineQueueUnavailableError } from './offlineItemService'
 import { operationQueue, OfflineContextError } from './operationQueue'
@@ -2041,7 +2042,6 @@ export const transactionService = {
       // When offline, queue the needsReview update so it syncs later instead of hitting Supabase.
       if (!isNetworkOnline()) {
         try {
-          const { offlineTransactionService } = await import('./offlineTransactionService')
           await offlineTransactionService.updateTransaction(accountId, transactionId, { needsReview: needs })
           return
         } catch (offlineError) {
@@ -2351,7 +2351,6 @@ export const transactionService = {
     
     const queueOfflineCreate = async (reason: 'offline' | 'fallback' | 'timeout'): Promise<string> => {
       try {
-        const { offlineTransactionService } = await import('./offlineTransactionService')
         const result = await offlineTransactionService.createTransaction(
           accountId,
           projectId,
@@ -2593,7 +2592,6 @@ export const transactionService = {
 
     // If offline, delegate to offlineTransactionService
     if (!online) {
-      const { offlineTransactionService } = await import('./offlineTransactionService')
       await offlineTransactionService.updateTransaction(accountId, transactionId, updates)
       return
     }
@@ -2715,12 +2713,10 @@ export const transactionService = {
     } catch (error) {
       if (error instanceof NetworkTimeoutError) {
         console.warn('Supabase update timed out, queuing transaction update for offline sync.')
-        const { offlineTransactionService } = await import('./offlineTransactionService')
         await offlineTransactionService.updateTransaction(accountId, transactionId, updates)
         return
       }
       console.warn('Failed to update transaction online, falling back to offline queue:', error)
-      const { offlineTransactionService } = await import('./offlineTransactionService')
       await offlineTransactionService.updateTransaction(accountId, transactionId, updates)
     }
   },
@@ -2743,7 +2739,6 @@ export const transactionService = {
 
     // If offline, delegate to offlineTransactionService
     if (!online) {
-      const { offlineTransactionService } = await import('./offlineTransactionService')
       await offlineTransactionService.deleteTransaction(accountId, transactionId)
       return
     }
@@ -2811,12 +2806,10 @@ export const transactionService = {
     } catch (error) {
       if (error instanceof NetworkTimeoutError) {
         console.warn('Supabase delete timed out, queuing transaction delete for offline sync.')
-        const { offlineTransactionService } = await import('./offlineTransactionService')
         await offlineTransactionService.deleteTransaction(accountId, transactionId)
         return
       }
       console.warn('Failed to delete transaction online, falling back to offline queue:', error)
-      const { offlineTransactionService } = await import('./offlineTransactionService')
       await offlineTransactionService.deleteTransaction(accountId, transactionId)
     }
   },
