@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Camera, ChevronDown, Receipt, Bookmark, Edit, Copy, X } from 'lucide-react'
+import DuplicateQuantityMenu from '@/components/ui/DuplicateQuantityMenu'
 import ContextLink from '@/components/ContextLink'
 import { normalizeDisposition, displayDispositionLabel, DISPOSITION_OPTIONS, dispositionsEqual } from '@/utils/dispositionUtils'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
@@ -35,7 +36,7 @@ interface ItemPreviewCardProps {
   showCheckbox?: boolean // Whether to show checkbox (default: false)
   // Actions
   onBookmark?: (itemId: string) => void
-  onDuplicate?: (itemId: string) => void | Promise<void>
+  onDuplicate?: (itemId: string, quantity?: number) => void | Promise<void>
   onEdit?: (href: string) => void
   onDelete?: (itemId: string) => void
   onDispositionUpdate?: (itemId: string, disposition: ItemDisposition) => void
@@ -337,17 +338,12 @@ export default function ItemPreviewCard({
                 </button>
               )}
               {showDuplicate && onDuplicate && (
-                <button
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    onDuplicate(itemId)
-                  }}
-                  className="inline-flex items-center justify-center p-1 text-sm font-medium text-primary-600 bg-transparent focus:outline-none transition-colors"
-                  title="Duplicate item"
-                >
-                  <Copy className="h-4 w-4" />
-                </button>
+                <DuplicateQuantityMenu
+                  onDuplicate={(quantity) => onDuplicate(itemId, quantity)}
+                  buttonClassName="inline-flex items-center justify-center p-1 text-sm font-medium text-primary-600 bg-transparent focus:outline-none transition-colors"
+                  buttonTitle="Duplicate item"
+                  buttonContent={<Copy className="h-4 w-4" />}
+                />
               )}
               {showDelete && onDelete && (
                 <button

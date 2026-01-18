@@ -1143,21 +1143,29 @@ export default function TransactionDetail() {
     }
   }
 
-  const handleDuplicateTransactionItem = async (item: TransactionItemFormData) => {
+  const handleDuplicateTransactionItem = async (item: TransactionItemFormData, quantity = 1) => {
     if (!projectId || !transactionId || !transaction || !currentAccountId) return
 
     try {
-      const duplicatePayload = buildCreateItemPayload(item)
-      const createResult = await unifiedItemsService.createItem(currentAccountId, duplicatePayload)
-      await hydrateOptimisticItem(currentAccountId, createResult.itemId, duplicatePayload)
+      const safeQuantity = Math.max(1, Math.floor(quantity))
+      let lastResult: { mode: string; operationId: string | null } | null = null
+
+      for (let i = 0; i < safeQuantity; i += 1) {
+        const duplicatePayload = buildCreateItemPayload(item)
+        const createResult = await unifiedItemsService.createItem(currentAccountId, duplicatePayload)
+        await hydrateOptimisticItem(currentAccountId, createResult.itemId, duplicatePayload)
+        lastResult = { mode: createResult.mode, operationId: createResult.operationId ?? null }
+      }
 
       await refreshTransactionItems()
       await refreshRealtimeAfterWrite()
 
-      if (createResult.mode === 'offline') {
-        showOfflineSaved(createResult.operationId)
-      } else {
+      if (lastResult?.mode === 'offline') {
+        showOfflineSaved(lastResult.operationId)
+      } else if (safeQuantity === 1) {
         showSuccess('Item duplicated successfully')
+      } else {
+        showSuccess(`Duplicated ${safeQuantity} items successfully`)
       }
     } catch (error) {
       console.error('Error duplicating item:', error)

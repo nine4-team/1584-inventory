@@ -12,6 +12,7 @@ import { OfflineAwareImageService } from '@/services/offlineAwareImageService'
 import { offlineMediaService } from '@/services/offlineMediaService'
 import ImagePreview from '@/components/ui/ImagePreview'
 import ItemLineageBreadcrumb from '@/components/ui/ItemLineageBreadcrumb'
+import DuplicateQuantityMenu from '@/components/ui/DuplicateQuantityMenu'
 import { lineageService } from '@/services/lineageService'
 import { getUserFriendlyErrorMessage, getErrorAction } from '@/utils/imageUtils'
 import { useToast } from '@/components/ui/ToastContext'
@@ -1136,13 +1137,12 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
                 <Edit className="h-4 w-4" />
               </ContextLink>
 
-              <button
-                onClick={() => duplicateItem(item.itemId)}
-                className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                title="Duplicate Item"
-              >
-                <Copy className="h-4 w-4" />
-              </button>
+              <DuplicateQuantityMenu
+                onDuplicate={(quantity) => duplicateItem(item.itemId, quantity)}
+                buttonClassName="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                buttonTitle="Duplicate Item"
+                buttonContent={<Copy className="h-4 w-4" />}
+              />
 
               {ENABLE_QR && (
                 <button
@@ -1253,13 +1253,12 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
                   <Edit className="h-4 w-4" />
                 </ContextLink>
 
-                <button
-                  onClick={() => duplicateItem(item.itemId)}
-                  className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                  title="Duplicate Item"
-                >
-                  <Copy className="h-4 w-4" />
-                </button>
+                <DuplicateQuantityMenu
+                  onDuplicate={(quantity) => duplicateItem(item.itemId, quantity)}
+                  buttonClassName="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                  buttonTitle="Duplicate Item"
+                  buttonContent={<Copy className="h-4 w-4" />}
+                />
 
                 {ENABLE_QR && (
                   <button

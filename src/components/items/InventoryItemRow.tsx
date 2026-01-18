@@ -9,7 +9,7 @@ interface InventoryItemRowProps {
   isSelected: boolean
   onSelect: (itemId: string, checked: boolean) => void
   onBookmark: (itemId: string) => void
-  onDuplicate: (itemId: string) => void
+  onDuplicate: (itemId: string, quantity?: number) => void
   onEdit: (href: string) => void
   onDispositionUpdate: (itemId: string, disposition: ItemDisposition) => void
   onAddImage: (itemId: string) => void

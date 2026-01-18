@@ -21,7 +21,7 @@ export function useDuplication<T extends { itemId: string }>({
 }: UseDuplicationOptions<T>) {
   const { showSuccess, showError } = useToast()
 
-  const duplicateItem = useCallback(async (itemId: string) => {
+  const duplicateItem = useCallback(async (itemId: string, quantity = 1) => {
     // Prevent concurrent duplication of the same item
     if (inFlightDuplications.has(itemId)) {
       console.log('Duplication already in progress for item:', itemId)
@@ -38,16 +38,17 @@ export function useDuplication<T extends { itemId: string }>({
         return
       }
 
-      let newItemId: string
+      const safeQuantity = Math.max(1, Math.floor(quantity))
+      const newItemIds: string[] = []
 
-      if (duplicationService) {
-        // Use custom duplication service (e.g., for business inventory)
-        newItemId = await duplicationService(itemId)
-      } else if (projectId && accountId) {
-        // Use default project item duplication service (unified collection)
+      let defaultService: ((accountId: string, projectId: string, itemId: string) => Promise<string>) | null = null
+      if (!duplicationService && projectId && accountId) {
         const { unifiedItemsService } = await import('@/services/inventoryService')
-        newItemId = await unifiedItemsService.duplicateItem(accountId, projectId, itemId)
-      } else {
+        defaultService = (accountIdArg, projectIdArg, itemIdArg) =>
+          unifiedItemsService.duplicateItem(accountIdArg, projectIdArg, itemIdArg)
+      }
+
+      if (!duplicationService && !defaultService) {
         console.error('No duplication service available:', {
           itemId,
           hasCustomDuplicationService: Boolean(duplicationService),
@@ -58,8 +59,24 @@ export function useDuplication<T extends { itemId: string }>({
         return
       }
 
+      for (let i = 0; i < safeQuantity; i += 1) {
+        if (duplicationService) {
+          // Use custom duplication service (e.g., for business inventory)
+          const newItemId = await duplicationService(itemId)
+          newItemIds.push(newItemId)
+        } else if (defaultService && projectId && accountId) {
+          // Use default project item duplication service (unified collection)
+          const newItemId = await defaultService(accountId, projectId, itemId)
+          newItemIds.push(newItemId)
+        }
+      }
+
       // The real-time listener will handle the UI update, but we'll show a success message
-      showSuccess(`Item duplicated successfully! New item ID: ${newItemId}`)
+      if (safeQuantity === 1) {
+        showSuccess(`Item duplicated successfully! New item ID: ${newItemIds[0]}`)
+      } else {
+        showSuccess(`Duplicated ${safeQuantity} items successfully!`)
+      }
 
       // Note: We don't need to manually update local state here because
       // the real-time listener in the parent component will handle it

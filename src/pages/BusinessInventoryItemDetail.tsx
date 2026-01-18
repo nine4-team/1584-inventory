@@ -8,6 +8,7 @@ import { Item, Project } from '@/types'
 import { unifiedItemsService, projectService } from '@/services/inventoryService'
 import { formatDate } from '@/utils/dateUtils'
 import ImagePreview from '@/components/ui/ImagePreview'
+import DuplicateQuantityMenu from '@/components/ui/DuplicateQuantityMenu'
 import { ImageUploadService } from '@/services/imageService'
 import { useDuplication } from '@/hooks/useDuplication'
 import { useAccount } from '@/contexts/AccountContext'
@@ -381,13 +382,14 @@ export default function BusinessInventoryItemDetail() {
             >
               <Edit className="h-4 w-4" />
             </ContextLink>
-            <button
-              onClick={() => item && duplicateItem(item.itemId)}
-              className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-              title="Duplicate Item"
-            >
-              <Copy className="h-4 w-4" />
-            </button>
+            {item && (
+              <DuplicateQuantityMenu
+                onDuplicate={(quantity) => duplicateItem(item.itemId, quantity)}
+                buttonClassName="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                buttonTitle="Duplicate Item"
+                buttonContent={<Copy className="h-4 w-4" />}
+              />
+            )}
           </div>
         </div>
       </div>
