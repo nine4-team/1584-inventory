@@ -15,6 +15,7 @@ import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { useSyncError } from '@/hooks/useSyncError'
 import { hydrateTransactionCache } from '@/utils/hydrationHelpers'
 import { getGlobalQueryClient } from '@/utils/queryClient'
+import { useBusinessInventoryRealtime } from '@/contexts/BusinessInventoryRealtimeContext'
 
 export default function EditBusinessInventoryTransaction() {
   const { projectId, transactionId } = useParams<{ projectId: string; transactionId: string }>()
@@ -22,6 +23,7 @@ export default function EditBusinessInventoryTransaction() {
   const location = useLocation()
   const hasSyncError = useSyncError()
   const { currentAccountId } = useAccount()
+  const { refreshCollections } = useBusinessInventoryRealtime()
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [, setProjects] = useState<Project[]>([])
@@ -275,6 +277,11 @@ export default function EditBusinessInventoryTransaction() {
         return
       }
       await transactionService.updateTransaction(currentAccountId, actualProjectId || '', transactionId, updateData)
+      try {
+        await refreshCollections()
+      } catch (error) {
+        console.debug('EditBusinessInventoryTransaction: realtime refresh failed', error)
+      }
       navigate(`/business-inventory`)
     } catch (error) {
       console.error('Error updating transaction:', error)

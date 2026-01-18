@@ -8,6 +8,7 @@ import { useAccount } from '@/contexts/AccountContext'
 import { Combobox } from '@/components/ui/Combobox'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { useSyncError } from '@/hooks/useSyncError'
+import { useBusinessInventoryRealtime } from '@/contexts/BusinessInventoryRealtimeContext'
 
 export default function EditBusinessInventoryItem() {
   const { id } = useParams<{ id: string }>()
@@ -15,6 +16,7 @@ export default function EditBusinessInventoryItem() {
   const hasSyncError = useSyncError()
   const location = useLocation()
   const { currentAccountId } = useAccount()
+  const { refreshCollections } = useBusinessInventoryRealtime()
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [item, setItem] = useState<Item | null>(null)
@@ -140,6 +142,11 @@ export default function EditBusinessInventoryItem() {
       }
 
       await unifiedItemsService.updateItem(currentAccountId, id, payload)
+      try {
+        await refreshCollections()
+      } catch (error) {
+        console.debug('EditBusinessInventoryItem: realtime refresh failed', error)
+      }
       navigate(`/business-inventory/${id}`, { replace: true })
     } catch (error) {
       console.error('Error updating item:', error)

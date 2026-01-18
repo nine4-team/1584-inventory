@@ -16,7 +16,7 @@ export function registerSnapshotRefreshCallback(callback: (projectId: string) =>
 
 /**
  * Register a callback to refresh business inventory snapshots
- * Called by BusinessInventory when it is mounted
+ * Called by BusinessInventoryRealtimeProvider during initialization
  */
 export function registerBusinessInventoryRefreshCallback(callback: (accountId: string) => void): void {
   businessInventoryRefreshCallback = callback

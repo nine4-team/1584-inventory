@@ -1,20 +1,17 @@
 import { Plus, Search, Package, Receipt, Filter, QrCode, Trash2, Camera, DollarSign, ArrowUpDown, RefreshCw } from 'lucide-react'
 import { useMemo } from 'react'
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import { Item, Transaction, ItemImage, Project, ItemDisposition } from '@/types'
 import type { Transaction as TransactionType } from '@/types'
-import { unifiedItemsService, transactionService, projectService, integrationService } from '@/services/inventoryService'
+import { unifiedItemsService, projectService, integrationService } from '@/services/inventoryService'
 import { useToast } from '@/components/ui/ToastContext'
 import { lineageService } from '@/services/lineageService'
 import { ImageUploadService } from '@/services/imageService'
 import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
 import { useNetworkState } from '@/hooks/useNetworkState'
-import { subscribeToNetworkStatus } from '@/services/networkStatusService'
-import { onSyncEvent } from '@/services/serviceWorker'
-import { registerBusinessInventoryRefreshCallback } from '@/utils/realtimeSnapshotUpdater'
-import { refreshBusinessInventoryRealtimeSnapshot } from '@/utils/businessInventoryRefresh'
+import { useBusinessInventoryRealtime } from '@/contexts/BusinessInventoryRealtimeContext'
 import { formatCurrency, formatDate } from '@/utils/dateUtils'
 import { COMPANY_INVENTORY, COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE } from '@/constants/company'
 import { useBookmark } from '@/hooks/useBookmark'
@@ -34,13 +31,14 @@ interface FilterOptions {
 
 export default function BusinessInventory() {
   const { currentAccountId, loading: accountLoading } = useAccount()
+  const { items: snapshotItems, transactions: snapshotTransactions, isLoading: realtimeLoading, refreshCollections } =
+    useBusinessInventoryRealtime()
   const ENABLE_QR = import.meta.env.VITE_ENABLE_QR === 'true'
   const { buildContextUrl } = useNavigationContext()
   const stackedNavigate = useStackedNavigate()
   const [activeTab, setActiveTab] = useState<'inventory' | 'transactions'>('inventory')
   const [items, setItems] = useState<Item[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
-  const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [filters] = useState<FilterOptions>({
     status: '',
@@ -74,7 +72,6 @@ export default function BusinessInventory() {
   const { showSuccess, showError } = useToast()
   const { showOfflineSaved } = useOfflineFeedback()
   const { isOnline } = useNetworkState()
-  const previousOnlineStatusRef = useRef<boolean | null>(null)
 
   // Batch allocation state
   const [projects, setProjects] = useState<Project[]>([])
@@ -266,141 +263,39 @@ export default function BusinessInventory() {
     { id: 'transactions' as const, name: 'Transactions', icon: Receipt }
   ]
 
-  const refreshBusinessInventoryCollections = useCallback(
-    async (accountIdOverride?: string) => {
-      const accountId = accountIdOverride ?? currentAccountId
-      if (!accountId) return
-
-      try {
-        const { items: inventoryData, transactions: uniqueTransactions } =
-          await refreshBusinessInventoryRealtimeSnapshot(accountId, filters)
-
-        setItems(inventoryData)
-        setTransactions(uniqueTransactions)
-      } catch (error) {
-        console.error('Error refreshing business inventory collections:', error)
-      }
-    },
-    [currentAccountId, filters]
-  )
-
   const refreshRealtimeAfterWrite = useCallback(async () => {
-    if (!currentAccountId) return
     try {
-      await refreshBusinessInventoryCollections(currentAccountId)
+      await refreshCollections()
     } catch (error) {
       console.debug('BusinessInventory: realtime refresh failed', error)
     }
-  }, [currentAccountId, refreshBusinessInventoryCollections])
+  }, [refreshCollections])
 
-  // Unified useEffect for data loading and real-time subscriptions
   useEffect(() => {
-    let itemsUnsubscribe: (() => void) | null = null
-    let transactionsUnsubscribe: (() => void) | null = null
+    setItems(snapshotItems)
+  }, [snapshotItems])
 
-    const loadInitialData = async () => {
-    if (!currentAccountId) {
-      setIsLoading(false)
-      return
-    }
+  useEffect(() => {
+    setTransactions(snapshotTransactions)
+  }, [snapshotTransactions])
 
-        setIsLoading(true)
+  useEffect(() => {
+    const loadProjects = async () => {
+      if (!currentAccountId) {
+        setProjects([])
+        return
+      }
       try {
-        const [inventoryData, businessInventoryTransactions, inventoryRelatedTransactions, projectsData] = await Promise.all([
-          unifiedItemsService.getBusinessInventoryItems(currentAccountId, filters),
-          transactionService.getBusinessInventoryTransactions(currentAccountId),
-          transactionService.getInventoryRelatedTransactions(currentAccountId),
-          projectService.getProjects(currentAccountId)
-        ])
-
-        const allTransactions = [...businessInventoryTransactions, ...inventoryRelatedTransactions]
-        const uniqueTransactions = allTransactions.filter((transaction, index, self) =>
-          index === self.findIndex(t => t.transactionId === transaction.transactionId)
-        )
-        uniqueTransactions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-
-        setItems(inventoryData)
-        setTransactions(uniqueTransactions)
+        const projectsData = await projectService.getProjects(currentAccountId)
         setProjects(projectsData)
-
-        // Setup subscriptions after initial data load
-        itemsUnsubscribe = unifiedItemsService.subscribeToBusinessInventoryItems(
-          currentAccountId,
-          (updatedItems) => setItems(updatedItems),
-          inventoryData
-        )
-        
-        transactionsUnsubscribe = transactionService.subscribeToBusinessInventoryTransactions(
-          currentAccountId,
-          (updatedTransactions) => {
-            const allTrans = [...updatedTransactions];
-            const uniqueTrans = allTrans.filter((transaction, index, self) =>
-              index === self.findIndex(t => t.transactionId === transaction.transactionId)
-            );
-            uniqueTrans.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-            setTransactions(uniqueTrans);
-          },
-          uniqueTransactions
-        )
-
       } catch (error) {
-        console.error('Error loading business inventory data:', error)
-          setItems([])
-          setTransactions([])
-          setProjects([])
-      } finally {
-          setIsLoading(false)
-        }
+        console.error('Error loading projects:', error)
+        setProjects([])
+      }
     }
 
-    loadInitialData()
-
-    return () => {
-      if (itemsUnsubscribe) itemsUnsubscribe()
-      if (transactionsUnsubscribe) transactionsUnsubscribe()
-    }
-  }, [currentAccountId, filters])
-
-  // Refresh business inventory after reconnect
-  useEffect(() => {
-    const unsubscribe = subscribeToNetworkStatus(networkStatus => {
-      const wasOnline = previousOnlineStatusRef.current
-      previousOnlineStatusRef.current = networkStatus.isOnline
-
-      if (!networkStatus.isOnline || wasOnline === null || wasOnline) {
-        return
-      }
-      if (currentAccountId) {
-        void refreshBusinessInventoryCollections(currentAccountId)
-      }
-    })
-
-    return unsubscribe
-  }, [currentAccountId, refreshBusinessInventoryCollections])
-
-  // After offline queue flushes (SYNC_COMPLETE with zero pending ops), re-fetch to capture missed realtime payloads
-  useEffect(() => {
-    const unsubscribe = onSyncEvent('complete', payload => {
-      if (payload?.pendingOperations && payload.pendingOperations > 0) {
-        return
-      }
-      if (currentAccountId) {
-        void refreshBusinessInventoryCollections(currentAccountId)
-      }
-    })
-
-    return unsubscribe
-  }, [currentAccountId, refreshBusinessInventoryCollections])
-
-  // Register snapshot refresh callback for offline services
-  useEffect(() => {
-    registerBusinessInventoryRefreshCallback((accountId) => {
-      void refreshBusinessInventoryCollections(accountId)
-    })
-    return () => {
-      registerBusinessInventoryRefreshCallback(() => {})
-    }
-  }, [refreshBusinessInventoryCollections])
+    loadProjects()
+  }, [currentAccountId])
 
   // Per-visible-item lineage subscriptions: refetch single item on new edges to keep list in sync
   useEffect(() => {
@@ -422,7 +317,7 @@ export default function BusinessInventory() {
               }
               // Also refresh transactions to ensure deletions/creations are reflected
               try {
-                await loadBusinessTransactions()
+                await refreshCollections({ force: true })
               } catch (tErr) {
                 console.debug('BusinessInventory - failed to reload transactions after lineage event', tErr)
               }
@@ -442,7 +337,7 @@ export default function BusinessInventory() {
         try { u() } catch (e) { /* noop */ }
       })
     }
-  }, [items.map(i => i.itemId).join(','), currentAccountId])
+  }, [items.map(i => i.itemId).join(','), currentAccountId, refreshCollections])
 
   // Reset uploading state on unmount to prevent hanging state
   useEffect(() => {
@@ -451,67 +346,14 @@ export default function BusinessInventory() {
     }
   }, [])
 
-  const loadBusinessInventory = async () => {
-    if (!currentAccountId) return
-    try {
-      const data = await unifiedItemsService.getBusinessInventoryItems(currentAccountId, filters)
-      setItems(data)
-    } catch (error) {
-      console.error('Error loading business inventory:', error)
-      setItems([])
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-
-  const loadBusinessTransactions = async () => {
-    if (!currentAccountId) return
-    try {
-      // Get inventory-related transactions from top-level collection
-      const allTransactions: Transaction[] = []
-
-      // Get business inventory transactions (project_id == null)
-      const businessInventoryTransactions = await transactionService.getBusinessInventoryTransactions(currentAccountId)
-      allTransactions.push(...businessInventoryTransactions)
-
-      // Get inventory-related transactions (reimbursement_type in ['Client Owes', 'We Owe'])
-      const inventoryRelatedTransactions = await transactionService.getInventoryRelatedTransactions(currentAccountId)
-      allTransactions.push(...inventoryRelatedTransactions)
-
-      // Remove duplicates (same transaction might appear in both queries)
-      const uniqueTransactions = allTransactions.filter((transaction, index, self) =>
-        index === self.findIndex(t => t.transactionId === transaction.transactionId)
-      )
-
-      // Sort by creation date, newest first
-      uniqueTransactions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      setTransactions(uniqueTransactions)
-    } catch (error) {
-      console.error('Error loading business transactions:', error)
-      setTransactions([])
-    }
-  }
-
   const handleRefreshInventory = useCallback(async () => {
     if (!currentAccountId || isRefreshing) return
     setIsRefreshing(true)
     try {
-      const [inventoryData, businessInventoryTransactions, inventoryRelatedTransactions, projectsData] = await Promise.all([
-        unifiedItemsService.getBusinessInventoryItems(currentAccountId, filters),
-        transactionService.getBusinessInventoryTransactions(currentAccountId),
-        transactionService.getInventoryRelatedTransactions(currentAccountId),
-        projectService.getProjects(currentAccountId)
+      const [projectsData] = await Promise.all([
+        projectService.getProjects(currentAccountId),
+        refreshCollections({ force: true })
       ])
-
-      const allTransactions = [...businessInventoryTransactions, ...inventoryRelatedTransactions]
-      const uniqueTransactions = allTransactions.filter((transaction, index, self) =>
-        index === self.findIndex(t => t.transactionId === transaction.transactionId)
-      )
-      uniqueTransactions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-
-      setItems(inventoryData)
-      setTransactions(uniqueTransactions)
       setProjects(projectsData)
     } catch (error) {
       console.error('Error refreshing business inventory data:', error)
@@ -519,7 +361,7 @@ export default function BusinessInventory() {
     } finally {
       setIsRefreshing(false)
     }
-  }, [currentAccountId, filters, isRefreshing, showError])
+  }, [currentAccountId, isRefreshing, refreshCollections, showError])
 
 
   const handleInventorySearchChange = (searchQuery: string) => {
@@ -684,19 +526,15 @@ export default function BusinessInventory() {
         })
       }
 
-      // Show result message
-      if (errorCount === 0) {
-        alert(`Successfully deleted ${successCount} item${successCount !== 1 ? 's' : ''}.`)
-      } else {
+      if (errorCount > 0) {
         // If there were errors, reload the items to make sure state reflects the server
-        await loadBusinessInventory()
-        alert(`Deleted ${successCount} item${successCount !== 1 ? 's' : ''}, but ${errorCount} item${errorCount !== 1 ? 's' : ''} failed to delete.`)
+        await refreshCollections({ force: true })
       }
       await refreshRealtimeAfterWrite()
     } catch (error) {
       console.error('Error deleting items:', error)
       // Reload items on error to restore state
-      await loadBusinessInventory()
+      await refreshCollections({ force: true })
       alert('Error deleting items. Please try again.')
     }
   }
@@ -802,6 +640,8 @@ export default function BusinessInventory() {
     if (selectedInGroup === groupItems.length) return 'checked'
     return 'indeterminate'
   }
+
+  const isLoading = accountLoading || realtimeLoading
 
   // Guard against no account when not loading
   if (!isLoading && !accountLoading && !currentAccountId) {
