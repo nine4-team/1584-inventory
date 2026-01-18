@@ -1258,7 +1258,7 @@ class OfflineStore {
 
   private extractConflictEntityId(conflict: DBConflict, keys: string[]): string | null {
     for (const key of keys) {
-      const value = (conflict as Record<string, unknown>)[key]
+      const value = (conflict as unknown as Record<string, unknown>)[key]
       if (typeof value === 'string') {
         const trimmed = value.trim()
         if (trimmed.length > 0) {
@@ -1320,7 +1320,7 @@ class OfflineStore {
         putRequest.onerror = () => reject(putRequest.error)
 
         // Clean up duplicates based on entityType
-        let index: IDBIndex
+        let index: IDBIndex | null = null
         let entityIdToCheck: string | undefined
         
         if (conflict.entityType === 'item' && conflict.itemId) {
@@ -1711,23 +1711,31 @@ class OfflineStore {
 
   async upsertTransaction(transaction: DBTransaction): Promise<void> {
     if (!this.db) throw new Error('Database not initialized')
-    const dbTransaction = this.db.transaction(['transactions'], 'readwrite')
-    const store = dbTransaction.objectStore('transactions')
-
-    // Don't blindly reset version/last_synced_at - preserve existing values unless explicitly updating
-    const existing = await this.getTransactionById(transaction.transactionId)
-    if (existing) {
-      // Merge with existing data, preserving version unless it's being explicitly updated
-      transaction.version = transaction.version ?? existing.version
-      transaction.last_synced_at = transaction.last_synced_at ?? existing.last_synced_at
-    } else {
-      transaction.version = transaction.version ?? 1
-      transaction.last_synced_at = transaction.last_synced_at ?? new Date().toISOString()
-    }
-
-    store.put(transaction)
-
     return new Promise((resolve, reject) => {
+      const dbTransaction = this.db!.transaction(['transactions'], 'readwrite')
+      const store = dbTransaction.objectStore('transactions')
+      const request = store.get(transaction.transactionId)
+
+      request.onsuccess = () => {
+        const existing = request.result as DBTransaction | undefined
+        // Don't blindly reset version/last_synced_at - preserve existing values unless explicitly updating
+        if (existing) {
+          // Merge with existing data, preserving version unless it's being explicitly updated
+          transaction.version = transaction.version ?? existing.version
+          transaction.last_synced_at = transaction.last_synced_at ?? existing.last_synced_at
+        } else {
+          transaction.version = transaction.version ?? 1
+          transaction.last_synced_at = transaction.last_synced_at ?? new Date().toISOString()
+        }
+
+        try {
+          store.put(transaction)
+        } catch (error) {
+          reject(error)
+        }
+      }
+
+      request.onerror = () => reject(request.error)
       dbTransaction.oncomplete = () => resolve()
       dbTransaction.onerror = () => reject(dbTransaction.error)
     })
@@ -1813,7 +1821,7 @@ class OfflineStore {
   }
 
   // Budget Categories CRUD
-  async saveBudgetCategories(accountId: string, categories: Omit<DBBudgetCategory, 'cachedAt'>[]): Promise<void> {
+  async saveBudgetCategories(_accountId: string, categories: Omit<DBBudgetCategory, 'cachedAt'>[]): Promise<void> {
     if (!this.db) throw new Error('Database not initialized')
     if (!(await this.ensureStoreInitialized('budgetCategories'))) {
       return
