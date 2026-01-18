@@ -1,4 +1,4 @@
-import { ArrowLeft, Edit, Trash2, Image as ImageIcon, Package } from 'lucide-react'
+import { ArrowLeft, Edit, Trash2, Image as ImageIcon, Package, RefreshCw } from 'lucide-react'
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import ImageGallery from '@/components/ui/ImageGallery'
 import { TransactionImagePreview } from '@/components/ui/ImagePreview'
@@ -162,6 +162,7 @@ export default function TransactionDetail() {
   const [budgetCategories, setBudgetCategories] = useState<BudgetCategory[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isLoadingItems, setIsLoadingItems] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [showGallery, setShowGallery] = useState(false)
   const [galleryInitialIndex, setGalleryInitialIndex] = useState(0)
   const [isUploadingReceiptImages, setIsUploadingReceiptImages] = useState(false)
@@ -390,179 +391,193 @@ export default function TransactionDetail() {
     [currentAccountId, refreshRealtimeAfterWrite, refreshTransactionItems, showError, showSuccess]
   )
 
-  useEffect(() => {
-    const loadTransaction = async () => {
-      if (!transactionId || !currentAccountId) return
+  const loadTransaction = useCallback(async () => {
+    if (!transactionId || !currentAccountId) return
 
+    try {
+      // First, try to hydrate from offlineStore to React Query cache
+      // This ensures optimistic transactions created offline are available
       try {
-        // First, try to hydrate from offlineStore to React Query cache
-        // This ensures optimistic transactions created offline are available
-        try {
-          await hydrateTransactionCache(getGlobalQueryClient(), currentAccountId, transactionId)
-        } catch (error) {
-          console.warn('Failed to hydrate transaction cache (non-fatal):', error)
+        await hydrateTransactionCache(getGlobalQueryClient(), currentAccountId, transactionId)
+      } catch (error) {
+        console.warn('Failed to hydrate transaction cache (non-fatal):', error)
+      }
+
+      // Check React Query cache first (for optimistic transactions created offline)
+      const queryClient = getGlobalQueryClient()
+      const cachedTransaction = queryClient.getQueryData<Transaction>(['transaction', currentAccountId, transactionId])
+
+      let actualProjectId: string | null | undefined = projectId ?? null
+      let transactionData: Transaction | null = null
+      let projectData: Project | null = null
+
+      if (cachedTransaction) {
+        console.log('✅ Transaction found in React Query cache:', cachedTransaction.transactionId)
+        transactionData = cachedTransaction
+        actualProjectId = cachedTransaction.projectId ?? projectId ?? null
+
+        // Still need to load project if projectId exists
+        if (actualProjectId) {
+          try {
+            projectData = await projectService.getProject(currentAccountId, actualProjectId)
+            if (projectData) {
+              setProject(projectData)
+            }
+          } catch (error) {
+            console.warn('Failed to fetch project name:', error)
+          }
         }
 
-        // Check React Query cache first (for optimistic transactions created offline)
-        const queryClient = getGlobalQueryClient()
-        const cachedTransaction = queryClient.getQueryData<Transaction>(['transaction', currentAccountId, transactionId])
-        
-        let actualProjectId: string | null | undefined = projectId ?? null
-        let transactionData: Transaction | null = null
-        let projectData: Project | null = null
-        
-        if (cachedTransaction) {
-          console.log('✅ Transaction found in React Query cache:', cachedTransaction.transactionId)
-          transactionData = cachedTransaction
-          actualProjectId = cachedTransaction.projectId ?? projectId ?? null
-          
-          // Still need to load project if projectId exists
+        setTransaction(transactionData)
+        setIsLoading(false)
+        // Continue to load items below - use cached transaction data
+      } else {
+        // Transaction not in cache, proceed with normal loading
+        let fetchedTransactionData: any
+        let fetchedProjectData: Project | null = null
+
+        if (!actualProjectId) {
+        // For business inventory transactions, we need to find the transaction across all projects
+        console.log('TransactionDetail - No projectId provided, searching across all projects for business inventory transaction')
+        const result = await transactionService.getTransactionById(currentAccountId, transactionId)
+
+        if (!result.transaction) {
+          console.error('TransactionDetail - Transaction not found in any project')
+          setIsLoading(false)
+          setIsLoadingItems(false)
+          return
+        }
+
+          fetchedTransactionData = result.transaction
+          actualProjectId = result.projectId
+
+          // Get project data only if projectId exists (business inventory transactions have null projectId)
           if (actualProjectId) {
-            try {
-              projectData = await projectService.getProject(currentAccountId, actualProjectId)
-              if (projectData) {
-                setProject(projectData)
-              }
-            } catch (error) {
-              console.warn('Failed to fetch project name:', error)
-            }
+            fetchedProjectData = await projectService.getProject(currentAccountId, actualProjectId)
           }
-          
-          setTransaction(transactionData)
-          setIsLoading(false)
-          // Continue to load items below - use cached transaction data
         } else {
-          // Transaction not in cache, proceed with normal loading
-          let fetchedTransactionData: any
-          let fetchedProjectData: Project | null = null
+          // Fetch transaction and project data for regular project transactions.
+          // We intentionally do NOT rely on `getItemsForTransaction` here because moved/deallocated
+          // items may have been cleared from the `transaction_id` column. Instead, read
+          // `itemIds` from the transaction row and load each item by `item_id` so moved items
+          // are still discoverable and can be shown in the "Moved out" section.
+          const [fetchedTxData, fetchedProjData] = await Promise.all([
+            transactionService.getTransaction(currentAccountId, actualProjectId, transactionId),
+            projectService.getProject(currentAccountId, actualProjectId)
+          ])
 
-          if (!actualProjectId) {
-          // For business inventory transactions, we need to find the transaction across all projects
-          console.log('TransactionDetail - No projectId provided, searching across all projects for business inventory transaction')
-          const result = await transactionService.getTransactionById(currentAccountId, transactionId)
-
-          if (!result.transaction) {
-            console.error('TransactionDetail - Transaction not found in any project')
-            setIsLoading(false)
-            setIsLoadingItems(false)
-            return
-          }
-
-            fetchedTransactionData = result.transaction
-            actualProjectId = result.projectId
-
-            // Get project data only if projectId exists (business inventory transactions have null projectId)
-            if (actualProjectId) {
-              fetchedProjectData = await projectService.getProject(currentAccountId, actualProjectId)
-            }
-          } else {
-            // Fetch transaction and project data for regular project transactions.
-            // We intentionally do NOT rely on `getItemsForTransaction` here because moved/deallocated
-            // items may have been cleared from the `transaction_id` column. Instead, read
-            // `itemIds` from the transaction row and load each item by `item_id` so moved items
-            // are still discoverable and can be shown in the "Moved out" section.
-            const [fetchedTxData, fetchedProjData] = await Promise.all([
-              transactionService.getTransaction(currentAccountId, actualProjectId, transactionId),
-              projectService.getProject(currentAccountId, actualProjectId)
-            ])
-
-            fetchedTransactionData = fetchedTxData
-            fetchedProjectData = fetchedProjData
-          }
-          
-          transactionData = fetchedTransactionData
-          projectData = fetchedProjectData
-          
-          setTransaction(transactionData)
-          if (projectData) {
-            setProject(projectData)
-          }
-          setIsLoading(false)
+          fetchedTransactionData = fetchedTxData
+          fetchedProjectData = fetchedProjData
         }
-        
-        // Load items for both cached and fetched transactions
-        if (transactionData) {
 
-          // Prefer item IDs stored on the transaction record
-          const itemIdsFromTransaction = Array.isArray(transactionData?.itemIds) ? transactionData.itemIds : []
-          if (itemIdsFromTransaction.length > 0 && actualProjectId) {
-            const itemsPromises = itemIdsFromTransaction.map((itemId: string) => unifiedItemsService.getItemById(currentAccountId, itemId))
+        transactionData = fetchedTransactionData
+        projectData = fetchedProjectData
+
+        setTransaction(transactionData)
+        if (projectData) {
+          setProject(projectData)
+        }
+        setIsLoading(false)
+      }
+
+      // Load items for both cached and fetched transactions
+      if (transactionData) {
+
+        // Prefer item IDs stored on the transaction record
+        const itemIdsFromTransaction = Array.isArray(transactionData?.itemIds) ? transactionData.itemIds : []
+        if (itemIdsFromTransaction.length > 0 && actualProjectId) {
+          const itemsPromises = itemIdsFromTransaction.map((itemId: string) => unifiedItemsService.getItemById(currentAccountId, itemId))
+          const items = await Promise.all(itemsPromises)
+          let validItems = items.filter(item => item !== null) as Item[]
+          console.log('TransactionDetail - fetched items (from transaction.itemIds):', validItems.length)
+
+          try {
+            // Include items that were moved out of this transaction by consulting lineage edges.
+            // The UI displays both "in transaction" and "moved out" items; we need to load moved items too.
+            const edgesFromTransaction = await lineageService.getEdgesFromTransaction(transactionId, currentAccountId)
+            const movedOutItemIds = Array.from(new Set(edgesFromTransaction.map(edge => edge.itemId)))
+
+            // Fetch any moved item records that aren't already in the items list
+            const missingMovedItemIds = movedOutItemIds.filter(id => !validItems.some(it => it.itemId === id))
+            if (missingMovedItemIds.length > 0) {
+              const movedItemsPromises = missingMovedItemIds.map(id => unifiedItemsService.getItemById(currentAccountId, id))
+              const movedItems = await Promise.all(movedItemsPromises)
+              const validMovedItems = movedItems.filter(mi => mi !== null) as Item[]
+              validItems = validItems.concat(validMovedItems)
+              console.log('TransactionDetail - added moved items:', validMovedItems.length)
+            }
+
+            setLoadedItems(validItems, new Set<string>(movedOutItemIds))
+          } catch (edgeErr) {
+            console.error('TransactionDetail - failed to fetch lineage edges:', edgeErr)
+            setLoadedItems(validItems, new Set<string>())
+          }
+        } else {
+          // Fallback: query items by transaction_id when itemIds is empty or missing
+          console.log('TransactionDetail - itemIds empty, falling back to getItemsForTransaction')
+          try {
+            const transactionItems = await fetchItemsViaReconcile(actualProjectId)
+            const itemIds = transactionItems.map(item => item.itemId)
+            const itemsPromises = itemIds.map(id => unifiedItemsService.getItemById(currentAccountId, id))
             const items = await Promise.all(itemsPromises)
             let validItems = items.filter(item => item !== null) as Item[]
-            console.log('TransactionDetail - fetched items (from transaction.itemIds):', validItems.length)
 
+            let movedOutItemIds = new Set<string>()
             try {
               // Include items that were moved out of this transaction by consulting lineage edges.
               // The UI displays both "in transaction" and "moved out" items; we need to load moved items too.
               const edgesFromTransaction = await lineageService.getEdgesFromTransaction(transactionId, currentAccountId)
-              const movedOutItemIds = Array.from(new Set(edgesFromTransaction.map(edge => edge.itemId)))
+              const allMovedOutItemIds = Array.from(new Set<string>(edgesFromTransaction.map(edge => edge.itemId)))
 
               // Fetch any moved item records that aren't already in the items list
-              const missingMovedItemIds = movedOutItemIds.filter(id => !validItems.some(it => it.itemId === id))
+              const missingMovedItemIds = allMovedOutItemIds.filter(id => !validItems.some(it => it.itemId === id))
               if (missingMovedItemIds.length > 0) {
                 const movedItemsPromises = missingMovedItemIds.map(id => unifiedItemsService.getItemById(currentAccountId, id))
                 const movedItems = await Promise.all(movedItemsPromises)
                 const validMovedItems = movedItems.filter(mi => mi !== null) as Item[]
                 validItems = validItems.concat(validMovedItems)
-                console.log('TransactionDetail - added moved items:', validMovedItems.length)
+                console.log('TransactionDetail - added moved items (fallback):', validMovedItems.length)
               }
 
-              setLoadedItems(validItems, new Set<string>(movedOutItemIds))
+              movedOutItemIds = new Set<string>(allMovedOutItemIds)
             } catch (edgeErr) {
-              console.error('TransactionDetail - failed to fetch lineage edges:', edgeErr)
-              setLoadedItems(validItems, new Set<string>())
+              console.error('TransactionDetail - failed to fetch lineage edges via fallback:', edgeErr)
             }
-          } else {
-            // Fallback: query items by transaction_id when itemIds is empty or missing
-            console.log('TransactionDetail - itemIds empty, falling back to getItemsForTransaction')
-            try {
-              const transactionItems = await fetchItemsViaReconcile(actualProjectId)
-              const itemIds = transactionItems.map(item => item.itemId)
-              const itemsPromises = itemIds.map(id => unifiedItemsService.getItemById(currentAccountId, id))
-              const items = await Promise.all(itemsPromises)
-              let validItems = items.filter(item => item !== null) as Item[]
 
-              let movedOutItemIds = new Set<string>()
-              try {
-                // Include items that were moved out of this transaction by consulting lineage edges.
-                // The UI displays both "in transaction" and "moved out" items; we need to load moved items too.
-                const edgesFromTransaction = await lineageService.getEdgesFromTransaction(transactionId, currentAccountId)
-                const allMovedOutItemIds = Array.from(new Set<string>(edgesFromTransaction.map(edge => edge.itemId)))
-
-                // Fetch any moved item records that aren't already in the items list
-                const missingMovedItemIds = allMovedOutItemIds.filter(id => !validItems.some(it => it.itemId === id))
-                if (missingMovedItemIds.length > 0) {
-                  const movedItemsPromises = missingMovedItemIds.map(id => unifiedItemsService.getItemById(currentAccountId, id))
-                  const movedItems = await Promise.all(movedItemsPromises)
-                  const validMovedItems = movedItems.filter(mi => mi !== null) as Item[]
-                  validItems = validItems.concat(validMovedItems)
-                  console.log('TransactionDetail - added moved items (fallback):', validMovedItems.length)
-                }
-
-                movedOutItemIds = new Set<string>(allMovedOutItemIds)
-              } catch (edgeErr) {
-                console.error('TransactionDetail - failed to fetch lineage edges via fallback:', edgeErr)
-              }
-
-              setLoadedItems(validItems, movedOutItemIds)
-            } catch (itemError) {
-              console.error('TransactionDetail - failed to fetch items by transaction_id:', itemError)
-              setItems([])
-            }
+            setLoadedItems(validItems, movedOutItemIds)
+          } catch (itemError) {
+            console.error('TransactionDetail - failed to fetch items by transaction_id:', itemError)
+            setItems([])
           }
         }
-
-      } catch (error) {
-        console.error('Error loading transaction:', error)
-        setItems([])
-      } finally {
-        setIsLoading(false)
-        setIsLoadingItems(false)
       }
-    }
 
-    loadTransaction()
+    } catch (error) {
+      console.error('Error loading transaction:', error)
+      setItems([])
+    } finally {
+      setIsLoading(false)
+      setIsLoadingItems(false)
+    }
   }, [projectId, transactionId, currentAccountId, fetchItemsViaReconcile])
+
+  useEffect(() => {
+    loadTransaction()
+  }, [loadTransaction])
+
+  const handleRefreshTransaction = useCallback(async () => {
+    if (isRefreshing) return
+    setIsRefreshing(true)
+    try {
+      await loadTransaction()
+      await refreshRealtimeAfterWrite(true)
+    } catch (error) {
+      console.error('Error refreshing transaction:', error)
+      showError('Failed to refresh transaction. Please try again.')
+    } finally {
+      setIsRefreshing(false)
+    }
+  }, [isRefreshing, loadTransaction, refreshRealtimeAfterWrite, showError])
 
   useEffect(() => {
     if (!currentAccountId || !transactionId) return
@@ -1280,13 +1295,24 @@ export default function TransactionDetail() {
       <div className="space-y-4">
         {/* Back button row */}
           <div className="flex items-center justify-between">
-          <ContextBackLink
-            fallback={backDestination}
-            className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
-          >
-            <ArrowLeft className="h-4 w-4 mr-1" />
-            Back
-          </ContextBackLink>
+          <div className="flex items-center gap-4">
+            <ContextBackLink
+              fallback={backDestination}
+              className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
+            >
+              <ArrowLeft className="h-4 w-4 mr-1" />
+              Back
+            </ContextBackLink>
+            <button
+              onClick={handleRefreshTransaction}
+              className="inline-flex items-center justify-center p-2 text-gray-500 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+              aria-label="Refresh transaction"
+              title="Refresh"
+              disabled={isRefreshing}
+            >
+              <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
           <div className="flex items-center space-x-3">
             <ContextLink
               to={buildContextUrl(editTransactionUrl)}
