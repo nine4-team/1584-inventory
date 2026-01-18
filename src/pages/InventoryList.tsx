@@ -45,7 +45,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
   const [openDispositionMenu, setOpenDispositionMenu] = useState<string | null>(null)
   const [filterMode, setFilterMode] = useState<'all' | 'bookmarked' | 'to-inventory' | 'from-inventory' | 'to-return' | 'returned'>('all')
   const [showFilterMenu, setShowFilterMenu] = useState(false)
-  const [sortMode, setSortMode] = useState<'alphabetical' | 'creationDate'>('alphabetical')
+  const [sortMode, setSortMode] = useState<'alphabetical' | 'creationDate'>('creationDate')
   const [showSortMenu, setShowSortMenu] = useState(false)
   const { showSuccess, showError } = useToast()
   const { refreshCollections: refreshRealtimeCollections } = useProjectRealtime(projectId)
