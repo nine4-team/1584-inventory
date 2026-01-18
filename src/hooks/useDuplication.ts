@@ -40,12 +40,11 @@ export function useDuplication<T extends { itemId: string }>({
         return
       }
 
-      const totalCount = Math.max(1, Math.floor(quantity))
-      const duplicateCount = Math.max(0, totalCount - 1)
+      const duplicateCount = Math.max(0, Math.floor(quantity))
       const newItemIds: string[] = []
 
       if (duplicateCount === 0) {
-        showSuccess('No duplicates created (quantity includes the original item).')
+        showError('Enter a quantity greater than 0.')
         return
       }
 
@@ -81,7 +80,7 @@ export function useDuplication<T extends { itemId: string }>({
 
       // The real-time listener will handle the UI update, but we'll show a success message
       if (duplicateCount === 1) {
-        showSuccess(`Item duplicated successfully! New item ID: ${newItemIds[0]}`)
+        showSuccess('Item duplicated successfully!')
       } else {
         showSuccess(`Duplicated ${duplicateCount} items successfully!`)
       }
