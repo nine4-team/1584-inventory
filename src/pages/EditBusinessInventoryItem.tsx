@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { useParams, useLocation } from 'react-router-dom'
+import { useParams, useLocation, useNavigate } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
-import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { ArrowLeft, Save, X } from 'lucide-react'
 import { Item } from '@/types'
 import { unifiedItemsService } from '@/services/inventoryService'
@@ -12,7 +11,7 @@ import { useSyncError } from '@/hooks/useSyncError'
 
 export default function EditBusinessInventoryItem() {
   const { id } = useParams<{ id: string }>()
-  const navigate = useStackedNavigate()
+  const navigate = useNavigate()
   const hasSyncError = useSyncError()
   const location = useLocation()
   const { currentAccountId } = useAccount()
@@ -141,7 +140,7 @@ export default function EditBusinessInventoryItem() {
       }
 
       await unifiedItemsService.updateItem(currentAccountId, id, payload)
-      navigate(`/business-inventory/${id}`)
+      navigate(`/business-inventory/${id}`, { replace: true })
     } catch (error) {
       console.error('Error updating item:', error)
       setFormErrors({ general: 'Error updating item. Please try again.' })
