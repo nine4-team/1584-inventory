@@ -20,18 +20,20 @@ Ensure business inventory UI updates in real time with the same reliability and 
 2. Business inventory item subscription has no shared cache or offline cleanup.
    - Location: `unifiedItemsService.subscribeToBusinessInventory`.
    - Impact: no offline store cleanup on delete, no query cache removal, and duplicate channels if multiple screens are mounted (list + detail).
+   - Status: resolved in Phase 1 (shared cache, single channel, offline/query cache cleanup).
 3. No resync after offline queue flush or reconnect.
    - Project realtime does this; business inventory does not.
    - Impact: missed realtime events leave the list stale after offline sessions or transient disconnects.
 4. Business inventory item detail does not handle removal.
    - Location: `BusinessInventoryItemDetail` uses list subscription and only updates when the item exists in the callback.
    - Impact: deleted/allocated items can remain visible until a manual refresh.
+   - Status: resolved in Phase 1 (detail now sets item to null when missing).
 5. No "post-write refresh" fallback.
    - Project inventory uses `refreshRealtimeAfterWrite` in list/detail flows.
    - Business inventory relies solely on realtime; any missed payload yields stale UI.
 
 ## Fix Plan (Detailed, Step-by-Step)
-### Phase 1: Items Realtime Parity
+### Phase 1: Items Realtime Parity (Completed)
 1. Add a shared realtime cache for business-inventory items.
    - File: `src/services/inventoryService.ts`.
    - Create a `businessInventoryRealtimeEntries` map similar to `projectItemsRealtimeEntries`.
@@ -52,6 +54,12 @@ Ensure business inventory UI updates in real time with the same reliability and 
 4. Replace usage.
    - `BusinessInventory`: swap `subscribeToBusinessInventory` for the new shared subscription.
    - `BusinessInventoryItemDetail`: use the new subscription, and if the item is missing from the snapshot, set `item` to null so the "Item not found" UI appears.
+
+## Current Status (Updated Jan 17, 2026)
+- Phase 1 complete: business inventory items share a realtime cache, use a single account channel, cleanup offline/query caches on delete, and item detail clears when removed.
+- Phase 2 complete: business inventory transactions now use a filtered realtime subscription aligned with the initial fetch criteria.
+- Phase 3 complete: business inventory refreshes items/transactions after reconnect and after offline sync completion, and offline services can trigger a business-inventory snapshot refresh after IndexedDB writes.
+- Phase 4 pending: add post-write refresh fallback for business inventory views.
 
 ### Phase 2: Transactions Realtime Parity
 1. Add a filtered subscription for business inventory transactions.

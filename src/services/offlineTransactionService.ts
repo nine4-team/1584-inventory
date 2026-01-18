@@ -5,7 +5,8 @@ import type { Operation } from '../types/operations'
 import { isNetworkOnline } from './networkStatusService'
 import { offlineItemService } from './offlineItemService'
 import { getCachedBudgetCategoryById, getCachedTaxPresetById } from './offlineMetadataService'
-import { refreshProjectSnapshot } from '../utils/realtimeSnapshotUpdater'
+import { refreshBusinessInventorySnapshot, refreshProjectSnapshot } from '../utils/realtimeSnapshotUpdater'
+import { CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { removeTransactionFromCaches } from '@/utils/queryCacheHelpers'
 import type { QueryClient } from '@tanstack/react-query'
 
@@ -18,6 +19,11 @@ export interface OfflineOperationResult {
 type CreatedChildItem = {
   itemId?: string
   operationId?: string
+}
+
+const isBusinessInventoryTransaction = (projectId?: string | null, reimbursementType?: string | null) => {
+  if (!projectId) return true
+  return reimbursementType === CLIENT_OWES_COMPANY || reimbursementType === COMPANY_OWES_CLIENT
 }
 
 export class OfflineStorageError extends Error {
@@ -297,6 +303,9 @@ export class OfflineTransactionService {
     if (projectId) {
       refreshProjectSnapshot(projectId)
     }
+    if (isBusinessInventoryTransaction(projectId ?? null, tempTransaction.reimbursementType ?? null)) {
+      refreshBusinessInventorySnapshot(accountId)
+    }
 
     return { operationId, wasQueued: true, transactionId }
   }
@@ -432,6 +441,16 @@ export class OfflineTransactionService {
     if (projectId) {
       refreshProjectSnapshot(projectId)
     }
+    const previousProjectId = existingTransaction.projectId ?? null
+    const nextProjectId = optimisticTransaction.projectId ?? null
+    const previousReimbursement = existingTransaction.reimbursementType ?? null
+    const nextReimbursement = optimisticTransaction.reimbursementType ?? null
+    if (
+      isBusinessInventoryTransaction(previousProjectId, previousReimbursement) ||
+      isBusinessInventoryTransaction(nextProjectId, nextReimbursement)
+    ) {
+      refreshBusinessInventorySnapshot(accountId)
+    }
 
     return { operationId, wasQueued: true, transactionId }
   }
@@ -528,6 +547,9 @@ export class OfflineTransactionService {
     // Refresh realtime snapshot if transaction belongs to a project
     if (existingTransaction.projectId) {
       refreshProjectSnapshot(existingTransaction.projectId)
+    }
+    if (isBusinessInventoryTransaction(existingTransaction.projectId ?? null, existingTransaction.reimbursementType ?? null)) {
+      refreshBusinessInventorySnapshot(accountId)
     }
 
     return { operationId, wasQueued: true, transactionId }

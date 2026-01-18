@@ -13,6 +13,7 @@ import {
   Edit,
   FileText,
   Package,
+  RefreshCw,
   Receipt,
   Trash2,
   User,
@@ -93,6 +94,7 @@ export default function ProjectLayout() {
   const [isEditing, setIsEditing] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [activeSection, setActiveSection] = useState<ProjectSection>('items')
   const { showError } = useToast()
   const { getBackDestination, buildContextUrl } = useNavigationContext()
@@ -186,6 +188,19 @@ export default function ProjectLayout() {
     } catch (updateError) {
       console.error('Error updating project:', updateError)
       throw updateError
+    }
+  }
+
+  const handleRefreshProject = async () => {
+    if (isRefreshing) return
+    setIsRefreshing(true)
+    try {
+      await refreshCollections({ includeProject: true })
+    } catch (refreshError) {
+      console.error('Error refreshing project:', refreshError)
+      showError('Failed to refresh project. Please try again.')
+    } finally {
+      setIsRefreshing(false)
     }
   }
 
@@ -297,13 +312,24 @@ export default function ProjectLayout() {
     <div className="space-y-6">
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <ContextBackLink
-            fallback={backDestination}
-            className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
-          >
-            <ArrowLeft className="h-4 w-4 mr-1" />
-            Back
-          </ContextBackLink>
+          <div className="flex items-center gap-4">
+            <ContextBackLink
+              fallback={backDestination}
+              className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
+            >
+              <ArrowLeft className="h-4 w-4 mr-1" />
+              Back
+            </ContextBackLink>
+            <button
+              onClick={handleRefreshProject}
+              className="inline-flex items-center justify-center p-2 text-gray-500 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+              aria-label="Refresh project"
+              title="Refresh"
+              disabled={isRefreshing}
+            >
+              <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
           <div className="flex items-center space-x-3">
             <button
               onClick={() => setIsEditing(true)}

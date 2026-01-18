@@ -4,7 +4,7 @@ import { operationQueue } from './operationQueue'
 import type { Item } from '../types'
 import type { Operation } from '../types/operations'
 import { isNetworkOnline } from './networkStatusService'
-import { refreshProjectSnapshot } from '../utils/realtimeSnapshotUpdater'
+import { refreshBusinessInventorySnapshot, refreshProjectSnapshot } from '../utils/realtimeSnapshotUpdater'
 import { removeItemFromCaches } from '@/utils/queryCacheHelpers'
 import type { QueryClient } from '@tanstack/react-query'
 
@@ -246,6 +246,9 @@ export class OfflineItemService {
     if (itemData.projectId) {
       refreshProjectSnapshot(itemData.projectId)
     }
+    if (!itemData.projectId) {
+      refreshBusinessInventorySnapshot(accountId)
+    }
 
     return { operationId, wasQueued: true, itemId }
   }
@@ -353,6 +356,11 @@ export class OfflineItemService {
     if (projectId) {
       refreshProjectSnapshot(projectId)
     }
+    const prevProjectId = itemToUpdate.projectId ?? null
+    const nextProjectId = optimisticItem.projectId ?? null
+    if (!prevProjectId || !nextProjectId) {
+      refreshBusinessInventorySnapshot(accountId)
+    }
 
     return { operationId, wasQueued: true, itemId }
   }
@@ -452,6 +460,9 @@ export class OfflineItemService {
     // Refresh realtime snapshot if item belongs to a project
     if (existingItem.projectId) {
       refreshProjectSnapshot(existingItem.projectId)
+    }
+    if (!existingItem.projectId) {
+      refreshBusinessInventorySnapshot(accountId)
     }
 
     return { operationId, wasQueued: true, itemId }
