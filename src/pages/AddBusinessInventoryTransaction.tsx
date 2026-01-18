@@ -13,12 +13,14 @@ import { useAuth } from '@/contexts/AuthContext'
 import CategorySelect from '@/components/CategorySelect'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { useSyncError } from '@/hooks/useSyncError'
+import { useBusinessInventoryRealtime } from '@/contexts/BusinessInventoryRealtimeContext'
 
 export default function AddBusinessInventoryTransaction() {
   const navigate = useStackedNavigate()
   const hasSyncError = useSyncError()
   const location = useLocation()
   const { currentAccountId } = useAccount()
+  const { refreshCollections } = useBusinessInventoryRealtime()
   const { user } = useAuth()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
@@ -214,6 +216,11 @@ export default function AddBusinessInventoryTransaction() {
         subtotal: taxRatePreset === 'Other' ? subtotal : ''
       }
       await transactionService.createTransaction(currentAccountId, projectId, newTransaction, [])
+      try {
+        await refreshCollections()
+      } catch (error) {
+        console.debug('AddBusinessInventoryTransaction: realtime refresh failed', error)
+      }
       navigate(`/business-inventory`)
     } catch (error) {
       console.error('Error creating transaction:', error)

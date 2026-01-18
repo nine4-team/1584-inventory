@@ -20,6 +20,7 @@ import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
 import { hydrateOptimisticItem } from '@/utils/hydrationHelpers'
 import { OfflineQueueUnavailableError } from '@/services/offlineItemService'
 import { OfflineContextError } from '@/services/operationQueue'
+import { useBusinessInventoryRealtime } from '@/contexts/BusinessInventoryRealtimeContext'
 
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE } from '@/constants/company'
 
@@ -42,6 +43,7 @@ export default function AddBusinessInventoryItem() {
   const hasSyncError = useSyncError()
   const { hasRole } = useAuth()
   const { currentAccountId } = useAccount()
+  const { refreshCollections } = useBusinessInventoryRealtime()
   const { showError, showSuccess } = useToast()
   const { showOfflineSaved } = useOfflineFeedback()
 
@@ -229,6 +231,12 @@ export default function AddBusinessInventoryItem() {
 
       // Hydrate optimistic item into React Query cache immediately
       await hydrateOptimisticItem(currentAccountId, createResult.itemId, itemData)
+
+      try {
+        await refreshCollections()
+      } catch (error) {
+        console.debug('AddBusinessInventoryItem: realtime refresh failed', error)
+      }
 
       // Show appropriate feedback based on mode
       if (createResult.mode === 'offline') {

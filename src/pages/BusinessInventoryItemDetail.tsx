@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
 import ContextLink from '@/components/ContextLink'
@@ -12,6 +12,7 @@ import DuplicateQuantityMenu from '@/components/ui/DuplicateQuantityMenu'
 import { ImageUploadService } from '@/services/imageService'
 import { useDuplication } from '@/hooks/useDuplication'
 import { useAccount } from '@/contexts/AccountContext'
+import { useBusinessInventoryRealtime } from '@/contexts/BusinessInventoryRealtimeContext'
 import ItemLineageBreadcrumb from '@/components/ui/ItemLineageBreadcrumb'
 import { lineageService } from '@/services/lineageService'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
@@ -21,9 +22,13 @@ export default function BusinessInventoryItemDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useStackedNavigate()
   const { currentAccountId } = useAccount()
+  const { items: snapshotItems, isLoading: realtimeLoading, refreshCollections } = useBusinessInventoryRealtime()
   const { buildContextUrl } = useNavigationContext()
+  const snapshotItem = useMemo(() => {
+    if (!id) return null
+    return snapshotItems.find(item => item.itemId === id) ?? null
+  }, [id, snapshotItems])
   const [item, setItem] = useState<Item | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
   const [isUpdating, setIsUpdating] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
@@ -40,6 +45,14 @@ export default function BusinessInventoryItemDetail() {
 
   // Navigation context logic for basic back navigation
   const backDestination = '/business-inventory' // Always go back to main inventory list
+
+  const refreshRealtimeAfterWrite = useCallback(async () => {
+    try {
+      await refreshCollections()
+    } catch (error) {
+      console.debug('BusinessInventoryItemDetail: realtime refresh failed', error)
+    }
+  }, [refreshCollections])
 
   // Use duplication hook for business inventory items
   const { duplicateItem } = useDuplication({
@@ -77,10 +90,9 @@ export default function BusinessInventoryItemDetail() {
 
   useEffect(() => {
     if (id && currentAccountId) {
-      loadItem()
       loadProjects()
     }
-  }, [id, currentAccountId])
+  }, [id, currentAccountId, refreshCollections])
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -109,20 +121,11 @@ export default function BusinessInventoryItemDetail() {
     }
   }
 
-  // Subscribe to real-time updates
   useEffect(() => {
-    if (!id || !currentAccountId) return
-
-    const unsubscribe = unifiedItemsService.subscribeToBusinessInventoryItems(
-      currentAccountId,
-      (items) => {
-        const updatedItem = items.find(i => i.itemId === id)
-        setItem(updatedItem ?? null)
-      }
-    )
-
-    return unsubscribe
-  }, [id, currentAccountId])
+    if (!id) return
+    if (realtimeLoading) return
+    setItem(snapshotItem)
+  }, [id, realtimeLoading, snapshotItem])
 
   // Subscribe to lineage edges for this specific business-inventory item and refetch on new edges
   useEffect(() => {
@@ -131,7 +134,10 @@ export default function BusinessInventoryItemDetail() {
     const unsubscribe = lineageService.subscribeToItemLineageForItem(currentAccountId, id, async () => {
       try {
         const updated = await unifiedItemsService.getItemById(currentAccountId, id)
-        if (updated) setItem(updated)
+        if (updated) {
+          setItem(updated)
+        }
+        await refreshCollections({ force: true })
       } catch (err) {
         console.debug('BusinessInventoryItemDetail - failed to refetch item on lineage event', err)
       }
@@ -142,24 +148,11 @@ export default function BusinessInventoryItemDetail() {
     }
   }, [id, currentAccountId])
 
-  const loadItem = async () => {
-    if (!id || !currentAccountId) return
-
-    try {
-      const itemData = await unifiedItemsService.getItemById(currentAccountId, id)
-      setItem(itemData)
-    } catch (error) {
-      console.error('Error loading item:', error)
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
   const handleRefreshItem = async () => {
     if (isRefreshing) return
     setIsRefreshing(true)
     try {
-      await loadItem()
+      await refreshCollections({ force: true })
     } catch (error) {
       console.error('Error refreshing item:', error)
     } finally {
@@ -174,6 +167,7 @@ export default function BusinessInventoryItemDetail() {
     if (window.confirm('Are you sure you want to delete this item? This action cannot be undone.')) {
       try {
         await unifiedItemsService.deleteItem(currentAccountId, id)
+        await refreshRealtimeAfterWrite()
         navigate('/business-inventory')
       } catch (error) {
         console.error('Error deleting item:', error)
@@ -215,6 +209,7 @@ export default function BusinessInventoryItemDetail() {
         undefined,
         allocationForm.space
       )
+      await refreshRealtimeAfterWrite()
       closeAllocationModal()
 
       // Navigate to the item detail in the project after successful allocation
@@ -293,6 +288,7 @@ export default function BusinessInventoryItemDetail() {
     const updatedImages = [...currentImages, newImage]
 
     await unifiedItemsService.updateItem(currentAccountId, item.itemId, { images: updatedImages })
+    await refreshRealtimeAfterWrite()
 
   }
 
@@ -303,6 +299,7 @@ export default function BusinessInventoryItemDetail() {
       // Update in database
       const updatedImages = item.images?.filter(img => img.url !== imageUrl) || []
       await unifiedItemsService.updateItem(currentAccountId, item.itemId, { images: updatedImages })
+      await refreshRealtimeAfterWrite()
 
       // Update local state
       setItem({ ...item, images: updatedImages })
@@ -322,6 +319,7 @@ export default function BusinessInventoryItemDetail() {
         isPrimary: img.url === imageUrl
       })) || []
       await unifiedItemsService.updateItem(currentAccountId, item.itemId, { images: updatedImages })
+      await refreshRealtimeAfterWrite()
 
       // Update local state
       setItem({ ...item, images: updatedImages })
@@ -331,7 +329,7 @@ export default function BusinessInventoryItemDetail() {
     }
   }
 
-  if (isLoading) {
+  if (realtimeLoading) {
     return (
       <div className="flex justify-center items-center h-32">
         <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600"></div>

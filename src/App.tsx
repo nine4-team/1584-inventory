@@ -6,6 +6,7 @@ import { ToastProvider } from './components/ui/ToastContext'
 import { AccountProvider } from '@/contexts/AccountContext'
 import { BusinessProfileProvider } from './contexts/BusinessProfileContext'
 import { ProjectRealtimeProvider } from './contexts/ProjectRealtimeContext'
+import { BusinessInventoryRealtimeProvider } from './contexts/BusinessInventoryRealtimeContext'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import { NetworkStatus } from './components/NetworkStatus'
 import { SyncStatus } from './components/SyncStatus'
@@ -78,7 +79,8 @@ function App() {
     <AccountProvider>
       <BusinessProfileProvider>
         <ProjectRealtimeProvider>
-          <ToastProvider>
+          <BusinessInventoryRealtimeProvider>
+            <ToastProvider>
             <NetworkStatus />
             <SyncStatus />
             <BackgroundSyncErrorNotifier />
@@ -214,7 +216,8 @@ function App() {
               }
             />
           </Routes>
-          </ToastProvider>
+            </ToastProvider>
+          </BusinessInventoryRealtimeProvider>
         </ProjectRealtimeProvider>
       </BusinessProfileProvider>
     </AccountProvider>

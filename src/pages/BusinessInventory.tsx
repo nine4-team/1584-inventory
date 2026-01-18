@@ -265,7 +265,7 @@ export default function BusinessInventory() {
 
   const refreshRealtimeAfterWrite = useCallback(async () => {
     try {
-      await refreshCollections({ force: true })
+      await refreshCollections()
     } catch (error) {
       console.debug('BusinessInventory: realtime refresh failed', error)
     }
@@ -337,7 +337,7 @@ export default function BusinessInventory() {
         try { u() } catch (e) { /* noop */ }
       })
     }
-  }, [items.map(i => i.itemId).join(','), currentAccountId])
+  }, [items.map(i => i.itemId).join(','), currentAccountId, refreshCollections])
 
   // Reset uploading state on unmount to prevent hanging state
   useEffect(() => {
@@ -526,13 +526,9 @@ export default function BusinessInventory() {
         })
       }
 
-      // Show result message
-      if (errorCount === 0) {
-        alert(`Successfully deleted ${successCount} item${successCount !== 1 ? 's' : ''}.`)
-      } else {
+      if (errorCount > 0) {
         // If there were errors, reload the items to make sure state reflects the server
         await refreshCollections({ force: true })
-        alert(`Deleted ${successCount} item${successCount !== 1 ? 's' : ''}, but ${errorCount} item${errorCount !== 1 ? 's' : ''} failed to delete.`)
       }
       await refreshRealtimeAfterWrite()
     } catch (error) {
