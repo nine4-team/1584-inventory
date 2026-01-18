@@ -1,10 +1,10 @@
-import { ArrowLeft, Save, X } from 'lucide-react'
+import { ArrowLeft, ImagePlus, Save, X } from 'lucide-react'
 import { useParams, useLocation, useNavigate } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
 import { useState, FormEvent, useEffect, useRef, useMemo } from 'react'
-import { transactionService, unifiedItemsService } from '@/services/inventoryService'
+import { projectService, transactionService, unifiedItemsService } from '@/services/inventoryService'
 import { getAvailableVendors } from '@/services/vendorDefaultsService'
-import { Transaction } from '@/types'
+import { ItemImage, Transaction } from '@/types'
 import { Combobox } from '@/components/ui/Combobox'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { useSyncError } from '@/hooks/useSyncError'
@@ -14,6 +14,13 @@ import { UserRole } from '../types'
 import { Shield } from 'lucide-react'
 import { hydrateProjectTransactionsCache } from '@/utils/hydrationHelpers'
 import { getGlobalQueryClient } from '@/utils/queryClient'
+import ImagePreview from '@/components/ui/ImagePreview'
+import { ImageUploadService } from '@/services/imageService'
+import { OfflineAwareImageService } from '@/services/offlineAwareImageService'
+import { offlineMediaService } from '@/services/offlineMediaService'
+import { getUserFriendlyErrorMessage, getErrorAction } from '@/utils/imageUtils'
+import { useToast } from '@/components/ui/ToastContext'
+import { useNetworkState } from '@/hooks/useNetworkState'
 
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, COMPANY_NAME } from '@/constants/company'
 import { projectItemDetail, projectItems } from '@/utils/routes'
@@ -40,6 +47,8 @@ export default function EditItem() {
   const location = useLocation()
   const { hasRole } = useAuth()
   const { currentAccountId } = useAccount()
+  const { showError } = useToast()
+  const { isOnline } = useNetworkState()
 
   const fallbackPath = useMemo(() => {
     if (projectId && itemId) return projectItemDetail(projectId, itemId)
@@ -97,7 +106,11 @@ export default function EditItem() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [loadingTransactions, setLoadingTransactions] = useState(false)
   const [availableVendors, setAvailableVendors] = useState<string[]>([])
-  const [hasExistingImages, setHasExistingImages] = useState(false)
+  const [images, setImages] = useState<ItemImage[]>([])
+  const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState<number>(0)
+  const [projectName, setProjectName] = useState<string>('')
+  const offlineMediaIdsRef = useRef<Set<string>>(new Set())
 
   // Track if user has manually edited project_price
   const projectPriceEditedRef = useRef(false)
@@ -141,7 +154,7 @@ export default function EditItem() {
           const fetchedItem = await unifiedItemsService.getItemById(currentAccountId, itemId)
           console.log('Fetched item data:', fetchedItem)
           if (fetchedItem) {
-            setHasExistingImages(Boolean(fetchedItem.images && fetchedItem.images.length > 0))
+            setImages(fetchedItem.images || [])
             setFormData({
               description: String(fetchedItem.description || ''),
               source: String(fetchedItem.source || ''),
@@ -174,6 +187,22 @@ export default function EditItem() {
 
     fetchItem()
   }, [itemId, projectId, currentAccountId])
+
+  useEffect(() => {
+    const fetchProjectName = async () => {
+      if (!projectId || !currentAccountId) return
+      try {
+        const project = await projectService.getProject(currentAccountId, projectId)
+        if (project) {
+          setProjectName(project.name)
+        }
+      } catch (error) {
+        console.error('Failed to load project name:', error)
+      }
+    }
+
+    fetchProjectName()
+  }, [projectId, currentAccountId])
 
   // Hydrate and fetch transactions when component mounts
   useEffect(() => {
@@ -214,13 +243,20 @@ export default function EditItem() {
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {}
 
-    if (!formData.description.trim() && !hasExistingImages) {
+    if (!formData.description.trim() && images.length === 0) {
       newErrors.description = 'Add a description or at least one image'
     }
 
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
   }
+
+  useEffect(() => {
+    if (!errors.description) return
+    if (formData.description.trim() || images.length > 0) {
+      setErrors(prev => ({ ...prev, description: '' }))
+    }
+  }, [errors.description, formData.description, images.length])
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -246,7 +282,14 @@ export default function EditItem() {
 
     try {
       await unifiedItemsService.updateItem(currentAccountId, itemId, itemData)
-      navigateToReturnToOrFallback(navigate, location, fallbackPath)
+      if (projectId) {
+        const detailPath = projectItemDetail(projectId, itemId)
+        const returnTo = projectItems(projectId)
+        const detailUrl = `${detailPath}?returnTo=${encodeURIComponent(returnTo)}`
+        navigate(detailUrl, { replace: true })
+      } else {
+        navigateToReturnToOrFallback(navigate, location, fallbackPath)
+      }
     } catch (error) {
       console.error('Error updating item:', error)
       console.error('Form data being submitted:', itemData)
@@ -298,6 +341,144 @@ export default function EditItem() {
     // Clear error when user makes selection
     if (errors.selectedTransactionId) {
       setErrors(prev => ({ ...prev, selectedTransactionId: '' }))
+    }
+  }
+
+  const handleMultipleImageUpload = async (files: File[]) => {
+    if (!itemId || !currentAccountId) return
+
+    try {
+      setIsUploadingImage(true)
+      setUploadProgress(0)
+
+      const newImages: ItemImage[] = []
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const uploadResult = await OfflineAwareImageService.uploadItemImage(
+          file,
+          projectName || 'Business Inventory',
+          itemId,
+          currentAccountId,
+          progress => {
+            const overallProgress = Math.round(((i + progress.percentage / 100) / files.length) * 100)
+            setUploadProgress(overallProgress)
+          }
+        )
+
+        const metadata = uploadResult.url.startsWith('offline://')
+          ? {
+              offlineMediaId: uploadResult.url.replace('offline://', ''),
+              isOfflinePlaceholder: true
+            }
+          : undefined
+
+        if (metadata?.offlineMediaId) {
+          offlineMediaIdsRef.current.add(metadata.offlineMediaId)
+        }
+
+        newImages.push({
+          url: uploadResult.url,
+          alt: uploadResult.fileName,
+          isPrimary: images.length === 0 && i === 0,
+          uploadedAt: new Date(),
+          fileName: uploadResult.fileName,
+          size: uploadResult.size,
+          mimeType: uploadResult.mimeType,
+          metadata
+        })
+      }
+
+      const updatedImages = [...images, ...newImages]
+
+      await unifiedItemsService.updateItem(currentAccountId, itemId, { images: updatedImages })
+
+      newImages.forEach(img => {
+        if (img.metadata?.offlineMediaId) {
+          offlineMediaIdsRef.current.delete(img.metadata.offlineMediaId)
+        }
+      })
+
+      setImages(updatedImages)
+
+      if (!isOnline) {
+        console.info('Images saved offline and queued for sync')
+      }
+    } catch (error) {
+      console.error('Error uploading multiple images:', error)
+      const friendlyMessage = getUserFriendlyErrorMessage(error)
+      const action = getErrorAction(error)
+      showError(`${friendlyMessage} Suggestion: ${action}`)
+    } finally {
+      setIsUploadingImage(false)
+      setUploadProgress(0)
+    }
+  }
+
+  const handleSelectFromGallery = async () => {
+    try {
+      setIsUploadingImage(true)
+      const files = await ImageUploadService.selectFromGallery()
+
+      if (files && files.length > 0) {
+        await handleMultipleImageUpload(files)
+      }
+    } catch (error: any) {
+      console.error('Error selecting from gallery:', error)
+
+      if (error.message?.includes('timeout') || error.message?.includes('canceled')) {
+        return
+      }
+
+      const friendlyMessage = getUserFriendlyErrorMessage(error)
+      const action = getErrorAction(error)
+      showError(`${friendlyMessage} Suggestion: ${action}`)
+    } finally {
+      setIsUploadingImage(false)
+      setUploadProgress(0)
+    }
+  }
+
+  const handleRemoveImage = async (imageUrl: string) => {
+    if (!itemId || !currentAccountId) return
+
+    try {
+      if (imageUrl.startsWith('offline://')) {
+        const mediaId = imageUrl.replace('offline://', '')
+        offlineMediaIdsRef.current.delete(mediaId)
+        try {
+          await offlineMediaService.deleteMediaFile(mediaId)
+        } catch (error) {
+          console.warn('Failed to delete offline media file:', error)
+        }
+      }
+
+      const updatedImages = images.filter(img => img.url !== imageUrl)
+      await unifiedItemsService.updateItem(currentAccountId, itemId, { images: updatedImages })
+      setImages(updatedImages)
+    } catch (error) {
+      console.error('Error removing image:', error)
+      const friendlyMessage = getUserFriendlyErrorMessage(error)
+      const action = getErrorAction(error)
+      showError(`${friendlyMessage} Suggestion: ${action}`)
+    }
+  }
+
+  const handleSetPrimaryImage = async (imageUrl: string) => {
+    if (!itemId || !currentAccountId) return
+
+    try {
+      const updatedImages = images.map(img => ({
+        ...img,
+        isPrimary: img.url === imageUrl
+      }))
+      await unifiedItemsService.updateItem(currentAccountId, itemId, { images: updatedImages })
+      setImages(updatedImages)
+    } catch (error) {
+      console.error('Error setting primary image:', error)
+      const friendlyMessage = getUserFriendlyErrorMessage(error)
+      const action = getErrorAction(error)
+      showError(`${friendlyMessage} Suggestion: ${action}`)
     }
   }
 
@@ -389,6 +570,47 @@ export default function EditItem() {
                 />
                 {errors.description && (
                   <p className="mt-1 text-sm text-red-600">{errors.description}</p>
+                )}
+              </div>
+
+              {/* Item Images */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-lg font-medium text-gray-900 flex items-center">
+                    <ImagePlus className="h-5 w-5 mr-2" />
+                    Item Images
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={handleSelectFromGallery}
+                    disabled={isUploadingImage}
+                    className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+                    title="Add images from gallery or camera"
+                  >
+                    <ImagePlus className="h-3 w-3 mr-1" />
+                    {isUploadingImage
+                      ? uploadProgress > 0 && uploadProgress < 100
+                        ? `Uploading... ${Math.round(uploadProgress)}%`
+                        : 'Uploading...'
+                      : 'Add Images'
+                    }
+                  </button>
+                </div>
+
+                {images.length > 0 ? (
+                  <ImagePreview
+                    images={images}
+                    onRemoveImage={handleRemoveImage}
+                    onSetPrimary={handleSetPrimaryImage}
+                    maxImages={5}
+                    size="md"
+                    showControls={true}
+                  />
+                ) : (
+                  <div className="text-center py-8">
+                    <ImagePlus className="mx-auto h-8 w-8 text-gray-400" />
+                    <h3 className="mt-2 text-sm font-medium text-gray-900">No images uploaded</h3>
+                  </div>
                 )}
               </div>
 
