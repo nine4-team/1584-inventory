@@ -7,6 +7,7 @@ import { COMPANY_NAME, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/consta
 import { transactionService, projectService, unifiedItemsService } from '@/services/inventoryService'
 import { OfflineAwareImageService } from '@/services/offlineAwareImageService'
 import ImageUpload from '@/components/ui/ImageUpload'
+import UploadActivityIndicator from '@/components/ui/UploadActivityIndicator'
 import { TransactionImagePreview } from '@/components/ui/ImagePreview'
 import { useAuth } from '../contexts/AuthContext'
 import ContextLink from '@/components/ContextLink'
@@ -713,6 +714,7 @@ export default function EditTransaction() {
         {/* Back button row */}
         <div className="flex items-center justify-between">
           <button
+            type="button"
             onClick={() => {
               handleBackNavigation()
             }}
@@ -1170,7 +1172,7 @@ export default function EditTransaction() {
               <TransactionImagePreview
                 images={existingReceiptImages}
                 onRemoveImage={handleRemoveExistingReceiptImage}
-                showControls={!isSubmitting && !isUploadingImages}
+                showControls={!isSubmitting}
                 maxImages={5}
                 className="mb-4"
               />
@@ -1180,7 +1182,7 @@ export default function EditTransaction() {
               maxImages={5}
               maxFileSize={10}
               acceptedTypes={['image/jpeg','image/jpg','image/png','image/gif','image/webp','image/heic','image/heif','application/pdf']}
-              disabled={isSubmitting || isUploadingImages}
+              disabled={isSubmitting}
               className="mb-2"
             />
             {errors.receiptImages && (
@@ -1232,7 +1234,7 @@ export default function EditTransaction() {
               <TransactionImagePreview
                 images={existingOtherImages}
                 onRemoveImage={handleRemoveExistingOtherImage}
-                showControls={!isSubmitting && !isUploadingImages}
+                showControls={!isSubmitting}
                 maxImages={5}
                 className="mb-4"
               />
@@ -1241,7 +1243,7 @@ export default function EditTransaction() {
               onImagesChange={(files) => handleInputChange('otherImages', files)}
               maxImages={5}
               maxFileSize={10}
-              disabled={isSubmitting || isUploadingImages}
+              disabled={isSubmitting}
               className="mb-2"
             />
             {errors.otherImages && (
@@ -1254,6 +1256,7 @@ export default function EditTransaction() {
           <div className="sticky bottom-0 bg-white border-t border-gray-200 -mx-6 -mb-6 px-6 py-4 mt-6">
             <div className="flex justify-end space-x-3">
               <button
+                type="button"
                 onClick={() => {
                   handleBackNavigation()
                 }}
@@ -1262,14 +1265,17 @@ export default function EditTransaction() {
                 <X className="h-4 w-4 mr-2" />
                 Cancel
               </button>
-              <button
-                type="submit"
-                disabled={isSubmitting || isUploadingImages}
-                className="inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Save className="h-4 w-4 mr-2" />
-                {isSubmitting ? 'Updating...' : isUploadingImages ? 'Uploading Images...' : 'Update'}
-              </button>
+              <div className="flex flex-col items-end gap-1">
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Save className="h-4 w-4 mr-2" />
+                  {isSubmitting ? 'Updating...' : 'Update'}
+                </button>
+                <UploadActivityIndicator isUploading={isUploadingImages} label="Uploading images" />
+              </div>
             </div>
           </div>
         </form>

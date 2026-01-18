@@ -431,7 +431,6 @@ export default function ItemPreviewCard({
                   e.stopPropagation()
                   onAddImage(itemId)
                 }}
-                disabled={uploadingImages.has(itemId)}
                 className="w-12 h-12 rounded-md border border-dashed border-gray-300 flex items-center justify-center text-gray-400 hover:text-gray-600 hover:border-gray-400 transition-colors disabled:opacity-50"
                 title="Add image (camera or gallery)"
               >

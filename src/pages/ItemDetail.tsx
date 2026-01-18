@@ -16,6 +16,7 @@ import DuplicateQuantityMenu from '@/components/ui/DuplicateQuantityMenu'
 import { lineageService } from '@/services/lineageService'
 import { getUserFriendlyErrorMessage, getErrorAction } from '@/utils/imageUtils'
 import { useToast } from '@/components/ui/ToastContext'
+import UploadActivityIndicator from '@/components/ui/UploadActivityIndicator'
 import { useDuplication } from '@/hooks/useDuplication'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
@@ -38,7 +39,8 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
   const [projectName, setProjectName] = useState<string>('')
   const [isLoadingItem, setIsLoadingItem] = useState<boolean>(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const [uploadsInFlight, setUploadsInFlight] = useState(0)
+  const isUploadingImage = uploadsInFlight > 0
   const [uploadProgress, setUploadProgress] = useState<number>(0)
   const [openDispositionMenu, setOpenDispositionMenu] = useState(false)
   const [isSticky, setIsSticky] = useState(false)
@@ -582,7 +584,12 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
     if (!item || !currentAccountId) return
 
     try {
-      setIsUploadingImage(true)
+      setUploadsInFlight(count => {
+        if (count === 0) {
+          setUploadProgress(0)
+        }
+        return count + 1
+      })
       setUploadProgress(0)
 
       console.log('Starting multiple image upload for', files.length, 'files')
@@ -701,8 +708,13 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
       const action = getErrorAction(error)
       showError(`${friendlyMessage} Suggestion: ${action}`)
     } finally {
-      setIsUploadingImage(false)
-      setUploadProgress(0)
+      setUploadsInFlight(count => {
+        const next = Math.max(0, count - 1)
+        if (next === 0) {
+          setUploadProgress(0)
+        }
+        return next
+      })
     }
   }
 
@@ -710,7 +722,12 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
     if (!item) return
 
     try {
-      setIsUploadingImage(true)
+      setUploadsInFlight(count => {
+        if (count === 0) {
+          setUploadProgress(0)
+        }
+        return count + 1
+      })
       const files = await ImageUploadService.selectFromGallery()
 
       if (files && files.length > 0) {
@@ -733,8 +750,13 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
       const action = getErrorAction(error)
       showError(`${friendlyMessage} Suggestion: ${action}`)
     } finally {
-      setIsUploadingImage(false)
-      setUploadProgress(0)
+      setUploadsInFlight(count => {
+        const next = Math.max(0, count - 1)
+        if (next === 0) {
+          setUploadProgress(0)
+        }
+        return next
+      })
     }
   }
 
@@ -882,20 +904,17 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
               <ImagePlus className="h-5 w-5 mr-2" />
               Item Images
             </h3>
-            <button
-              onClick={handleSelectFromGallery}
-              disabled={isUploadingImage}
-              className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
-              title="Add images from gallery or camera"
-            >
-              <ImagePlus className="h-3 w-3 mr-1" />
-              {isUploadingImage
-                ? uploadProgress > 0 && uploadProgress < 100
-                  ? `Uploading... ${Math.round(uploadProgress)}%`
-                  : 'Uploading...'
-                : 'Add Images'
-              }
-            </button>
+            <div className="flex flex-col items-end gap-1">
+              <button
+                onClick={handleSelectFromGallery}
+                className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+                title="Add images from gallery or camera"
+              >
+                <ImagePlus className="h-3 w-3 mr-1" />
+                Add Images
+              </button>
+              <UploadActivityIndicator isUploading={isUploadingImage} progress={uploadProgress} className="mt-1" />
+            </div>
           </div>
 
           {item.images && item.images.length > 0 ? (

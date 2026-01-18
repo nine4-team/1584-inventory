@@ -732,51 +732,55 @@ export class ImageUploadService {
   /**
    * Take photo using device camera
    */
-  static takePhoto(): Promise<File | null> {
-    return new Promise((resolve) => {
-      const input = document.createElement('input')
-      input.type = 'file'
-      input.accept = 'image/*'
-      input.capture = 'environment' // Use back camera on mobile
-
-      input.onchange = (e) => {
-        const target = e.target as HTMLInputElement
-        const file = target.files?.[0] || null
-        resolve(file)
-      }
-
-      input.click()
+  static async takePhoto(): Promise<File | null> {
+    const files = await this.promptForImageFiles({
+      accept: 'image/*',
+      capture: 'environment'
     })
+    return files[0] ?? null
   }
 
   /**
    * Select images from device gallery/camera roll
    */
   static selectFromGallery(): Promise<File[]> {
+    return this.promptForImageFiles({
+      accept: 'image/*',
+      multiple: true
+    })
+  }
+
+  private static promptForImageFiles(options: {
+    accept: string
+    multiple?: boolean
+    capture?: string
+  }): Promise<File[]> {
     return new Promise((resolve, reject) => {
       const input = document.createElement('input')
       input.type = 'file'
-      input.accept = 'image/*'
-      input.multiple = true
-      // Note: capture attribute not set to allow gallery selection
+      input.accept = options.accept
+      input.multiple = Boolean(options.multiple)
+      if (options.capture) {
+        input.capture = options.capture
+      }
+
+      const cleanup = () => {
+        if (document.body.contains(input)) {
+          document.body.removeChild(input)
+        }
+      }
 
       // Set up timeout to prevent infinite hanging
       // Increased to 5 minutes to give users time to find photos
       const timeoutId = setTimeout(() => {
-        // Clean up the input element
-        if (document.body.contains(input)) {
-          document.body.removeChild(input)
-        }
+        cleanup()
         reject(new Error('File selection timeout - user may have canceled'))
-      }, 300000) // 5 minute timeout
+      }, 300000)
 
       // Handle successful file selection
       const handleChange = (e: Event) => {
-        clearTimeout(timeoutId) // Clear timeout on success
-        if (document.body.contains(input)) {
-          document.body.removeChild(input) // Clean up
-        }
-
+        clearTimeout(timeoutId)
+        cleanup()
         const target = e.target as HTMLInputElement
         const files = target.files ? Array.from(target.files) : []
         resolve(files)
@@ -785,17 +789,13 @@ export class ImageUploadService {
       // Handle cleanup if component unmounts during selection
       const handleCancel = () => {
         clearTimeout(timeoutId)
-        if (document.body.contains(input)) {
-          document.body.removeChild(input)
-        }
+        cleanup()
         reject(new Error('File selection canceled'))
       }
 
-      // Set up event listeners
       input.onchange = handleChange
       input.addEventListener('cancel', handleCancel)
 
-      // Add to DOM temporarily for proper event handling
       document.body.appendChild(input)
       input.click()
     })

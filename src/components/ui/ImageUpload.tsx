@@ -35,8 +35,6 @@ export default function ImageUpload({
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false)
   const [storageError, setStorageError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const cameraInputRef = useRef<HTMLInputElement>(null)
-  const galleryInputRef = useRef<HTMLInputElement>(null)
   const { isOnline } = useNetworkState()
 
   const supportsPdf = useMemo(() => acceptedTypes.includes('application/pdf'), [acceptedTypes])
@@ -185,7 +183,24 @@ export default function ImageUpload({
         await addImages(files)
       }
     } catch (error) {
+      if (error instanceof Error && (error.message.includes('timeout') || error.message.includes('canceled'))) {
+        return
+      }
       console.error('Error selecting from gallery:', error)
+    }
+  }
+
+  const handleCameraCapture = async () => {
+    try {
+      const file = await ImageUploadService.takePhoto()
+      if (file) {
+        await addImages([file])
+      }
+    } catch (error) {
+      if (error instanceof Error && (error.message.includes('timeout') || error.message.includes('canceled'))) {
+        return
+      }
+      console.error('Error capturing photo:', error)
     }
   }
 
@@ -193,9 +208,8 @@ export default function ImageUpload({
     e.stopPropagation()
     if (disabled) return
 
-    // If PDFs are allowed, keep a single button but offer a tiny menu so mobile users
-    // can still access camera/library while also attaching PDFs.
-    if (supportsPdf && supportsImages) {
+    // Images: offer a tiny menu so users can choose camera/library (and PDFs if allowed).
+    if (supportsImages) {
       setIsAddMenuOpen(prev => !prev)
       return
     }
@@ -339,11 +353,23 @@ export default function ImageUpload({
               <ImageIcon className="h-4 w-4 mr-2" />
               Add {supportsPdf ? 'Receipts' : 'Images'}
 
-              {supportsPdf && supportsImages && (
+              {supportsImages && (
                 <>
                   <ChevronDown className="h-4 w-4 ml-2 text-gray-500" />
                   {isAddMenuOpen && (
                     <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-44 bg-white rounded-md shadow-lg border border-gray-200 py-1 z-50">
+                      <button
+                        type="button"
+                        onClick={async (ev) => {
+                          ev.stopPropagation()
+                          setIsAddMenuOpen(false)
+                          await handleCameraCapture()
+                        }}
+                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
+                      >
+                        <ImageIcon className="h-4 w-4 mr-2 text-gray-500" />
+                        Take photo
+                      </button>
                       <button
                         type="button"
                         onClick={async (ev) => {
@@ -354,21 +380,23 @@ export default function ImageUpload({
                         className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
                       >
                         <ImageIcon className="h-4 w-4 mr-2 text-gray-500" />
-                        Photos (camera/library)
+                        Photo library
                       </button>
-                      <button
-                        type="button"
-                        onClick={(ev) => {
-                          ev.stopPropagation()
-                          setIsAddMenuOpen(false)
-                          // Allow selecting PDFs (and images) from the same picker.
-                          fileInputRef.current?.click()
-                        }}
-                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
-                      >
-                        <FileText className="h-4 w-4 mr-2 text-gray-500" />
-                        PDF / Browse files
-                      </button>
+                      {supportsPdf && (
+                        <button
+                          type="button"
+                          onClick={(ev) => {
+                            ev.stopPropagation()
+                            setIsAddMenuOpen(false)
+                            // Allow selecting PDFs (and images) from the same picker.
+                            fileInputRef.current?.click()
+                          }}
+                          className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
+                        >
+                          <FileText className="h-4 w-4 mr-2 text-gray-500" />
+                          PDF / Browse files
+                        </button>
+                      )}
                     </div>
                   )}
                 </>
@@ -377,26 +405,6 @@ export default function ImageUpload({
           </button>
         </div>
       </div>
-
-      {/* Hidden camera input */}
-      <input
-        ref={cameraInputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        onChange={handleFileSelect}
-        className="hidden"
-      />
-
-      {/* Hidden gallery input */}
-      <input
-        ref={galleryInputRef}
-        type="file"
-        accept={acceptedTypes.join(',')}
-        multiple
-        onChange={handleFileSelect}
-        className="hidden"
-      />
 
       {/* Image Previews */}
       {images.length > 0 && (

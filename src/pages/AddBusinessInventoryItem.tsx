@@ -9,6 +9,7 @@ import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import { TransactionSource } from '@/constants/transactionSources'
 import { Combobox } from '@/components/ui/Combobox'
 import ImagePreview from '@/components/ui/ImagePreview'
+import UploadActivityIndicator from '@/components/ui/UploadActivityIndicator'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import QuantityPill from '@/components/ui/QuantityPill'
 import { useSyncError } from '@/hooks/useSyncError'
@@ -111,7 +112,8 @@ export default function AddBusinessInventoryItem() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [loadingTransactions, setLoadingTransactions] = useState(false)
   const [images, setImages] = useState<ItemImage[]>([])
-  const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const [uploadsInFlight, setUploadsInFlight] = useState(0)
+  const isUploadingImage = uploadsInFlight > 0
   const [uploadProgress, setUploadProgress] = useState<number>(0)
   const [quantity, setQuantity] = useState(1)
 
@@ -316,8 +318,12 @@ export default function AddBusinessInventoryItem() {
 
   const handleMultipleImageUpload = async (files: File[]) => {
     try {
-      setIsUploadingImage(true)
-      setUploadProgress(0)
+      setUploadsInFlight(count => {
+        if (count === 0) {
+          setUploadProgress(0)
+        }
+        return count + 1
+      })
 
       console.log('Starting multiple image upload for', files.length, 'files')
 
@@ -358,14 +364,24 @@ export default function AddBusinessInventoryItem() {
       const action = getErrorAction(error)
       showError(`${friendlyMessage} Suggestion: ${action}`)
     } finally {
-      setIsUploadingImage(false)
-      setUploadProgress(0)
+      setUploadsInFlight(count => {
+        const next = Math.max(0, count - 1)
+        if (next === 0) {
+          setUploadProgress(0)
+        }
+        return next
+      })
     }
   }
 
   const handleSelectFromGallery = async () => {
     try {
-      setIsUploadingImage(true)
+      setUploadsInFlight(count => {
+        if (count === 0) {
+          setUploadProgress(0)
+        }
+        return count + 1
+      })
       const files = await ImageUploadService.selectFromGallery()
 
       if (files && files.length > 0) {
@@ -388,8 +404,13 @@ export default function AddBusinessInventoryItem() {
       const action = getErrorAction(error)
       showError(`${friendlyMessage} Suggestion: ${action}`)
     } finally {
-      setIsUploadingImage(false)
-      setUploadProgress(0)
+      setUploadsInFlight(count => {
+        const next = Math.max(0, count - 1)
+        if (next === 0) {
+          setUploadProgress(0)
+        }
+        return next
+      })
     }
   }
 
@@ -432,20 +453,17 @@ export default function AddBusinessInventoryItem() {
                 Item Images
               </label>
               {images.length > 0 && (
-                <button
-                  onClick={handleSelectFromGallery}
-                  disabled={isUploadingImage || images.length >= 5}
-                  className="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
-                >
-                  {isUploadingImage
-                    ? uploadProgress > 0 && uploadProgress < 100
-                      ? `Uploading... ${Math.round(uploadProgress)}%`
-                      : 'Uploading...'
-                    : images.length >= 5
-                      ? 'Max reached'
-                      : 'Add Images'
-                  }
-                </button>
+                <div className="flex flex-col items-end gap-1">
+                  <button
+                    type="button"
+                    onClick={handleSelectFromGallery}
+                    disabled={images.length >= 5}
+                    className="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+                  >
+                    {images.length >= 5 ? 'Max reached' : 'Add Images'}
+                  </button>
+                  <UploadActivityIndicator isUploading={isUploadingImage} progress={uploadProgress} className="mt-1" />
+                </div>
               )}
             </div>
 
@@ -460,18 +478,16 @@ export default function AddBusinessInventoryItem() {
             ) : (
               <div className="text-center py-8 border-2 border-dashed border-gray-300 rounded-lg">
                 <p className="text-sm text-gray-500 mb-3">No images for this item yet</p>
-                <button
-                  onClick={handleSelectFromGallery}
-                  disabled={isUploadingImage}
-                  className="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
-                >
-                  {isUploadingImage
-                    ? uploadProgress > 0 && uploadProgress < 100
-                      ? `Uploading... ${Math.round(uploadProgress)}%`
-                      : 'Uploading...'
-                    : 'Add Images'
-                  }
-                </button>
+                <div className="flex flex-col items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={handleSelectFromGallery}
+                    className="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+                  >
+                    Add Images
+                  </button>
+                  <UploadActivityIndicator isUploading={isUploadingImage} progress={uploadProgress} className="mt-1" />
+                </div>
               </div>
             )}
           </div>

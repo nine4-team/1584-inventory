@@ -9,6 +9,7 @@ import { unifiedItemsService, projectService } from '@/services/inventoryService
 import { formatDate } from '@/utils/dateUtils'
 import ImagePreview from '@/components/ui/ImagePreview'
 import DuplicateQuantityMenu from '@/components/ui/DuplicateQuantityMenu'
+import UploadActivityIndicator from '@/components/ui/UploadActivityIndicator'
 import { ImageUploadService } from '@/services/imageService'
 import { useDuplication } from '@/hooks/useDuplication'
 import { useAccount } from '@/contexts/AccountContext'
@@ -40,7 +41,8 @@ export default function BusinessInventoryItemDetail() {
   })
 
   // Image upload state
-  const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const [uploadsInFlight, setUploadsInFlight] = useState(0)
+  const isUploadingImage = uploadsInFlight > 0
   const [uploadProgress, setUploadProgress] = useState<number>(0)
 
   // Navigation context logic for basic back navigation
@@ -231,8 +233,12 @@ export default function BusinessInventoryItemDetail() {
     if (!item || !item.itemId) return
 
     try {
-      setIsUploadingImage(true)
-      setUploadProgress(0)
+      setUploadsInFlight(count => {
+        if (count === 0) {
+          setUploadProgress(0)
+        }
+        return count + 1
+      })
 
       const files = await ImageUploadService.selectFromGallery()
 
@@ -258,8 +264,13 @@ export default function BusinessInventoryItemDetail() {
 
       alert('Failed to add images. Please try again.')
     } finally {
-      setIsUploadingImage(false)
-      setUploadProgress(0)
+      setUploadsInFlight(count => {
+        const next = Math.max(0, count - 1)
+        if (next === 0) {
+          setUploadProgress(0)
+        }
+        return next
+      })
     }
   }
 
@@ -429,20 +440,17 @@ export default function BusinessInventoryItemDetail() {
                 <ImagePlus className="h-5 w-5 mr-2" />
                 Item Images
               </h3>
-              <button
-                onClick={handleSelectFromGallery}
-                disabled={isUploadingImage}
-                className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
-                title="Add images from gallery or camera"
-              >
-                <ImagePlus className="h-3 w-3 mr-1" />
-                {isUploadingImage
-                  ? uploadProgress > 0 && uploadProgress < 100
-                    ? `Uploading... ${Math.round(uploadProgress)}%`
-                    : 'Uploading...'
-                  : 'Add Images'
-                }
-              </button>
+              <div className="flex flex-col items-end gap-1">
+                <button
+                  onClick={handleSelectFromGallery}
+                  className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+                  title="Add images from gallery or camera"
+                >
+                  <ImagePlus className="h-3 w-3 mr-1" />
+                  Add Images
+                </button>
+                <UploadActivityIndicator isUploading={isUploadingImage} progress={uploadProgress} className="mt-1" />
+              </div>
             </div>
 
             {item.images && item.images.length > 0 ? (

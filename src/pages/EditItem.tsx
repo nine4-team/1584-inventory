@@ -21,6 +21,7 @@ import { offlineMediaService } from '@/services/offlineMediaService'
 import { getUserFriendlyErrorMessage, getErrorAction } from '@/utils/imageUtils'
 import { useToast } from '@/components/ui/ToastContext'
 import { useNetworkState } from '@/hooks/useNetworkState'
+import UploadActivityIndicator from '@/components/ui/UploadActivityIndicator'
 
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, COMPANY_NAME } from '@/constants/company'
 import { projectItemDetail, projectItems } from '@/utils/routes'
@@ -107,7 +108,8 @@ export default function EditItem() {
   const [loadingTransactions, setLoadingTransactions] = useState(false)
   const [availableVendors, setAvailableVendors] = useState<string[]>([])
   const [images, setImages] = useState<ItemImage[]>([])
-  const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const [uploadsInFlight, setUploadsInFlight] = useState(0)
+  const isUploadingImage = uploadsInFlight > 0
   const [uploadProgress, setUploadProgress] = useState<number>(0)
   const [projectName, setProjectName] = useState<string>('')
   const offlineMediaIdsRef = useRef<Set<string>>(new Set())
@@ -348,8 +350,12 @@ export default function EditItem() {
     if (!itemId || !currentAccountId) return
 
     try {
-      setIsUploadingImage(true)
-      setUploadProgress(0)
+      setUploadsInFlight(count => {
+        if (count === 0) {
+          setUploadProgress(0)
+        }
+        return count + 1
+      })
 
       const newImages: ItemImage[] = []
 
@@ -410,14 +416,24 @@ export default function EditItem() {
       const action = getErrorAction(error)
       showError(`${friendlyMessage} Suggestion: ${action}`)
     } finally {
-      setIsUploadingImage(false)
-      setUploadProgress(0)
+      setUploadsInFlight(count => {
+        const next = Math.max(0, count - 1)
+        if (next === 0) {
+          setUploadProgress(0)
+        }
+        return next
+      })
     }
   }
 
   const handleSelectFromGallery = async () => {
     try {
-      setIsUploadingImage(true)
+      setUploadsInFlight(count => {
+        if (count === 0) {
+          setUploadProgress(0)
+        }
+        return count + 1
+      })
       const files = await ImageUploadService.selectFromGallery()
 
       if (files && files.length > 0) {
@@ -434,8 +450,13 @@ export default function EditItem() {
       const action = getErrorAction(error)
       showError(`${friendlyMessage} Suggestion: ${action}`)
     } finally {
-      setIsUploadingImage(false)
-      setUploadProgress(0)
+      setUploadsInFlight(count => {
+        const next = Math.max(0, count - 1)
+        if (next === 0) {
+          setUploadProgress(0)
+        }
+        return next
+      })
     }
   }
 
@@ -580,21 +601,18 @@ export default function EditItem() {
                     <ImagePlus className="h-5 w-5 mr-2" />
                     Item Images
                   </h3>
+                <div className="flex flex-col items-end gap-1">
                   <button
                     type="button"
                     onClick={handleSelectFromGallery}
-                    disabled={isUploadingImage}
                     className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
                     title="Add images from gallery or camera"
                   >
                     <ImagePlus className="h-3 w-3 mr-1" />
-                    {isUploadingImage
-                      ? uploadProgress > 0 && uploadProgress < 100
-                        ? `Uploading... ${Math.round(uploadProgress)}%`
-                        : 'Uploading...'
-                      : 'Add Images'
-                    }
+                    Add Images
                   </button>
+                  <UploadActivityIndicator isUploading={isUploadingImage} progress={uploadProgress} className="mt-1" />
+                </div>
                 </div>
 
                 {images.length > 0 ? (

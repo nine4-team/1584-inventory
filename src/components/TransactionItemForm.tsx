@@ -3,6 +3,7 @@ import { X, Camera } from 'lucide-react'
 import { TransactionItemFormData, TransactionItemValidationErrors, ItemImage } from '@/types'
 import { ImageUploadService } from '@/services/imageService'
 import ImagePreview from './ui/ImagePreview'
+import UploadActivityIndicator from './ui/UploadActivityIndicator'
 import { useToast } from '@/components/ui/ToastContext'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { useSyncError } from '@/hooks/useSyncError'
@@ -47,7 +48,8 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
 
   const [itemImages, setItemImages] = useState<ItemImage[]>(item?.images || [])
   const [imageFiles, setImageFiles] = useState<File[]>(item?.imageFiles || [])
-  const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const [uploadsInFlight, setUploadsInFlight] = useState(0)
+  const isUploadingImage = uploadsInFlight > 0
 
   const [errors, setErrors] = useState<TransactionItemValidationErrors>({})
   const unsavedPreviewUrlsRef = useRef<Set<string>>(new Set())
@@ -99,7 +101,7 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
 
   const handleSelectFromGallery = async () => {
     try {
-      setIsUploadingImage(true)
+      setUploadsInFlight(count => count + 1)
       const files = await ImageUploadService.selectFromGallery()
 
       if (files && files.length > 0) {
@@ -156,7 +158,7 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
       // Show error for actual failures
       showError('Failed to select images from gallery. Please try again.')
     } finally {
-      setIsUploadingImage(false)
+      setUploadsInFlight(count => Math.max(0, count - 1))
     }
   }
 
@@ -273,16 +275,18 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
           </label>
 
           {/* Image upload button */}
-          <button
-            type="button"
-            onClick={handleSelectFromGallery}
-            disabled={isUploadingImage}
-            className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 mb-3"
-            title="Add images from gallery or camera"
-          >
-            <Camera className="h-4 w-4 mr-2" />
-            {isUploadingImage ? 'Uploading...' : 'Add Images'}
-          </button>
+          <div className="flex flex-col items-start gap-1 mb-3">
+            <button
+              type="button"
+              onClick={handleSelectFromGallery}
+              className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+              title="Add images from gallery or camera"
+            >
+              <Camera className="h-4 w-4 mr-2" />
+              Add Images
+            </button>
+            <UploadActivityIndicator isUploading={isUploadingImage} className="mt-1" />
+          </div>
 
           {/* Image preview */}
           <ImagePreview
