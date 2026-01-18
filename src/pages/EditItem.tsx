@@ -282,7 +282,14 @@ export default function EditItem() {
 
     try {
       await unifiedItemsService.updateItem(currentAccountId, itemId, itemData)
-      navigateToReturnToOrFallback(navigate, location, fallbackPath)
+      if (projectId) {
+        const detailPath = projectItemDetail(projectId, itemId)
+        const returnTo = projectItems(projectId)
+        const detailUrl = `${detailPath}?returnTo=${encodeURIComponent(returnTo)}`
+        navigate(detailUrl, { replace: true })
+      } else {
+        navigateToReturnToOrFallback(navigate, location, fallbackPath)
+      }
     } catch (error) {
       console.error('Error updating item:', error)
       console.error('Form data being submitted:', itemData)
