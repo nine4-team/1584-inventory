@@ -69,7 +69,9 @@ function generateCanonicalTransactionId(): string {
 }
 
 const transactionRealtimeEntries = new Map<string, SharedRealtimeEntry<Transaction>>()
+const allTransactionsRealtimeEntries = new Map<string, SharedRealtimeEntry<Transaction>>()
 let transactionChannelCounter = 0
+let allTransactionsChannelCounter = 0
 const projectItemsRealtimeEntries = new Map<string, SharedRealtimeEntry<Item>>()
 let projectItemsChannelCounter = 0
 
@@ -3000,54 +3002,106 @@ export const transactionService = {
     callback: (transactions: Transaction[]) => void,
     initialTransactions?: Transaction[]
   ) {
-    let transactions = [...(initialTransactions || [])]
+    const key = accountId
+    let entry = allTransactionsRealtimeEntries.get(key)
 
-    const channel = supabase
-      .channel(`transactions:${accountId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'transactions'
-        },
-        async (payload) => {
-          const { eventType, new: newRecord, old: oldRecord } = payload
-          const recordAccountId = (eventType === 'DELETE' ? oldRecord?.account_id : newRecord?.account_id) ?? null
-          if (recordAccountId && recordAccountId !== accountId) {
-            return
+    if (!entry) {
+      entry = {
+        channel: null as unknown as RealtimeChannel,
+        callbacks: new Set(),
+        data: [...(initialTransactions || [])]
+      }
+
+      const channelName = `all-transactions:${accountId}:${++allTransactionsChannelCounter}`
+      const channel = supabase
+        .channel(channelName)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'transactions',
+            filter: `account_id=eq.${accountId}`
+          },
+          async (payload) => {
+            const { eventType, new: newRecord, old: oldRecord } = payload
+            const recordAccountId = (eventType === 'DELETE' ? oldRecord?.account_id : newRecord?.account_id) ?? null
+            if (recordAccountId && recordAccountId !== accountId) {
+              return
+            }
+
+            console.log('All transactions change received!', payload)
+
+            let nextTransactions = entry?.data ?? []
+            if (eventType === 'INSERT') {
+              const newTransaction = _convertTransactionFromDb(newRecord)
+              const [enrichedTransaction] = await _enrichTransactionsWithProjectNames(accountId, [newTransaction])
+              nextTransactions = [enrichedTransaction, ...nextTransactions.filter(t => t.transactionId !== enrichedTransaction.transactionId)]
+            } else if (eventType === 'UPDATE') {
+              const updatedTransaction = _convertTransactionFromDb(newRecord)
+              const [enrichedTransaction] = await _enrichTransactionsWithProjectNames(accountId, [updatedTransaction])
+              nextTransactions = nextTransactions.map(t => t.transactionId === enrichedTransaction.transactionId ? enrichedTransaction : t)
+            } else if (eventType === 'DELETE') {
+              const oldId = oldRecord.transaction_id
+              nextTransactions = nextTransactions.filter(t => t.transactionId !== oldId)
+            }
+
+            if (!entry) {
+              return
+            }
+
+            entry.data = nextTransactions
+            const sortedTransactions = [...nextTransactions].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+            entry.callbacks.forEach((subscriber) => {
+              try {
+                subscriber(sortedTransactions)
+              } catch (err) {
+                console.error('subscribeToAllTransactions callback failed', err)
+              }
+            })
           }
-
-          console.log('All transactions change received!', payload)
-
-          if (eventType === 'INSERT') {
-            const newTransaction = _convertTransactionFromDb(newRecord)
-            const [enrichedTransaction] = await _enrichTransactionsWithProjectNames(accountId, [newTransaction])
-            transactions = [enrichedTransaction, ...transactions.filter(t => t.transactionId !== enrichedTransaction.transactionId)]
-          } else if (eventType === 'UPDATE') {
-            const updatedTransaction = _convertTransactionFromDb(newRecord)
-            const [enrichedTransaction] = await _enrichTransactionsWithProjectNames(accountId, [updatedTransaction])
-            transactions = transactions.map(t => t.transactionId === enrichedTransaction.transactionId ? enrichedTransaction : t)
-          } else if (eventType === 'DELETE') {
-            const oldId = oldRecord.transaction_id
-            transactions = transactions.filter(t => t.transactionId !== oldId)
+        )
+        .subscribe((status, err) => {
+          if (status === 'SUBSCRIBED') {
+            console.log('Subscribed to all transactions channel')
           }
-          
-          const sortedTransactions = [...transactions].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-          callback(sortedTransactions)
-        }
-      )
-      .subscribe((status, err) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('Subscribed to all transactions channel')
-        }
-        if (err) {
-          console.error('Error subscribing to all transactions channel:', err)
-        }
-      })
+          if (err) {
+            console.error('Error subscribing to all transactions channel:', err)
+          }
+        })
+
+      entry.channel = channel
+      allTransactionsRealtimeEntries.set(key, entry)
+    } else if (initialTransactions && initialTransactions.length > 0 && entry.data.length === 0) {
+      entry.data = [...initialTransactions]
+    }
+
+    const subscriberCallback = (transactionsSnapshot: Transaction[]) => {
+      try {
+        callback(transactionsSnapshot)
+      } catch (err) {
+        console.error('subscribeToAllTransactions callback failed', err)
+      }
+    }
+
+    entry.callbacks.add(subscriberCallback)
+    if (entry.data.length > 0) {
+      subscriberCallback([...entry.data])
+    }
 
     return () => {
-      channel.unsubscribe()
+      const existing = allTransactionsRealtimeEntries.get(key)
+      if (!existing) return
+
+      existing.callbacks.delete(subscriberCallback)
+      if (existing.callbacks.size === 0) {
+        try {
+          existing.channel.unsubscribe()
+        } catch (err) {
+          console.warn('Failed to unsubscribe all transactions channel', err)
+        }
+        allTransactionsRealtimeEntries.delete(key)
+      }
     }
   },
 
