@@ -447,6 +447,42 @@ export default function BusinessInventory() {
         disposition: 'inventory' // Business inventory duplicates should always be marked inventory
       })
       return result.itemId
+    },
+    onDuplicateComplete: async (newItemIds: string[]) => {
+      if (!currentAccountId || newItemIds.length === 0) return
+
+      try {
+        const fetchedItems = await Promise.all(
+          newItemIds.map(async (newItemId) => {
+            try {
+              return await unifiedItemsService.getItemById(currentAccountId, newItemId)
+            } catch (error) {
+              console.debug('BusinessInventory - failed to fetch duplicated item', error)
+              return null
+            }
+          })
+        )
+
+        const newItems = fetchedItems.filter((item): item is Item => Boolean(item) && !item.projectId)
+        if (newItems.length > 0) {
+          setItems(prev => {
+            const existingIds = new Set(prev.map(item => item.itemId))
+            const uniqueNewItems = newItems.filter(item => !existingIds.has(item.itemId))
+            if (uniqueNewItems.length === 0) return prev
+            return [...uniqueNewItems, ...prev]
+          })
+          return
+        }
+      } catch (error) {
+        console.debug('BusinessInventory - failed to insert duplicated items', error)
+      }
+
+      try {
+        const refreshedItems = await unifiedItemsService.getBusinessInventoryItems(currentAccountId, filters)
+        setItems(refreshedItems)
+      } catch (error) {
+        console.debug('BusinessInventory - failed to refresh after duplication', error)
+      }
     }
   })
 
