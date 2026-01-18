@@ -6,7 +6,6 @@ import ContextLink from '@/components/ContextLink'
 import { Item, Transaction, ItemImage, Project, ItemDisposition } from '@/types'
 import type { Transaction as TransactionType } from '@/types'
 import { unifiedItemsService, transactionService, projectService, integrationService } from '@/services/inventoryService'
-import { normalizeDisposition, displayDispositionLabel, DISPOSITION_OPTIONS } from '@/utils/dispositionUtils'
 import { useToast } from '@/components/ui/ToastContext'
 import { lineageService } from '@/services/lineageService'
 import { ImageUploadService } from '@/services/imageService'
@@ -15,6 +14,7 @@ import { useNetworkState } from '@/hooks/useNetworkState'
 import { subscribeToNetworkStatus } from '@/services/networkStatusService'
 import { onSyncEvent } from '@/services/serviceWorker'
 import { registerBusinessInventoryRefreshCallback } from '@/utils/realtimeSnapshotUpdater'
+import { refreshBusinessInventoryRealtimeSnapshot } from '@/utils/businessInventoryRefresh'
 import { formatCurrency, formatDate } from '@/utils/dateUtils'
 import { COMPANY_INVENTORY, COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE } from '@/constants/company'
 import { useBookmark } from '@/hooks/useBookmark'
@@ -67,7 +67,7 @@ export default function BusinessInventory() {
   // Filter and selection state for inventory items (matching InventoryList.tsx)
   const [filterMode, setFilterMode] = useState<'all' | 'bookmarked'>('all')
   const [showFilterMenu, setShowFilterMenu] = useState(false)
-  const [sortMode, setSortMode] = useState<'alphabetical' | 'creationDate'>('alphabetical')
+  const [sortMode, setSortMode] = useState<'alphabetical' | 'creationDate'>('creationDate')
   const [showSortMenu, setShowSortMenu] = useState(false)
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
   const [openDispositionMenu, setOpenDispositionMenu] = useState<string | null>(null)
@@ -144,6 +144,7 @@ export default function BusinessInventory() {
           } else {
             showSuccess && showSuccess('Item moved to inventory')
           }
+          await refreshRealtimeAfterWrite()
         } catch (deallocationError) {
           console.error('Failed to handle deallocation:', deallocationError)
           await unifiedItemsService.updateItem(currentAccountId, itemId, { disposition: item.disposition })
@@ -156,6 +157,7 @@ export default function BusinessInventory() {
         if (wasOffline) {
           showOfflineSaved(null)
         }
+        await refreshRealtimeAfterWrite()
       }
     } catch (error) {
       console.error('Failed to update disposition:', error)
@@ -270,29 +272,26 @@ export default function BusinessInventory() {
       if (!accountId) return
 
       try {
-        const [inventoryData, businessInventoryTransactions, inventoryRelatedTransactions] = await Promise.all([
-          unifiedItemsService.getBusinessInventoryItems(accountId, filters),
-          transactionService.getBusinessInventoryTransactions(accountId),
-          transactionService.getInventoryRelatedTransactions(accountId)
-        ])
-
-        const allTransactions = [...businessInventoryTransactions, ...inventoryRelatedTransactions]
-        const uniqueTransactions = allTransactions.filter((transaction, index, self) =>
-          index === self.findIndex(t => t.transactionId === transaction.transactionId)
-        )
-        uniqueTransactions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        const { items: inventoryData, transactions: uniqueTransactions } =
+          await refreshBusinessInventoryRealtimeSnapshot(accountId, filters)
 
         setItems(inventoryData)
         setTransactions(uniqueTransactions)
-
-        unifiedItemsService.seedBusinessInventoryItemsRealtimeSnapshot(accountId, inventoryData)
-        transactionService.seedBusinessInventoryTransactionsRealtimeSnapshot(accountId, uniqueTransactions)
       } catch (error) {
         console.error('Error refreshing business inventory collections:', error)
       }
     },
     [currentAccountId, filters]
   )
+
+  const refreshRealtimeAfterWrite = useCallback(async () => {
+    if (!currentAccountId) return
+    try {
+      await refreshBusinessInventoryCollections(currentAccountId)
+    } catch (error) {
+      console.debug('BusinessInventory: realtime refresh failed', error)
+    }
+  }, [currentAccountId, refreshBusinessInventoryCollections])
 
   // Unified useEffect for data loading and real-time subscriptions
   useEffect(() => {
@@ -371,7 +370,9 @@ export default function BusinessInventory() {
       if (!networkStatus.isOnline || wasOnline === null || wasOnline) {
         return
       }
-      void refreshBusinessInventoryCollections(currentAccountId)
+      if (currentAccountId) {
+        void refreshBusinessInventoryCollections(currentAccountId)
+      }
     })
 
     return unsubscribe
@@ -383,7 +384,9 @@ export default function BusinessInventory() {
       if (payload?.pendingOperations && payload.pendingOperations > 0) {
         return
       }
-      void refreshBusinessInventoryCollections(currentAccountId)
+      if (currentAccountId) {
+        void refreshBusinessInventoryCollections(currentAccountId)
+      }
     })
 
     return unsubscribe
@@ -569,7 +572,7 @@ export default function BusinessInventory() {
           })
         )
 
-        const newItems = fetchedItems.filter((item): item is Item => Boolean(item) && !item.projectId)
+        const newItems = fetchedItems.filter((item): item is Item => item !== null && !item.projectId)
         if (newItems.length > 0) {
           setItems(prev => {
             const existingIds = new Set(prev.map(item => item.itemId))
@@ -632,8 +635,7 @@ export default function BusinessInventory() {
 
       // Show success message
       alert(`Successfully allocated ${itemIds.length} items to project!`)
-
-      // Items will be updated via real-time subscription
+      await refreshRealtimeAfterWrite()
     } catch (error) {
       console.error('Error batch allocating items:', error)
       alert('Error allocating items. Please try again.')
@@ -690,8 +692,7 @@ export default function BusinessInventory() {
         await loadBusinessInventory()
         alert(`Deleted ${successCount} item${successCount !== 1 ? 's' : ''}, but ${errorCount} item${errorCount !== 1 ? 's' : ''} failed to delete.`)
       }
-
-      // Real-time subscription will keep the UI in sync
+      await refreshRealtimeAfterWrite()
     } catch (error) {
       console.error('Error deleting items:', error)
       // Reload items on error to restore state
@@ -713,6 +714,7 @@ export default function BusinessInventory() {
           const file = files[i]
           await processImageUpload(itemId, file, files)
         }
+        await refreshRealtimeAfterWrite()
       }
     } catch (error: any) {
       console.error('Error adding image:', error)
