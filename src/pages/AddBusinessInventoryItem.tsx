@@ -1,7 +1,6 @@
 import { ArrowLeft, Save, X, Shield } from 'lucide-react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
-import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { useState, FormEvent, useEffect, useMemo, useRef } from 'react'
 import { unifiedItemsService, transactionService } from '@/services/inventoryService'
 import { ImageUploadService } from '@/services/imageService'
@@ -38,7 +37,7 @@ const getCanonicalTransactionTitle = (transaction: Transaction): string => {
 }
 
 export default function AddBusinessInventoryItem() {
-  const navigate = useStackedNavigate()
+  const navigate = useNavigate()
   const location = useLocation()
   const hasSyncError = useSyncError()
   const { hasRole } = useAuth()
@@ -238,7 +237,7 @@ export default function AddBusinessInventoryItem() {
         showSuccess('Item saved successfully')
       }
 
-      navigate(`/business-inventory/${createResult.itemId}`)
+      navigate(`/business-inventory/${createResult.itemId}`, { replace: true })
     } catch (error) {
       console.error('Error creating item:', error)
       if (error instanceof OfflineQueueUnavailableError) {
