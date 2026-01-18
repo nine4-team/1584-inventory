@@ -259,7 +259,7 @@ export default function AddBusinessInventoryItem() {
         showSuccess(`Created ${totalToCreate} items successfully`)
       }
 
-      navigate(`/business-inventory/${createdItemIds[0]}`, { replace: true })
+      navigate(backDestination, { replace: true })
     } catch (error) {
       console.error('Error creating item:', error)
       if (error instanceof OfflineQueueUnavailableError) {
