@@ -495,8 +495,7 @@ export default function TransactionItemsList({
       return onDuplicateItem(itemToDuplicate, quantity)
     }
 
-    const totalCount = Math.max(1, Math.floor(quantity))
-    const duplicateCount = Math.max(0, totalCount - 1)
+    const duplicateCount = Math.max(0, Math.floor(quantity))
 
     if (duplicateCount === 0) return
 
