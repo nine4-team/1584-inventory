@@ -1,6 +1,6 @@
-import { Plus, Search, Package, Receipt, Filter, QrCode, Trash2, Camera, DollarSign, ArrowUpDown } from 'lucide-react'
+import { Plus, Search, Package, Receipt, Filter, QrCode, Trash2, Camera, DollarSign, ArrowUpDown, RefreshCw } from 'lucide-react'
 import { useMemo } from 'react'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import { Item, Transaction, ItemImage, Project, ItemDisposition } from '@/types'
@@ -12,6 +12,9 @@ import { lineageService } from '@/services/lineageService'
 import { ImageUploadService } from '@/services/imageService'
 import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
 import { useNetworkState } from '@/hooks/useNetworkState'
+import { subscribeToNetworkStatus } from '@/services/networkStatusService'
+import { onSyncEvent } from '@/services/serviceWorker'
+import { registerBusinessInventoryRefreshCallback } from '@/utils/realtimeSnapshotUpdater'
 import { formatCurrency, formatDate } from '@/utils/dateUtils'
 import { COMPANY_INVENTORY, COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE } from '@/constants/company'
 import { useBookmark } from '@/hooks/useBookmark'
@@ -38,6 +41,7 @@ export default function BusinessInventory() {
   const [items, setItems] = useState<Item[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [filters] = useState<FilterOptions>({
     status: '',
     searchQuery: ''
@@ -70,6 +74,7 @@ export default function BusinessInventory() {
   const { showSuccess, showError } = useToast()
   const { showOfflineSaved } = useOfflineFeedback()
   const { isOnline } = useNetworkState()
+  const previousOnlineStatusRef = useRef<boolean | null>(null)
 
   // Batch allocation state
   const [projects, setProjects] = useState<Project[]>([])
@@ -239,6 +244,14 @@ export default function BusinessInventory() {
     return filtered
   }, [transactions, transactionFilterMode, transactionSearchQuery])
 
+  const inventoryValue = useMemo(() => {
+    return items.reduce((sum, item) => {
+      const rawValue = item.projectPrice ?? item.purchasePrice ?? 0
+      const parsed = typeof rawValue === 'number' ? rawValue : parseFloat(rawValue)
+      return sum + (Number.isFinite(parsed) ? parsed : 0)
+    }, 0)
+  }, [items])
+
   // Canonical transaction title for display only
   const getCanonicalTransactionTitle = (transaction: TransactionType): string => {
     if (transaction.transactionId?.startsWith('INV_SALE_')) return COMPANY_INVENTORY_SALE
@@ -250,6 +263,36 @@ export default function BusinessInventory() {
     { id: 'inventory' as const, name: 'Items', icon: Package },
     { id: 'transactions' as const, name: 'Transactions', icon: Receipt }
   ]
+
+  const refreshBusinessInventoryCollections = useCallback(
+    async (accountIdOverride?: string) => {
+      const accountId = accountIdOverride ?? currentAccountId
+      if (!accountId) return
+
+      try {
+        const [inventoryData, businessInventoryTransactions, inventoryRelatedTransactions] = await Promise.all([
+          unifiedItemsService.getBusinessInventoryItems(accountId, filters),
+          transactionService.getBusinessInventoryTransactions(accountId),
+          transactionService.getInventoryRelatedTransactions(accountId)
+        ])
+
+        const allTransactions = [...businessInventoryTransactions, ...inventoryRelatedTransactions]
+        const uniqueTransactions = allTransactions.filter((transaction, index, self) =>
+          index === self.findIndex(t => t.transactionId === transaction.transactionId)
+        )
+        uniqueTransactions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+
+        setItems(inventoryData)
+        setTransactions(uniqueTransactions)
+
+        unifiedItemsService.seedBusinessInventoryItemsRealtimeSnapshot(accountId, inventoryData)
+        transactionService.seedBusinessInventoryTransactionsRealtimeSnapshot(accountId, uniqueTransactions)
+      } catch (error) {
+        console.error('Error refreshing business inventory collections:', error)
+      }
+    },
+    [currentAccountId, filters]
+  )
 
   // Unified useEffect for data loading and real-time subscriptions
   useEffect(() => {
@@ -282,15 +325,13 @@ export default function BusinessInventory() {
         setProjects(projectsData)
 
         // Setup subscriptions after initial data load
-        itemsUnsubscribe = unifiedItemsService.subscribeToBusinessInventory(
+        itemsUnsubscribe = unifiedItemsService.subscribeToBusinessInventoryItems(
           currentAccountId,
           (updatedItems) => setItems(updatedItems),
-          filters,
           inventoryData
         )
         
-        // We need a new subscription service for transactions
-        transactionsUnsubscribe = transactionService.subscribeToAllTransactions(
+        transactionsUnsubscribe = transactionService.subscribeToBusinessInventoryTransactions(
           currentAccountId,
           (updatedTransactions) => {
             const allTrans = [...updatedTransactions];
@@ -320,6 +361,43 @@ export default function BusinessInventory() {
       if (transactionsUnsubscribe) transactionsUnsubscribe()
     }
   }, [currentAccountId, filters])
+
+  // Refresh business inventory after reconnect
+  useEffect(() => {
+    const unsubscribe = subscribeToNetworkStatus(networkStatus => {
+      const wasOnline = previousOnlineStatusRef.current
+      previousOnlineStatusRef.current = networkStatus.isOnline
+
+      if (!networkStatus.isOnline || wasOnline === null || wasOnline) {
+        return
+      }
+      void refreshBusinessInventoryCollections(currentAccountId)
+    })
+
+    return unsubscribe
+  }, [currentAccountId, refreshBusinessInventoryCollections])
+
+  // After offline queue flushes (SYNC_COMPLETE with zero pending ops), re-fetch to capture missed realtime payloads
+  useEffect(() => {
+    const unsubscribe = onSyncEvent('complete', payload => {
+      if (payload?.pendingOperations && payload.pendingOperations > 0) {
+        return
+      }
+      void refreshBusinessInventoryCollections(currentAccountId)
+    })
+
+    return unsubscribe
+  }, [currentAccountId, refreshBusinessInventoryCollections])
+
+  // Register snapshot refresh callback for offline services
+  useEffect(() => {
+    registerBusinessInventoryRefreshCallback((accountId) => {
+      void refreshBusinessInventoryCollections(accountId)
+    })
+    return () => {
+      registerBusinessInventoryRefreshCallback(() => {})
+    }
+  }, [refreshBusinessInventoryCollections])
 
   // Per-visible-item lineage subscriptions: refetch single item on new edges to keep list in sync
   useEffect(() => {
@@ -412,6 +490,34 @@ export default function BusinessInventory() {
     }
   }
 
+  const handleRefreshInventory = useCallback(async () => {
+    if (!currentAccountId || isRefreshing) return
+    setIsRefreshing(true)
+    try {
+      const [inventoryData, businessInventoryTransactions, inventoryRelatedTransactions, projectsData] = await Promise.all([
+        unifiedItemsService.getBusinessInventoryItems(currentAccountId, filters),
+        transactionService.getBusinessInventoryTransactions(currentAccountId),
+        transactionService.getInventoryRelatedTransactions(currentAccountId),
+        projectService.getProjects(currentAccountId)
+      ])
+
+      const allTransactions = [...businessInventoryTransactions, ...inventoryRelatedTransactions]
+      const uniqueTransactions = allTransactions.filter((transaction, index, self) =>
+        index === self.findIndex(t => t.transactionId === transaction.transactionId)
+      )
+      uniqueTransactions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+
+      setItems(inventoryData)
+      setTransactions(uniqueTransactions)
+      setProjects(projectsData)
+    } catch (error) {
+      console.error('Error refreshing business inventory data:', error)
+      showError && showError('Failed to refresh business inventory. Please try again.')
+    } finally {
+      setIsRefreshing(false)
+    }
+  }, [currentAccountId, filters, isRefreshing, showError])
+
 
   const handleInventorySearchChange = (searchQuery: string) => {
     setInventorySearchQuery(searchQuery)
@@ -447,6 +553,42 @@ export default function BusinessInventory() {
         disposition: 'inventory' // Business inventory duplicates should always be marked inventory
       })
       return result.itemId
+    },
+    onDuplicateComplete: async (newItemIds: string[]) => {
+      if (!currentAccountId || newItemIds.length === 0) return
+
+      try {
+        const fetchedItems = await Promise.all(
+          newItemIds.map(async (newItemId) => {
+            try {
+              return await unifiedItemsService.getItemById(currentAccountId, newItemId)
+            } catch (error) {
+              console.debug('BusinessInventory - failed to fetch duplicated item', error)
+              return null
+            }
+          })
+        )
+
+        const newItems = fetchedItems.filter((item): item is Item => Boolean(item) && !item.projectId)
+        if (newItems.length > 0) {
+          setItems(prev => {
+            const existingIds = new Set(prev.map(item => item.itemId))
+            const uniqueNewItems = newItems.filter(item => !existingIds.has(item.itemId))
+            if (uniqueNewItems.length === 0) return prev
+            return [...uniqueNewItems, ...prev]
+          })
+          return
+        }
+      } catch (error) {
+        console.debug('BusinessInventory - failed to insert duplicated items', error)
+      }
+
+      try {
+        const refreshedItems = await unifiedItemsService.getBusinessInventoryItems(currentAccountId, filters)
+        setItems(refreshedItems)
+      } catch (error) {
+        console.debug('BusinessInventory - failed to refresh after duplication', error)
+      }
     }
   })
 
@@ -702,8 +844,36 @@ export default function BusinessInventory() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">{COMPANY_INVENTORY}</h1>
+      <div className="space-y-4">
+        <div>
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold text-gray-900">{COMPANY_INVENTORY}</h1>
+            <button
+              onClick={handleRefreshInventory}
+              className="inline-flex items-center justify-center p-2 text-gray-500 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+              aria-label="Refresh business inventory"
+              title="Refresh"
+              disabled={isRefreshing}
+            >
+              <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+          <p className="text-sm text-gray-500">Track items held by the business outside active projects.</p>
+        </div>
+        <div className="flex flex-wrap items-stretch gap-4">
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <div>
+              <div className="text-sm text-gray-500">Items</div>
+              <div className="text-2xl font-semibold text-gray-900">{items.length}</div>
+            </div>
+          </div>
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <div>
+              <div className="text-sm text-gray-500">Inventory Value</div>
+              <div className="text-2xl font-semibold text-gray-900">{formatCurrency(inventoryValue)}</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Tabs */}

@@ -76,7 +76,7 @@ export default function DuplicateQuantityMenu({
       {isOpen && (
         <div className="absolute top-full right-0 mt-2 w-60 rounded-lg border border-gray-200 bg-white p-3 shadow-lg z-50">
           <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-            Quick Duplicate
+            How many do you have?
           </div>
           <div className="mt-2 grid grid-cols-5 gap-2">
             {QUICK_OPTIONS.map(value => (
@@ -95,9 +95,7 @@ export default function DuplicateQuantityMenu({
             ))}
           </div>
 
-          <div className="my-3 h-px w-full bg-gray-100" />
-
-          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+          <div className="mt-3 text-xs font-medium text-gray-500 uppercase tracking-wide">
             Custom QTY
           </div>
           <div className="mt-2 flex items-center gap-2">
@@ -132,7 +130,7 @@ export default function DuplicateQuantityMenu({
               }}
               className="rounded-md border border-primary-500 px-3 py-1 text-sm font-medium text-primary-600 hover:bg-primary-50"
             >
-              Duplicate
+              Create
             </button>
           </div>
           {error && (

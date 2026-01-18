@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
 import ContextLink from '@/components/ContextLink'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
-import { Edit, Trash2, ArrowLeft, Package, DollarSign, ImagePlus, FileText, Copy } from 'lucide-react'
+import { Edit, Trash2, ArrowLeft, Package, DollarSign, ImagePlus, FileText, Copy, RefreshCw } from 'lucide-react'
 import { Item, Project } from '@/types'
 import { unifiedItemsService, projectService } from '@/services/inventoryService'
 import { formatDate } from '@/utils/dateUtils'
@@ -25,6 +25,7 @@ export default function BusinessInventoryItemDetail() {
   const [item, setItem] = useState<Item | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isUpdating, setIsUpdating] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
   const [showAllocationModal, setShowAllocationModal] = useState(false)
   const [showProjectDropdown, setShowProjectDropdown] = useState(false)
@@ -112,15 +113,12 @@ export default function BusinessInventoryItemDetail() {
   useEffect(() => {
     if (!id || !currentAccountId) return
 
-    const unsubscribe = unifiedItemsService.subscribeToBusinessInventory(
+    const unsubscribe = unifiedItemsService.subscribeToBusinessInventoryItems(
       currentAccountId,
       (items) => {
         const updatedItem = items.find(i => i.itemId === id)
-        if (updatedItem) {
-          setItem(updatedItem)
-        }
-      },
-      {}
+        setItem(updatedItem ?? null)
+      }
     )
 
     return unsubscribe
@@ -154,6 +152,18 @@ export default function BusinessInventoryItemDetail() {
       console.error('Error loading item:', error)
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const handleRefreshItem = async () => {
+    if (isRefreshing) return
+    setIsRefreshing(true)
+    try {
+      await loadItem()
+    } catch (error) {
+      console.error('Error refreshing item:', error)
+    } finally {
+      setIsRefreshing(false)
     }
   }
 
@@ -356,13 +366,24 @@ export default function BusinessInventoryItemDetail() {
       <div className="sticky top-0 bg-gray-50 z-10 px-4 py-2 border-b border-gray-200">
         {/* Back button and controls row */}
         <div className="flex items-center justify-between gap-4">
-          <ContextBackLink
-            fallback={backDestination}
-            className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
-          >
-            <ArrowLeft className="h-4 w-4 mr-1" />
-            Back
-          </ContextBackLink>
+          <div className="flex items-center gap-4">
+            <ContextBackLink
+              fallback={backDestination}
+              className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
+            >
+              <ArrowLeft className="h-4 w-4 mr-1" />
+              Back
+            </ContextBackLink>
+            <button
+              onClick={handleRefreshItem}
+              className="inline-flex items-center justify-center p-2 text-gray-500 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+              aria-label="Refresh item"
+              title="Refresh"
+              disabled={isRefreshing}
+            >
+              <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
 
           <div className="flex flex-wrap gap-2 sm:space-x-2">
             {item.inventoryStatus === 'available' && (

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { ArrowLeft, Bookmark, QrCode, Trash2, Edit, FileText, ImagePlus, ChevronDown, Copy, X } from 'lucide-react'
+import { ArrowLeft, Bookmark, QrCode, Trash2, Edit, FileText, ImagePlus, ChevronDown, Copy, X, RefreshCw } from 'lucide-react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import ContextBackLink from '@/components/ContextBackLink'
@@ -37,6 +37,7 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
   const [item, setItem] = useState<Item | null>(null)
   const [projectName, setProjectName] = useState<string>('')
   const [isLoadingItem, setIsLoadingItem] = useState<boolean>(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<number>(0)
   const [openDispositionMenu, setOpenDispositionMenu] = useState(false)
@@ -90,109 +91,122 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
   }, [item, projectId, getBackDestination, isBusinessInventoryItem])
 
 
-  useEffect(() => {
-    const fetchItem = async () => {
+  const fetchItem = useCallback(
+    async ({ showLoading = true, preserveOnError = false }: { showLoading?: boolean; preserveOnError?: boolean } = {}) => {
       console.log('🔄 ItemDetail useEffect triggered. itemId:', actualItemId, 'id:', id, 'projectId:', projectId)
 
-      if (actualItemId) {
-        setIsLoadingItem(true)
-        try {
-          if (!currentAccountId) return
-          
-          // First, try to hydrate from offlineStore to React Query cache
-          // This ensures optimistic items created offline are available
-          try {
-            await hydrateItemCache(getGlobalQueryClient(), currentAccountId, actualItemId)
-          } catch (error) {
-            console.warn('Failed to hydrate item cache (non-fatal):', error)
-          }
-
-          if (projectId) {
-            try {
-              await hydrateProjectCache(getGlobalQueryClient(), currentAccountId, projectId)
-            } catch (error) {
-              console.warn('Failed to hydrate project cache (non-fatal):', error)
-            }
-          }
-
-          // Check React Query cache first (for optimistic items created offline)
-          const queryClient = getGlobalQueryClient()
-          const cachedItem = queryClient.getQueryData<Item>(['item', currentAccountId, actualItemId])
-          const servedFromCache = Boolean(cachedItem)
-          
-          if (cachedItem) {
-            console.log('✅ Item found in React Query cache:', cachedItem.itemId)
-            setItem(cachedItem)
-            if (isBusinessInventoryItem) {
-              setProjectName('Business Inventory')
-            } else if (projectId) {
-              // Still fetch project name
-              try {
-                const project = await projectService.getProject(currentAccountId, projectId)
-                if (project) {
-                  setProjectName(project.name)
-                }
-              } catch (error) {
-                console.warn('Failed to fetch project name:', error)
-              }
-            }
-            setIsLoadingItem(false)
-          }
-          
-          if (isBusinessInventoryItem) {
-            console.log('📦 Fetching business inventory item (no project context)...')
-            const fetchedItem = await unifiedItemsService.getItemById(currentAccountId, actualItemId)
-
-            if (fetchedItem) {
-              console.log('✅ Business inventory item loaded successfully:', fetchedItem.itemId)
-              queryClient.setQueryData(['item', currentAccountId, actualItemId], fetchedItem)
-              setItem(fetchedItem)
-              setProjectName('Business Inventory') // Set a default project name for UI display
-            } else if (!servedFromCache) {
-              console.error('❌ Business inventory item not found with ID:', actualItemId)
-              setItem(null)
-            }
-          } else if (projectId) {
-            console.log('📡 Fetching item and project data...')
-            const [fetchedItem, project] = await Promise.all([
-              unifiedItemsService.getItemById(currentAccountId, actualItemId),
-              projectService.getProject(currentAccountId, projectId)
-            ])
-
-            if (fetchedItem) {
-              console.log('✅ Item loaded successfully:', fetchedItem.itemId)
-              queryClient.setQueryData(['item', currentAccountId, actualItemId], fetchedItem)
-              setItem(fetchedItem)
-            } else if (!servedFromCache) {
-              console.error('❌ Item not found in project:', projectId, 'with ID:', actualItemId)
-              setItem(null)
-            }
-
-            if (project) {
-              console.log('✅ Project loaded:', project.name)
-              setProjectName(project.name)
-            }
-          } else {
-            console.error('❌ No project ID found in URL parameters')
-            if (!servedFromCache) {
-              setItem(null)
-            }
-          }
-        } catch (error) {
-          console.error('❌ Failed to fetch item:', error)
+      if (!actualItemId) {
+        console.log('⚠️ No itemId or id in URL parameters')
+        if (!preserveOnError) {
           setItem(null)
         }
-        finally {
-          setIsLoadingItem(false)
-        }
-      } else {
-        console.log('⚠️ No itemId or id in URL parameters')
-        setItem(null)
+        return
       }
-    }
 
+      const setLoading = (value: boolean) => {
+        if (showLoading) {
+          setIsLoadingItem(value)
+        }
+      }
+
+      setLoading(true)
+      try {
+        if (!currentAccountId) return
+
+        // First, try to hydrate from offlineStore to React Query cache
+        // This ensures optimistic items created offline are available
+        try {
+          await hydrateItemCache(getGlobalQueryClient(), currentAccountId, actualItemId)
+        } catch (error) {
+          console.warn('Failed to hydrate item cache (non-fatal):', error)
+        }
+
+        if (projectId) {
+          try {
+            await hydrateProjectCache(getGlobalQueryClient(), currentAccountId, projectId)
+          } catch (error) {
+            console.warn('Failed to hydrate project cache (non-fatal):', error)
+          }
+        }
+
+        // Check React Query cache first (for optimistic items created offline)
+        const queryClient = getGlobalQueryClient()
+        const cachedItem = queryClient.getQueryData<Item>(['item', currentAccountId, actualItemId])
+        const servedFromCache = Boolean(cachedItem)
+
+        if (cachedItem) {
+          console.log('✅ Item found in React Query cache:', cachedItem.itemId)
+          setItem(cachedItem)
+          if (isBusinessInventoryItem) {
+            setProjectName('Business Inventory')
+          } else if (projectId) {
+            // Still fetch project name
+            try {
+              const project = await projectService.getProject(currentAccountId, projectId)
+              if (project) {
+                setProjectName(project.name)
+              }
+            } catch (error) {
+              console.warn('Failed to fetch project name:', error)
+            }
+          }
+          setLoading(false)
+        }
+
+        if (isBusinessInventoryItem) {
+          console.log('📦 Fetching business inventory item (no project context)...')
+          const fetchedItem = await unifiedItemsService.getItemById(currentAccountId, actualItemId)
+
+          if (fetchedItem) {
+            console.log('✅ Business inventory item loaded successfully:', fetchedItem.itemId)
+            queryClient.setQueryData(['item', currentAccountId, actualItemId], fetchedItem)
+            setItem(fetchedItem)
+            setProjectName('Business Inventory') // Set a default project name for UI display
+          } else if (!servedFromCache) {
+            console.error('❌ Business inventory item not found with ID:', actualItemId)
+            setItem(null)
+          }
+        } else if (projectId) {
+          console.log('📡 Fetching item and project data...')
+          const [fetchedItem, project] = await Promise.all([
+            unifiedItemsService.getItemById(currentAccountId, actualItemId),
+            projectService.getProject(currentAccountId, projectId)
+          ])
+
+          if (fetchedItem) {
+            console.log('✅ Item loaded successfully:', fetchedItem.itemId)
+            queryClient.setQueryData(['item', currentAccountId, actualItemId], fetchedItem)
+            setItem(fetchedItem)
+          } else if (!servedFromCache) {
+            console.error('❌ Item not found in project:', projectId, 'with ID:', actualItemId)
+            setItem(null)
+          }
+
+          if (project) {
+            console.log('✅ Project loaded:', project.name)
+            setProjectName(project.name)
+          }
+        } else {
+          console.error('❌ No project ID found in URL parameters')
+          if (!servedFromCache) {
+            setItem(null)
+          }
+        }
+      } catch (error) {
+        console.error('❌ Failed to fetch item:', error)
+        if (!preserveOnError) {
+          setItem(null)
+        }
+      } finally {
+        setLoading(false)
+      }
+    },
+    [actualItemId, id, projectId, currentAccountId, isBusinessInventoryItem]
+  )
+
+  useEffect(() => {
     fetchItem()
-  }, [actualItemId, id, projectId, currentAccountId, isBusinessInventoryItem])
+  }, [fetchItem])
 
   // Set up real-time listener for item updates
   const subscriptionProjectId = useMemo(() => {
@@ -526,6 +540,20 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
     },
     [derivedRealtimeProjectId, refreshRealtimeCollections]
   )
+
+  const handleRefreshItem = useCallback(async () => {
+    if (isRefreshing) return
+    setIsRefreshing(true)
+    try {
+      await fetchItem({ showLoading: false, preserveOnError: true })
+      await refreshRealtimeAfterWrite()
+    } catch (error) {
+      console.error('Error refreshing item:', error)
+      showError('Failed to refresh item. Please try again.')
+    } finally {
+      setIsRefreshing(false)
+    }
+  }, [fetchItem, isRefreshing, refreshRealtimeAfterWrite, showError])
 
   const handleDeleteItem = async () => {
     if (!item || !currentAccountId) return
@@ -1206,26 +1234,37 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
           >
             {/* Back button and controls row */}
             <div className="flex items-center justify-between gap-4">
-              {onClose ? (
+              <div className="flex items-center gap-4">
+                {onClose ? (
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault()
+                      onClose()
+                    }}
+                    className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
+                  >
+                    <ArrowLeft className="h-4 w-4 mr-1" />
+                    Back
+                  </button>
+                ) : (
+                  <ContextBackLink
+                    fallback={backDestination}
+                    className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
+                  >
+                    <ArrowLeft className="h-4 w-4 mr-1" />
+                    Back
+                  </ContextBackLink>
+                )}
                 <button
-                  onClick={(e) => {
-                    e.preventDefault()
-                    onClose()
-                  }}
-                  className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
+                  onClick={handleRefreshItem}
+                  className="inline-flex items-center justify-center p-2 text-gray-500 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+                  aria-label="Refresh item"
+                  title="Refresh"
+                  disabled={isRefreshing}
                 >
-                  <ArrowLeft className="h-4 w-4 mr-1" />
-                  Back
+                  <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
                 </button>
-              ) : (
-                <ContextBackLink
-                  fallback={backDestination}
-                  className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
-                >
-                  <ArrowLeft className="h-4 w-4 mr-1" />
-                  Back
-                </ContextBackLink>
-              )}
+              </div>
 
               <div className="flex flex-wrap gap-2 sm:space-x-2">
                 <button

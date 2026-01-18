@@ -60,6 +60,14 @@ const isCanonicalAmountTransactionId = (transactionId: string | null | undefined
   return transactionId.startsWith('INV_PURCHASE_') || transactionId.startsWith('INV_SALE_')
 }
 
+const isBusinessInventoryTransactionRecord = (record?: Record<string, any> | null): boolean => {
+  if (!record) return false
+  const projectId = record.project_id ?? record.projectId ?? null
+  if (!projectId) return true
+  const reimbursementType = record.reimbursement_type ?? record.reimbursementType ?? null
+  return reimbursementType === CLIENT_OWES_COMPANY || reimbursementType === COMPANY_OWES_CLIENT
+}
+
 function generateCanonicalTransactionId(): string {
   const cryptoImpl = typeof globalThis !== 'undefined' ? (globalThis.crypto as Crypto | undefined) : undefined
   if (cryptoImpl?.randomUUID) {
@@ -69,9 +77,15 @@ function generateCanonicalTransactionId(): string {
 }
 
 const transactionRealtimeEntries = new Map<string, SharedRealtimeEntry<Transaction>>()
+const allTransactionsRealtimeEntries = new Map<string, SharedRealtimeEntry<Transaction>>()
+const businessInventoryTransactionsRealtimeEntries = new Map<string, SharedRealtimeEntry<Transaction>>()
 let transactionChannelCounter = 0
+let allTransactionsChannelCounter = 0
+let businessInventoryTransactionsChannelCounter = 0
 const projectItemsRealtimeEntries = new Map<string, SharedRealtimeEntry<Item>>()
 let projectItemsChannelCounter = 0
+const businessInventoryItemsRealtimeEntries = new Map<string, SharedRealtimeEntry<Item>>()
+let businessInventoryItemsChannelCounter = 0
 
 function syncProjectItemsRealtimeSnapshot(accountId: string, projectId: string, nextItems: Item[]) {
   const key = `${accountId}:${projectId}`
@@ -656,6 +670,19 @@ function sortItemsOffline(items: Item[]) {
     const aDate = new Date(a.dateCreated || a.lastUpdated || 0).getTime()
     const bDate = new Date(b.dateCreated || b.lastUpdated || 0).getTime()
     return bDate - aDate
+  })
+}
+
+function sortBusinessInventoryItems(items: Item[]) {
+  return [...items].sort((a, b) => {
+    const aCreated = new Date(a.createdAt || 0).getTime()
+    const bCreated = new Date(b.createdAt || 0).getTime()
+    if (aCreated !== bCreated) {
+      return bCreated - aCreated
+    }
+    const aSecondary = new Date(a.dateCreated || a.lastUpdated || 0).getTime()
+    const bSecondary = new Date(b.dateCreated || b.lastUpdated || 0).getTime()
+    return bSecondary - aSecondary
   })
 }
 
@@ -3000,55 +3027,247 @@ export const transactionService = {
     callback: (transactions: Transaction[]) => void,
     initialTransactions?: Transaction[]
   ) {
-    let transactions = [...(initialTransactions || [])]
+    const key = accountId
+    let entry = allTransactionsRealtimeEntries.get(key)
 
-    const channel = supabase
-      .channel(`transactions:${accountId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'transactions'
-        },
-        async (payload) => {
-          const { eventType, new: newRecord, old: oldRecord } = payload
-          const recordAccountId = (eventType === 'DELETE' ? oldRecord?.account_id : newRecord?.account_id) ?? null
-          if (recordAccountId && recordAccountId !== accountId) {
-            return
+    if (!entry) {
+      entry = {
+        channel: null as unknown as RealtimeChannel,
+        callbacks: new Set(),
+        data: [...(initialTransactions || [])]
+      }
+
+      const channelName = `all-transactions:${accountId}:${++allTransactionsChannelCounter}`
+      const channel = supabase
+        .channel(channelName)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'transactions',
+            filter: `account_id=eq.${accountId}`
+          },
+          async (payload) => {
+            const { eventType, new: newRecord, old: oldRecord } = payload
+            const recordAccountId = (eventType === 'DELETE' ? oldRecord?.account_id : newRecord?.account_id) ?? null
+            if (recordAccountId && recordAccountId !== accountId) {
+              return
+            }
+
+            console.log('All transactions change received!', payload)
+
+            let nextTransactions = entry?.data ?? []
+            if (eventType === 'INSERT') {
+              const newTransaction = _convertTransactionFromDb(newRecord)
+              const [enrichedTransaction] = await _enrichTransactionsWithProjectNames(accountId, [newTransaction])
+              nextTransactions = [enrichedTransaction, ...nextTransactions.filter(t => t.transactionId !== enrichedTransaction.transactionId)]
+            } else if (eventType === 'UPDATE') {
+              const updatedTransaction = _convertTransactionFromDb(newRecord)
+              const [enrichedTransaction] = await _enrichTransactionsWithProjectNames(accountId, [updatedTransaction])
+              nextTransactions = nextTransactions.map(t => t.transactionId === enrichedTransaction.transactionId ? enrichedTransaction : t)
+            } else if (eventType === 'DELETE') {
+              const oldId = oldRecord.transaction_id
+              nextTransactions = nextTransactions.filter(t => t.transactionId !== oldId)
+            }
+
+            if (!entry) {
+              return
+            }
+
+            entry.data = nextTransactions
+            const sortedTransactions = [...nextTransactions].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+            entry.callbacks.forEach((subscriber) => {
+              try {
+                subscriber(sortedTransactions)
+              } catch (err) {
+                console.error('subscribeToAllTransactions callback failed', err)
+              }
+            })
           }
-
-          console.log('All transactions change received!', payload)
-
-          if (eventType === 'INSERT') {
-            const newTransaction = _convertTransactionFromDb(newRecord)
-            const [enrichedTransaction] = await _enrichTransactionsWithProjectNames(accountId, [newTransaction])
-            transactions = [enrichedTransaction, ...transactions.filter(t => t.transactionId !== enrichedTransaction.transactionId)]
-          } else if (eventType === 'UPDATE') {
-            const updatedTransaction = _convertTransactionFromDb(newRecord)
-            const [enrichedTransaction] = await _enrichTransactionsWithProjectNames(accountId, [updatedTransaction])
-            transactions = transactions.map(t => t.transactionId === enrichedTransaction.transactionId ? enrichedTransaction : t)
-          } else if (eventType === 'DELETE') {
-            const oldId = oldRecord.transaction_id
-            transactions = transactions.filter(t => t.transactionId !== oldId)
+        )
+        .subscribe((status, err) => {
+          if (status === 'SUBSCRIBED') {
+            console.log('Subscribed to all transactions channel')
           }
-          
-          const sortedTransactions = [...transactions].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-          callback(sortedTransactions)
-        }
-      )
-      .subscribe((status, err) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('Subscribed to all transactions channel')
-        }
-        if (err) {
-          console.error('Error subscribing to all transactions channel:', err)
-        }
-      })
+          if (err) {
+            console.error('Error subscribing to all transactions channel:', err)
+          }
+        })
+
+      entry.channel = channel
+      allTransactionsRealtimeEntries.set(key, entry)
+    } else if (initialTransactions && initialTransactions.length > 0 && entry.data.length === 0) {
+      entry.data = [...initialTransactions]
+    }
+
+    const subscriberCallback = (transactionsSnapshot: Transaction[]) => {
+      try {
+        callback(transactionsSnapshot)
+      } catch (err) {
+        console.error('subscribeToAllTransactions callback failed', err)
+      }
+    }
+
+    entry.callbacks.add(subscriberCallback)
+    if (entry.data.length > 0) {
+      subscriberCallback([...entry.data])
+    }
 
     return () => {
-      channel.unsubscribe()
+      const existing = allTransactionsRealtimeEntries.get(key)
+      if (!existing) return
+
+      existing.callbacks.delete(subscriberCallback)
+      if (existing.callbacks.size === 0) {
+        try {
+          existing.channel.unsubscribe()
+        } catch (err) {
+          console.warn('Failed to unsubscribe all transactions channel', err)
+        }
+        allTransactionsRealtimeEntries.delete(key)
+      }
     }
+  },
+
+  subscribeToBusinessInventoryTransactions(
+    accountId: string,
+    callback: (transactions: Transaction[]) => void,
+    initialTransactions?: Transaction[]
+  ) {
+    const key = accountId
+    let entry = businessInventoryTransactionsRealtimeEntries.get(key)
+
+    if (!entry) {
+      entry = {
+        channel: null as unknown as RealtimeChannel,
+        callbacks: new Set(),
+        data: [...(initialTransactions || [])]
+      }
+
+      const channelName = `business-inventory-transactions:${accountId}:${++businessInventoryTransactionsChannelCounter}`
+      const channel = supabase
+        .channel(channelName)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'transactions',
+            filter: `account_id=eq.${accountId}`
+          },
+          async (payload) => {
+            const { eventType, new: newRecord, old: oldRecord } = payload
+            const recordAccountId = (eventType === 'DELETE' ? oldRecord?.account_id : newRecord?.account_id) ?? null
+            if (recordAccountId && recordAccountId !== accountId) {
+              return
+            }
+
+            console.log('Business inventory transactions change received!', payload)
+
+            let nextTransactions = entry?.data ?? []
+            const transactionId = (eventType === 'DELETE' ? oldRecord?.transaction_id : newRecord?.transaction_id) ?? oldRecord?.transaction_id ?? null
+
+            if (eventType === 'INSERT') {
+              if (isBusinessInventoryTransactionRecord(newRecord)) {
+                const newTransaction = _convertTransactionFromDb(newRecord)
+                const [enrichedTransaction] = await _enrichTransactionsWithProjectNames(accountId, [newTransaction])
+                if (enrichedTransaction) {
+                  nextTransactions = [enrichedTransaction, ...nextTransactions.filter(t => t.transactionId !== enrichedTransaction.transactionId)]
+                }
+              }
+            } else if (eventType === 'UPDATE') {
+              if (isBusinessInventoryTransactionRecord(newRecord)) {
+                const updatedTransaction = _convertTransactionFromDb(newRecord)
+                const [enrichedTransaction] = await _enrichTransactionsWithProjectNames(accountId, [updatedTransaction])
+                if (enrichedTransaction) {
+                  const hasExisting = nextTransactions.some(t => t.transactionId === enrichedTransaction.transactionId)
+                  if (hasExisting) {
+                    nextTransactions = nextTransactions.map(t => t.transactionId === enrichedTransaction.transactionId ? enrichedTransaction : t)
+                  } else {
+                    nextTransactions = [enrichedTransaction, ...nextTransactions]
+                  }
+                }
+              } else if (transactionId) {
+                nextTransactions = nextTransactions.filter(t => t.transactionId !== transactionId)
+              }
+            } else if (eventType === 'DELETE') {
+              if (transactionId) {
+                nextTransactions = nextTransactions.filter(t => t.transactionId !== transactionId)
+              }
+            }
+
+            if (!entry) {
+              return
+            }
+
+            entry.data = nextTransactions
+            const sortedTransactions = [...nextTransactions].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+            entry.callbacks.forEach((subscriber) => {
+              try {
+                subscriber(sortedTransactions)
+              } catch (err) {
+                console.error('subscribeToBusinessInventoryTransactions callback failed', err)
+              }
+            })
+          }
+        )
+        .subscribe((status, err) => {
+          if (status === 'SUBSCRIBED') {
+            console.log('Subscribed to business inventory transactions channel')
+          }
+          if (err) {
+            console.error('Error subscribing to business inventory transactions channel:', err)
+          }
+        })
+
+      entry.channel = channel
+      businessInventoryTransactionsRealtimeEntries.set(key, entry)
+    } else if (initialTransactions && initialTransactions.length > 0 && entry.data.length === 0) {
+      entry.data = [...initialTransactions]
+    }
+
+    const subscriberCallback = (transactionsSnapshot: Transaction[]) => {
+      try {
+        callback(transactionsSnapshot)
+      } catch (err) {
+        console.error('subscribeToBusinessInventoryTransactions callback failed', err)
+      }
+    }
+
+    entry.callbacks.add(subscriberCallback)
+    if (entry.data.length > 0) {
+      subscriberCallback([...entry.data])
+    }
+
+    return () => {
+      const existing = businessInventoryTransactionsRealtimeEntries.get(key)
+      if (!existing) return
+
+      existing.callbacks.delete(subscriberCallback)
+      if (existing.callbacks.size === 0) {
+        try {
+          existing.channel.unsubscribe()
+        } catch (err) {
+          console.warn('Failed to unsubscribe business inventory transactions channel', err)
+        }
+        businessInventoryTransactionsRealtimeEntries.delete(key)
+      }
+    }
+  },
+
+  seedBusinessInventoryTransactionsRealtimeSnapshot(accountId: string, transactions: Transaction[]) {
+    const entry = businessInventoryTransactionsRealtimeEntries.get(accountId)
+    if (!entry) return
+    const sortedTransactions = [...transactions].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    entry.data = sortedTransactions
+    entry.callbacks.forEach(subscriber => {
+      try {
+        subscriber([...sortedTransactions])
+      } catch (err) {
+        console.error('seedBusinessInventoryTransactionsRealtimeSnapshot callback failed', err)
+      }
+    })
   },
 
   // Subscribe to single transaction for real-time updates
@@ -3743,64 +3962,160 @@ export const unifiedItemsService = {
     return await this._getBusinessInventoryOffline(accountId, filters, pagination)
   },
 
+  subscribeToBusinessInventoryItems(
+    accountId: string,
+    callback: (items: Item[]) => void,
+    initialItems?: Item[],
+    options?: ChannelSubscriptionOptions
+  ) {
+    const key = accountId
+    let entry = businessInventoryItemsRealtimeEntries.get(key)
+
+    if (!entry) {
+      entry = {
+        channel: null as unknown as RealtimeChannel,
+        callbacks: new Set(),
+        data: [...(initialItems || [])]
+      }
+
+      const channelName = `business-inventory-items:${accountId}:${++businessInventoryItemsChannelCounter}`
+      const channel = supabase
+        .channel(channelName)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'items',
+            filter: `account_id=eq.${accountId}`
+          },
+          async (payload) => {
+            const { eventType, new: newRecord, old: oldRecord } = payload
+            let nextItems = entry?.data ?? []
+
+            if (eventType === 'INSERT') {
+              if (!newRecord.project_id) {
+                const newItem = this._convertItemFromDb(newRecord)
+                nextItems = [newItem, ...nextItems.filter(i => i.itemId !== newItem.itemId)]
+                nextItems = sortBusinessInventoryItems(nextItems)
+              }
+            } else if (eventType === 'UPDATE') {
+              const updatedItem = this._convertItemFromDb(newRecord)
+              const wasInInventory = nextItems.some(i => i.itemId === updatedItem.itemId)
+              const isInInventory = !updatedItem.projectId
+
+              if (isInInventory && !wasInInventory) {
+                nextItems = [updatedItem, ...nextItems]
+              } else if (!isInInventory && wasInInventory) {
+                nextItems = nextItems.filter(i => i.itemId !== updatedItem.itemId)
+              } else if (isInInventory && wasInInventory) {
+                nextItems = nextItems.map(i => i.itemId === updatedItem.itemId ? updatedItem : i)
+              }
+              nextItems = sortBusinessInventoryItems(nextItems)
+            } else if (eventType === 'DELETE') {
+              if (oldRecord.item_id && oldRecord.account_id === accountId) {
+                const oldItemId = oldRecord.item_id
+                nextItems = nextItems.filter(i => i.itemId !== oldItemId)
+
+                try {
+                  await offlineStore.deleteItem(oldItemId)
+                  await offlineStore.deleteConflictsForItems(accountId, [oldItemId])
+                } catch (cleanupError) {
+                  console.warn('Failed to purge business inventory item from offline store after realtime delete', {
+                    accountId,
+                    itemId: oldItemId,
+                    cleanupError
+                  })
+                }
+
+                const queryClient = tryGetQueryClient()
+                if (queryClient) {
+                  removeItemFromCaches(queryClient, accountId, oldItemId)
+                }
+              }
+            }
+
+            if (entry) {
+              entry.data = nextItems
+              const snapshot = [...nextItems]
+              entry.callbacks.forEach(cb => {
+                try {
+                  cb(snapshot)
+                } catch (err) {
+                  console.error('subscribeToBusinessInventoryItems callback failed', err)
+                }
+              })
+            }
+          }
+        )
+        .subscribe((status, err) => {
+          if (status === 'SUBSCRIBED') {
+            console.log('Subscribed to business inventory items channel')
+          }
+          if (err) {
+            console.error('Error subscribing to business inventory items channel:', err)
+          }
+          options?.onStatusChange?.(status, err ?? undefined)
+        })
+
+      entry.channel = channel
+      businessInventoryItemsRealtimeEntries.set(key, entry)
+    } else if (initialItems && initialItems.length && entry.data.length === 0) {
+      entry.data = [...initialItems]
+    }
+
+    const subscriberCallback = (itemsSnapshot: Item[]) => {
+      try {
+        callback(itemsSnapshot)
+      } catch (err) {
+        console.error('subscribeToBusinessInventoryItems callback failed', err)
+      }
+    }
+
+    entry.callbacks.add(subscriberCallback)
+
+    if (entry.data.length > 0) {
+      subscriberCallback([...entry.data])
+    }
+
+    return () => {
+      const existing = businessInventoryItemsRealtimeEntries.get(key)
+      if (!existing) return
+
+      existing.callbacks.delete(subscriberCallback)
+      if (existing.callbacks.size === 0) {
+        try {
+          existing.channel.unsubscribe()
+        } catch (err) {
+          console.warn('Failed to unsubscribe business inventory items channel', err)
+        }
+        businessInventoryItemsRealtimeEntries.delete(key)
+      }
+    }
+  },
+
+  seedBusinessInventoryItemsRealtimeSnapshot(accountId: string, items: Item[]) {
+    const entry = businessInventoryItemsRealtimeEntries.get(accountId)
+    if (!entry) return
+    const sortedItems = sortBusinessInventoryItems([...items])
+    entry.data = sortedItems
+    const snapshot = [...sortedItems]
+    entry.callbacks.forEach(cb => {
+      try {
+        cb(snapshot)
+      } catch (err) {
+        console.error('seedBusinessInventoryItemsRealtimeSnapshot callback failed', err)
+      }
+    })
+  },
+
   subscribeToBusinessInventory(
     accountId: string,
     callback: (items: Item[]) => void,
     _filters: any,
     initialItems?: Item[]
   ) {
-    let items = [...(initialItems || [])]
-
-    const channel = supabase
-      .channel(`business-inventory:${accountId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'items'
-        },
-        (payload) => {
-          const { eventType, new: newRecord, old: oldRecord } = payload
-          const recordAccountId = (eventType === 'DELETE' ? oldRecord?.account_id : newRecord?.account_id) ?? null
-          if (recordAccountId && recordAccountId !== accountId) {
-            return
-          }
-
-          console.log('Business inventory change received!', payload)
-
-          if (eventType === 'INSERT') {
-            if (!newRecord.project_id) {
-              const newItem = this._convertItemFromDb(newRecord)
-              items = [newItem, ...items]
-            }
-          } else if (eventType === 'UPDATE') {
-            const updatedItem = this._convertItemFromDb(newRecord)
-            if (!updatedItem.projectId) {
-              items = items.map(i => i.itemId === updatedItem.itemId ? updatedItem : i)
-            } else {
-              items = items.filter(i => i.itemId !== updatedItem.itemId)
-            }
-          } else if (eventType === 'DELETE') {
-            const oldId = oldRecord.item_id
-            items = items.filter(i => i.itemId !== oldId)
-          }
-          
-          callback([...items])
-        }
-      )
-      .subscribe((status, err) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('Subscribed to business inventory channel')
-        }
-        if (err) {
-          console.error('Error subscribing to business inventory channel:', err)
-        }
-      })
-
-    return () => {
-      channel.unsubscribe()
-    }
+    return this.subscribeToBusinessInventoryItems(accountId, callback, initialItems)
   },
 
   // Create new item (account-scoped) - offline-aware orchestrator

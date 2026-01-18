@@ -7,6 +7,7 @@ interface UseDuplicationOptions<T extends { itemId: string }> {
   projectId?: string | undefined
   accountId?: string | undefined
   duplicationService?: (itemId: string) => Promise<string>
+  onDuplicateComplete?: (newItemIds: string[]) => void | Promise<void>
 }
 
 // Track in-flight duplication operations across all hook instances
@@ -17,7 +18,8 @@ export function useDuplication<T extends { itemId: string }>({
   setItems: _setItems,
   projectId,
   accountId,
-  duplicationService
+  duplicationService,
+  onDuplicateComplete
 }: UseDuplicationOptions<T>) {
   const { showSuccess, showError } = useToast()
 
@@ -38,8 +40,14 @@ export function useDuplication<T extends { itemId: string }>({
         return
       }
 
-      const safeQuantity = Math.max(1, Math.floor(quantity))
+      const totalCount = Math.max(1, Math.floor(quantity))
+      const duplicateCount = Math.max(0, totalCount - 1)
       const newItemIds: string[] = []
+
+      if (duplicateCount === 0) {
+        showSuccess('No duplicates created (quantity includes the original item).')
+        return
+      }
 
       let defaultService: ((accountId: string, projectId: string, itemId: string) => Promise<string>) | null = null
       if (!duplicationService && projectId && accountId) {
@@ -59,7 +67,7 @@ export function useDuplication<T extends { itemId: string }>({
         return
       }
 
-      for (let i = 0; i < safeQuantity; i += 1) {
+      for (let i = 0; i < duplicateCount; i += 1) {
         if (duplicationService) {
           // Use custom duplication service (e.g., for business inventory)
           const newItemId = await duplicationService(itemId)
@@ -72,14 +80,15 @@ export function useDuplication<T extends { itemId: string }>({
       }
 
       // The real-time listener will handle the UI update, but we'll show a success message
-      if (safeQuantity === 1) {
+      if (duplicateCount === 1) {
         showSuccess(`Item duplicated successfully! New item ID: ${newItemIds[0]}`)
       } else {
-        showSuccess(`Duplicated ${safeQuantity} items successfully!`)
+        showSuccess(`Duplicated ${duplicateCount} items successfully!`)
       }
 
-      // Note: We don't need to manually update local state here because
-      // the real-time listener in the parent component will handle it
+      if (onDuplicateComplete) {
+        await onDuplicateComplete(newItemIds)
+      }
     } catch (error) {
       console.error('Failed to duplicate item:', error)
       showError('Failed to duplicate item. Please try again.')
@@ -87,7 +96,7 @@ export function useDuplication<T extends { itemId: string }>({
       // Remove from in-flight set when done (success or error)
       inFlightDuplications.delete(itemId)
     }
-  }, [items, projectId, accountId, duplicationService, showSuccess, showError])
+  }, [items, projectId, accountId, duplicationService, onDuplicateComplete, showSuccess, showError])
 
   return { duplicateItem }
 }
