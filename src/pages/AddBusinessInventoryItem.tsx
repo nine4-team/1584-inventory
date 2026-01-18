@@ -10,6 +10,7 @@ import { TransactionSource } from '@/constants/transactionSources'
 import { Combobox } from '@/components/ui/Combobox'
 import ImagePreview from '@/components/ui/ImagePreview'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
+import QuantityPill from '@/components/ui/QuantityPill'
 import { useSyncError } from '@/hooks/useSyncError'
 import { useAuth } from '../contexts/AuthContext'
 import { useAccount } from '../contexts/AccountContext'
@@ -112,6 +113,7 @@ export default function AddBusinessInventoryItem() {
   const [images, setImages] = useState<ItemImage[]>([])
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<number>(0)
+  const [quantity, setQuantity] = useState(1)
 
   // Track if user has manually edited project_price
   const projectPriceEditedRef = useRef(false)
@@ -227,10 +229,21 @@ export default function AddBusinessInventoryItem() {
         showError('Account ID is required')
         return
       }
-      const createResult = await unifiedItemsService.createItem(currentAccountId, itemData)
+      const totalToCreate = Math.max(1, Math.floor(quantity))
+      const createdItemIds: string[] = []
+      let lastOfflineOperationId: string | undefined
 
-      // Hydrate optimistic item into React Query cache immediately
-      await hydrateOptimisticItem(currentAccountId, createResult.itemId, itemData)
+      for (let index = 0; index < totalToCreate; index += 1) {
+        const createResult = await unifiedItemsService.createItem(currentAccountId, itemData)
+        createdItemIds.push(createResult.itemId)
+
+        // Hydrate optimistic item into React Query cache immediately
+        await hydrateOptimisticItem(currentAccountId, createResult.itemId, itemData)
+
+        if (createResult.mode === 'offline') {
+          lastOfflineOperationId = createResult.operationId
+        }
+      }
 
       try {
         await refreshCollections()
@@ -238,14 +251,15 @@ export default function AddBusinessInventoryItem() {
         console.debug('AddBusinessInventoryItem: realtime refresh failed', error)
       }
 
-      // Show appropriate feedback based on mode
-      if (createResult.mode === 'offline') {
-        showOfflineSaved(createResult.operationId)
-      } else {
+      if (lastOfflineOperationId) {
+        showOfflineSaved(lastOfflineOperationId)
+      } else if (totalToCreate === 1) {
         showSuccess('Item saved successfully')
+      } else {
+        showSuccess(`Created ${totalToCreate} items successfully`)
       }
 
-      navigate(`/business-inventory/${createResult.itemId}`, { replace: true })
+      navigate(`/business-inventory/${createdItemIds[0]}`, { replace: true })
     } catch (error) {
       console.error('Error creating item:', error)
       if (error instanceof OfflineQueueUnavailableError) {
@@ -476,6 +490,23 @@ export default function AddBusinessInventoryItem() {
               className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
                   />
                 </div>
+
+          {/* Quantity */}
+          <div>
+            <label htmlFor="quantity" className="block text-sm font-medium text-gray-700">
+              Quantity
+            </label>
+            <p className="text-xs text-gray-500 mt-1">Number of copies to create</p>
+            <div className="mt-2">
+              <QuantityPill
+                value={quantity}
+                onChange={setQuantity}
+                min={1}
+                className="px-1"
+                inputId="quantity"
+              />
+            </div>
+          </div>
 
           {/* Description */}
           <div>

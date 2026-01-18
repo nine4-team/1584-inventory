@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import QuantityPill from './QuantityPill'
 
 interface DuplicateQuantityMenuProps {
   onDuplicate: (quantity: number) => void | Promise<void>
@@ -8,8 +9,6 @@ interface DuplicateQuantityMenuProps {
   disabled?: boolean
 }
 
-const QUICK_OPTIONS = [1, 2, 3, 4, 5]
-
 export default function DuplicateQuantityMenu({
   onDuplicate,
   buttonClassName,
@@ -18,7 +17,7 @@ export default function DuplicateQuantityMenu({
   disabled = false
 }: DuplicateQuantityMenuProps) {
   const [isOpen, setIsOpen] = useState(false)
-  const [customQty, setCustomQty] = useState('')
+  const [quantity, setQuantity] = useState(1)
   const [error, setError] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
 
@@ -39,7 +38,7 @@ export default function DuplicateQuantityMenu({
     }
   }, [isOpen])
 
-  const handleDuplicate = async (quantity: number) => {
+  const handleDuplicate = async () => {
     if (quantity < 1 || Number.isNaN(quantity)) {
       setError('Enter a quantity greater than 0.')
       return
@@ -47,13 +46,8 @@ export default function DuplicateQuantityMenu({
 
     setError(null)
     setIsOpen(false)
-    setCustomQty('')
+    setQuantity(1)
     await onDuplicate(quantity)
-  }
-
-  const handleCustomDuplicate = () => {
-    const parsed = Number.parseInt(customQty, 10)
-    void handleDuplicate(Number.isFinite(parsed) ? parsed : 0)
   }
 
   return (
@@ -74,61 +68,29 @@ export default function DuplicateQuantityMenu({
       </button>
 
       {isOpen && (
-        <div className="absolute top-full right-0 mt-2 w-60 rounded-lg border border-gray-200 bg-white p-3 shadow-lg z-50">
+        <div className="absolute top-full right-0 mt-2 w-auto rounded-lg border border-gray-200 bg-white p-3 shadow-lg z-50">
           <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-            How many do you have?
-          </div>
-          <div className="mt-2 grid grid-cols-5 gap-2">
-            {QUICK_OPTIONS.map(value => (
-              <button
-                key={value}
-                type="button"
-                onClick={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  void handleDuplicate(value)
-                }}
-                className="rounded-md border border-gray-200 px-2 py-1 text-sm font-medium text-gray-700 hover:border-primary-300 hover:text-primary-700"
-              >
-                {value}
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-3 text-xs font-medium text-gray-500 uppercase tracking-wide">
-            Custom QTY
+            Number of copies
           </div>
           <div className="mt-2 flex items-center gap-2">
-            <input
-              type="number"
-              min={1}
-              inputMode="numeric"
-              value={customQty}
-              onClick={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-              }}
-              onChange={(event) => {
-                setCustomQty(event.target.value)
+            <QuantityPill
+              value={quantity}
+              onChange={(next) => {
+                setQuantity(next)
                 setError(null)
               }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault()
-                  void handleCustomDuplicate()
-                }
-              }}
-              className="w-full rounded-md border border-gray-200 px-2 py-1 text-sm text-gray-700 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
-              placeholder="Enter quantity"
+              min={1}
+              onSubmit={() => void handleDuplicate()}
+              className="shrink-0"
             />
             <button
               type="button"
               onClick={(event) => {
                 event.preventDefault()
                 event.stopPropagation()
-                void handleCustomDuplicate()
+                void handleDuplicate()
               }}
-              className="rounded-md border border-primary-500 px-3 py-1 text-sm font-medium text-primary-600 hover:bg-primary-50"
+              className="rounded-md border border-primary-500 px-3 py-2 text-sm font-medium text-primary-600 hover:bg-primary-50"
             >
               Create
             </button>

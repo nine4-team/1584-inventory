@@ -12,6 +12,7 @@ import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import { Transaction, ItemImage, ItemDisposition } from '@/types'
 import { Combobox } from '@/components/ui/Combobox'
 import ImagePreview from '@/components/ui/ImagePreview'
+import QuantityPill from '@/components/ui/QuantityPill'
 import { useAuth } from '../contexts/AuthContext'
 import { useAccount } from '../contexts/AccountContext'
 import { UserRole } from '../types'
@@ -125,6 +126,7 @@ export default function AddItem() {
   const [images, setImages] = useState<ItemImage[]>([])
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<number>(0)
+  const [quantity, setQuantity] = useState(1)
 
   // Track if user has manually edited project_price
   const projectPriceEditedRef = useRef(false)
@@ -248,22 +250,35 @@ export default function AddItem() {
         return
       }
 
-      const createResult = await unifiedItemsService.createItem(currentAccountId, itemData, {
-        clientItemId: clientGeneratedItemId
-      })
+      const totalToCreate = Math.max(1, Math.floor(quantity))
+      const createdItemIds: string[] = []
+      let lastOfflineOperationId: string | undefined
+
+      for (let index = 0; index < totalToCreate; index += 1) {
+        const createResult = await unifiedItemsService.createItem(
+          currentAccountId,
+          itemData,
+          index === 0 ? { clientItemId: clientGeneratedItemId } : undefined
+        )
+        createdItemIds.push(createResult.itemId)
+
+        // Hydrate optimistic item into React Query cache immediately
+        // This makes the item appear in lists before sync completes
+        await hydrateOptimisticItem(currentAccountId, createResult.itemId, itemData)
+
+        if (createResult.mode === 'offline') {
+          lastOfflineOperationId = createResult.operationId
+        }
+      }
+
       itemSavedRef.current = true
 
-      // Hydrate optimistic item into React Query cache immediately
-      // This makes the item appear in lists before sync completes
-      await hydrateOptimisticItem(currentAccountId, createResult.itemId, itemData)
-
-      // Show appropriate feedback based on mode
-      if (createResult.mode === 'offline') {
-        // Offline: item is queued, not fully saved
-        showOfflineSaved(createResult.operationId)
-      } else {
-        // Online: item is fully saved
+      if (lastOfflineOperationId) {
+        showOfflineSaved(lastOfflineOperationId)
+      } else if (totalToCreate === 1) {
         showSuccess('Item saved successfully')
+      } else {
+        showSuccess(`Created ${totalToCreate} items successfully`)
       }
 
       navigateToReturnToOrFallback(navigate, location, fallbackPath)
@@ -536,6 +551,23 @@ export default function AddItem() {
               placeholder="Product SKU or model number"
               className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
             />
+          </div>
+
+          {/* Quantity */}
+          <div>
+            <label htmlFor="quantity" className="block text-sm font-medium text-gray-700">
+              Quantity
+            </label>
+            <p className="text-xs text-gray-500 mt-1">Number of copies to create</p>
+            <div className="mt-2">
+              <QuantityPill
+                value={quantity}
+                onChange={setQuantity}
+                min={1}
+                className="px-1"
+                inputId="quantity"
+              />
+            </div>
           </div>
 
           {/* Description */}

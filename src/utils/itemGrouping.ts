@@ -33,16 +33,24 @@ function getEffectivePrice(item: Item): string {
   return item.projectPrice || item.purchasePrice || ''
 }
 
+function getPrimaryImageName(images?: { fileName?: string }[]): string {
+  if (!images || images.length === 0) return ''
+  return normalizeString(images[0]?.fileName || '')
+}
+
 /**
  * Generates a grouping key for inventory list items (project or business inventory)
  * Groups items by SKU (excluding null SKU), plus other visual fields for identical appearance
  */
 export function getInventoryListGroupKey(item: Item, context: 'project' | 'businessInventory'): string {
   const normalizedSku = normalizeString(item.sku)
+  const normalizedDescription = normalizeString(item.description)
+  const normalizedImageName = getPrimaryImageName(item.images)
 
-  // Don't group items with null/empty SKU
-  if (!normalizedSku) {
-    // Return unique key to prevent grouping
+  const groupingSeed = normalizedSku || normalizedDescription || normalizedImageName
+
+  // Don't group items without SKU, description, or image name
+  if (!groupingSeed) {
     return `unique-${item.itemId}`
   }
 
@@ -52,7 +60,7 @@ export function getInventoryListGroupKey(item: Item, context: 'project' | 'busin
 
   // Create a stable grouping key: SKU first, then other visual fields (excluding location)
   return [
-    normalizedSku, // Primary grouping key
+    groupingSeed, // Primary grouping key (SKU -> description -> image name)
     normalizedSource,
     normalizedPrice,
     normalizedDisposition,
@@ -70,10 +78,12 @@ export function getTransactionFormGroupKey(item: TransactionItemFormData): strin
   }
 
   const normalizedSku = normalizeString(item.sku)
+  const normalizedDescription = normalizeString(item.description)
+  const normalizedImageName = getPrimaryImageName(item.images)
 
-  // Don't group items with null/empty SKU
-  if (!normalizedSku) {
-    // Return unique key to prevent grouping
+  const groupingSeed = normalizedSku || normalizedDescription || normalizedImageName
+
+  if (!groupingSeed) {
     return `unique-${item.id || Math.random()}`
   }
 
@@ -81,7 +91,7 @@ export function getTransactionFormGroupKey(item: TransactionItemFormData): strin
 
   // Create a stable grouping key: SKU first, then other visual fields
   return [
-    normalizedSku, // Primary grouping key
+    groupingSeed, // Primary grouping key (SKU -> description -> image name)
     normalizedPrice
   ].join('|')
 }

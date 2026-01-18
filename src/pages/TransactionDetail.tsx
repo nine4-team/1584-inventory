@@ -1162,12 +1162,11 @@ export default function TransactionDetail() {
     if (!projectId || !transactionId || !transaction || !currentAccountId) return
 
     try {
-      const totalCount = Math.max(1, Math.floor(quantity))
-      const duplicateCount = Math.max(0, totalCount - 1)
+      const duplicateCount = Math.max(0, Math.floor(quantity))
       let lastResult: { mode: string; operationId: string | null } | null = null
 
       if (duplicateCount === 0) {
-        showSuccess('No duplicates created (quantity includes the original item).')
+        showError('Enter a quantity greater than 0.')
         return
       }
 
