@@ -378,7 +378,6 @@ export default function ProjectForm({ onSubmit, onCancel, isLoading = false, ini
                     type="button"
                     onClick={handleRemoveImage}
                     className="absolute top-3 right-3 p-2 bg-red-600 text-white rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 shadow-lg transition-all opacity-0 group-hover:opacity-100"
-                    disabled={isUploadingImage}
                   >
                     <Trash2 className="h-5 w-5" />
                   </button>
@@ -388,7 +387,6 @@ export default function ProjectForm({ onSubmit, onCancel, isLoading = false, ini
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={isUploadingImage}
                     className="w-full flex flex-col items-center justify-center py-6 text-gray-600 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 rounded-lg disabled:opacity-50 transition-all"
                   >
                     <Upload className="h-10 w-10 mb-3 text-primary-600" />

@@ -18,6 +18,7 @@ import { offlineTransactionService } from '@/services/offlineTransactionService'
 import { useOfflineMediaTracker } from '@/hooks/useOfflineMediaTracker'
 import { formatDate, formatCurrency } from '@/utils/dateUtils'
 import { useToast } from '@/components/ui/ToastContext'
+import UploadActivityIndicator from '@/components/ui/UploadActivityIndicator'
 import TransactionItemForm from '@/components/TransactionItemForm'
 import TransactionItemsList from '@/components/TransactionItemsList'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
@@ -165,8 +166,10 @@ export default function TransactionDetail() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [showGallery, setShowGallery] = useState(false)
   const [galleryInitialIndex, setGalleryInitialIndex] = useState(0)
-  const [isUploadingReceiptImages, setIsUploadingReceiptImages] = useState(false)
-  const [isUploadingOtherImages, setIsUploadingOtherImages] = useState(false)
+  const [receiptUploadsInFlight, setReceiptUploadsInFlight] = useState(0)
+  const [otherUploadsInFlight, setOtherUploadsInFlight] = useState(0)
+  const isUploadingReceiptImages = receiptUploadsInFlight > 0
+  const isUploadingOtherImages = otherUploadsInFlight > 0
   const [imageFilesMap, setImageFilesMap] = useState<Map<string, File[]>>(new Map())
   const [itemRecords, setItemRecords] = useState<Item[]>([])
 
@@ -707,7 +710,7 @@ export default function TransactionDetail() {
   const handleReceiptsUpload = async (files: File[]) => {
     if (!projectId || !transactionId || !project || files.length === 0 || !currentAccountId) return
 
-    setIsUploadingReceiptImages(true)
+    setReceiptUploadsInFlight(count => count + 1)
 
     try {
       const newReceiptImages: TransactionImage[] = []
@@ -818,14 +821,14 @@ export default function TransactionDetail() {
       console.error('Error uploading receipts:', error)
       showError('Failed to upload receipts. Please try again.')
     } finally {
-      setIsUploadingReceiptImages(false)
+      setReceiptUploadsInFlight(count => Math.max(0, count - 1))
     }
   }
 
   const handleOtherImagesUpload = async (files: File[]) => {
     if (!projectId || !transactionId || !project || files.length === 0 || !currentAccountId) return
 
-    setIsUploadingOtherImages(true)
+    setOtherUploadsInFlight(count => count + 1)
 
     try {
       const newOtherImages: TransactionImage[] = []
@@ -932,7 +935,7 @@ export default function TransactionDetail() {
       console.error('Error uploading other images:', error)
       showError('Failed to upload other images. Please try again.')
     } finally {
-      setIsUploadingOtherImages(false)
+      setOtherUploadsInFlight(count => Math.max(0, count - 1))
     }
   }
 
@@ -1484,27 +1487,29 @@ export default function TransactionDetail() {
               Receipts
             </h3>
                 {transaction.receiptImages && transaction.receiptImages.length > 0 && (
-              <button
-                onClick={() => {
-                  // Trigger file input click programmatically
-                  const input = document.createElement('input')
-                  input.type = 'file'
-                  input.multiple = true
-                  input.accept = 'image/*,application/pdf'
-                  input.onchange = (e) => {
-                    const files = (e.target as HTMLInputElement).files
-                    if (files) {
-                      handleReceiptsUpload(Array.from(files))
+              <div className="flex flex-col items-end gap-1">
+                <button
+                  onClick={() => {
+                    // Trigger file input click programmatically
+                    const input = document.createElement('input')
+                    input.type = 'file'
+                    input.multiple = true
+                    input.accept = 'image/*,application/pdf'
+                    input.onchange = (e) => {
+                      const files = (e.target as HTMLInputElement).files
+                      if (files) {
+                        handleReceiptsUpload(Array.from(files))
+                      }
                     }
-                  }
-                  input.click()
-                }}
-                disabled={isUploadingReceiptImages}
-                className="inline-flex items-center px-2 py-1 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
-              >
-                <ImageIcon className="h-3 w-3 mr-1" />
-                {isUploadingReceiptImages ? 'Uploading...' : 'Add Receipts'}
-              </button>
+                    input.click()
+                  }}
+                  className="inline-flex items-center px-2 py-1 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+                >
+                  <ImageIcon className="h-3 w-3 mr-1" />
+                  Add Receipts
+                </button>
+                <UploadActivityIndicator isUploading={isUploadingReceiptImages} label="Uploading receipts" className="mt-1" />
+              </div>
             )}
           </div>
           {transaction.receiptImages && transaction.receiptImages.length > 0 ? (
@@ -1524,27 +1529,29 @@ export default function TransactionDetail() {
             <div className="text-center py-8">
               <ImageIcon className="mx-auto h-8 w-8 text-gray-400" />
               <h3 className="mt-2 text-sm font-medium text-gray-900">No receipts uploaded</h3>
-              <button
-                onClick={() => {
-                  // Trigger file input click programmatically
-                  const input = document.createElement('input')
-                  input.type = 'file'
-                  input.multiple = true
-                  input.accept = 'image/*,application/pdf'
-                  input.onchange = (e) => {
-                    const files = (e.target as HTMLInputElement).files
-                    if (files) {
-                      handleReceiptsUpload(Array.from(files))
+              <div className="mt-3 flex flex-col items-center gap-1">
+                <button
+                  onClick={() => {
+                    // Trigger file input click programmatically
+                    const input = document.createElement('input')
+                    input.type = 'file'
+                    input.multiple = true
+                    input.accept = 'image/*,application/pdf'
+                    input.onchange = (e) => {
+                      const files = (e.target as HTMLInputElement).files
+                      if (files) {
+                        handleReceiptsUpload(Array.from(files))
+                      }
                     }
-                  }
-                  input.click()
-                }}
-                disabled={isUploadingReceiptImages}
-                className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 mt-3 disabled:opacity-50"
-              >
-                <ImageIcon className="h-3 w-3 mr-1" />
-                {isUploadingReceiptImages ? 'Uploading...' : 'Add Receipts'}
-              </button>
+                    input.click()
+                  }}
+                  className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+                >
+                  <ImageIcon className="h-3 w-3 mr-1" />
+                  Add Receipts
+                </button>
+                <UploadActivityIndicator isUploading={isUploadingReceiptImages} label="Uploading receipts" className="mt-1" />
+              </div>
             </div>
           )}
         </div>
@@ -1557,27 +1564,29 @@ export default function TransactionDetail() {
                 <ImageIcon className="h-5 w-5 mr-2" />
                 Other Images
               </h3>
-              <button
-                onClick={() => {
-                  // Trigger file input click programmatically
-                  const input = document.createElement('input')
-                  input.type = 'file'
-                  input.multiple = true
-                  input.accept = 'image/*'
-                  input.onchange = (e) => {
-                    const files = (e.target as HTMLInputElement).files
-                    if (files) {
-                      handleOtherImagesUpload(Array.from(files))
+              <div className="flex flex-col items-end gap-1">
+                <button
+                  onClick={() => {
+                    // Trigger file input click programmatically
+                    const input = document.createElement('input')
+                    input.type = 'file'
+                    input.multiple = true
+                    input.accept = 'image/*'
+                    input.onchange = (e) => {
+                      const files = (e.target as HTMLInputElement).files
+                      if (files) {
+                        handleOtherImagesUpload(Array.from(files))
+                      }
                     }
-                  }
-                  input.click()
-                }}
-                disabled={isUploadingOtherImages}
-                className="inline-flex items-center px-2 py-1 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
-              >
-                <ImageIcon className="h-3 w-3 mr-1" />
-                {isUploadingOtherImages ? 'Uploading...' : 'Add Images'}
-              </button>
+                    input.click()
+                  }}
+                  className="inline-flex items-center px-2 py-1 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+                >
+                  <ImageIcon className="h-3 w-3 mr-1" />
+                  Add Images
+                </button>
+                <UploadActivityIndicator isUploading={isUploadingOtherImages} label="Uploading images" className="mt-1" />
+              </div>
             </div>
             <TransactionImagePreview
               images={transaction.otherImages}

@@ -12,6 +12,7 @@ import { useOfflineMediaTracker } from '@/hooks/useOfflineMediaTracker'
 import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
 import { offlineStore } from '@/services/offlineStore'
 import ImageUpload from '@/components/ui/ImageUpload'
+import UploadActivityIndicator from '@/components/ui/UploadActivityIndicator'
 import TransactionItemsList from '@/components/TransactionItemsList'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { useSyncError } from '@/hooks/useSyncError'
@@ -1025,7 +1026,7 @@ export default function AddTransaction() {
               maxImages={5}
               maxFileSize={10}
               acceptedTypes={['image/jpeg','image/jpg','image/png','image/gif','image/webp','image/heic','image/heif','application/pdf']}
-              disabled={isSubmitting || isUploadingImages}
+              disabled={isSubmitting}
               className="mb-2"
             />
             {errors.receiptImages && (
@@ -1077,7 +1078,7 @@ export default function AddTransaction() {
               onImagesChange={handleOtherImagesChange}
               maxImages={5}
               maxFileSize={10}
-              disabled={isSubmitting || isUploadingImages}
+              disabled={isSubmitting}
               className="mb-2"
             />
             {errors.otherImages && (
@@ -1094,14 +1095,17 @@ export default function AddTransaction() {
             <X className="h-4 w-4 mr-2" />
             Cancel
           </ContextBackLink>
-            <button
-              type="submit"
-              disabled={submitDisabled}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Save className="h-4 w-4 mr-2" />
-              {isSubmitting ? 'Creating...' : isUploadingImages ? 'Uploading Images...' : 'Create Transaction'}
-            </button>
+            <div className="flex flex-col items-end gap-1">
+              <button
+                type="submit"
+                disabled={submitDisabled}
+                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Save className="h-4 w-4 mr-2" />
+                {isSubmitting ? 'Creating...' : 'Create Transaction'}
+              </button>
+              <UploadActivityIndicator isUploading={isUploadingImages} label="Uploading images" />
+            </div>
           </div>
         </form>
       </div>

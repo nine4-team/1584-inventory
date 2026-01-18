@@ -699,10 +699,11 @@ export default function EditBusinessInventoryTransaction() {
 
           {/* Form Actions - Normal on desktop, hidden on mobile (replaced by sticky bar) */}
           <div className="hidden sm:flex justify-end sm:space-x-3 pt-4">
-            <button
-              onClick={handleCancel}
-              className="inline-flex justify-center items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-            >
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="inline-flex justify-center items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+          >
               <X className="h-4 w-4 mr-2" />
               Cancel
             </button>
@@ -722,6 +723,7 @@ export default function EditBusinessInventoryTransaction() {
       <div className="sm:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 z-50">
         <div className="flex space-x-3">
           <button
+            type="button"
             onClick={handleCancel}
             className="flex-1 inline-flex justify-center items-center px-4 py-3 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
           >
