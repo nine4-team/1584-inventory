@@ -1147,10 +1147,16 @@ export default function TransactionDetail() {
     if (!projectId || !transactionId || !transaction || !currentAccountId) return
 
     try {
-      const safeQuantity = Math.max(1, Math.floor(quantity))
+      const totalCount = Math.max(1, Math.floor(quantity))
+      const duplicateCount = Math.max(0, totalCount - 1)
       let lastResult: { mode: string; operationId: string | null } | null = null
 
-      for (let i = 0; i < safeQuantity; i += 1) {
+      if (duplicateCount === 0) {
+        showSuccess('No duplicates created (quantity includes the original item).')
+        return
+      }
+
+      for (let i = 0; i < duplicateCount; i += 1) {
         const duplicatePayload = buildCreateItemPayload(item)
         const createResult = await unifiedItemsService.createItem(currentAccountId, duplicatePayload)
         await hydrateOptimisticItem(currentAccountId, createResult.itemId, duplicatePayload)
@@ -1162,10 +1168,10 @@ export default function TransactionDetail() {
 
       if (lastResult?.mode === 'offline') {
         showOfflineSaved(lastResult.operationId)
-      } else if (safeQuantity === 1) {
+      } else if (duplicateCount === 1) {
         showSuccess('Item duplicated successfully')
       } else {
-        showSuccess(`Duplicated ${safeQuantity} items successfully`)
+        showSuccess(`Duplicated ${duplicateCount} items successfully`)
       }
     } catch (error) {
       console.error('Error duplicating item:', error)

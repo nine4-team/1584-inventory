@@ -38,8 +38,14 @@ export function useDuplication<T extends { itemId: string }>({
         return
       }
 
-      const safeQuantity = Math.max(1, Math.floor(quantity))
+      const totalCount = Math.max(1, Math.floor(quantity))
+      const duplicateCount = Math.max(0, totalCount - 1)
       const newItemIds: string[] = []
+
+      if (duplicateCount === 0) {
+        showSuccess('No duplicates created (quantity includes the original item).')
+        return
+      }
 
       let defaultService: ((accountId: string, projectId: string, itemId: string) => Promise<string>) | null = null
       if (!duplicationService && projectId && accountId) {
@@ -59,7 +65,7 @@ export function useDuplication<T extends { itemId: string }>({
         return
       }
 
-      for (let i = 0; i < safeQuantity; i += 1) {
+      for (let i = 0; i < duplicateCount; i += 1) {
         if (duplicationService) {
           // Use custom duplication service (e.g., for business inventory)
           const newItemId = await duplicationService(itemId)
@@ -72,10 +78,10 @@ export function useDuplication<T extends { itemId: string }>({
       }
 
       // The real-time listener will handle the UI update, but we'll show a success message
-      if (safeQuantity === 1) {
+      if (duplicateCount === 1) {
         showSuccess(`Item duplicated successfully! New item ID: ${newItemIds[0]}`)
       } else {
-        showSuccess(`Duplicated ${safeQuantity} items successfully!`)
+        showSuccess(`Duplicated ${duplicateCount} items successfully!`)
       }
 
       // Note: We don't need to manually update local state here because
