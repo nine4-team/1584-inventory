@@ -86,10 +86,16 @@ Ensure business inventory UI updates in real time with the same reliability and 
    - Call it from offline item/transaction services after IndexedDB writes complete.
    - The callback should trigger `refreshBusinessInventoryCollections`.
 
-### Phase 4: Add Post-Write Safety Refresh
-1. For write flows in `BusinessInventory` and `BusinessInventoryItemDetail`, add a lightweight refresh fallback.
+### Phase 4: Add Post-Write Safety Refresh (Business Inventory)
+1. For business inventory write flows in `BusinessInventory` and `BusinessInventoryItemDetail`, add a lightweight refresh fallback.
    - After delete/batch allocation/disposition changes, call `refreshBusinessInventoryCollections`.
    - This should be debounced or guarded so it does not run excessively while realtime is healthy.
+   - Status: complete.
+
+## Remediation Note (Overlooked Gap)
+- Business inventory subscribes to realtime but does not force a refresh after writes.
+- Project inventory already uses `refreshRealtimeAfterWrite` in `InventoryList` and `ItemDetail`.
+- Without the regresh, quick writes, channel reconnects, or offline queue flushes can leave business inventory stale.
 
 ## Acceptance Criteria (Must Pass)
 - Creating, updating, deleting a business inventory item updates the list and detail view immediately.
