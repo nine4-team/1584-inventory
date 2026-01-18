@@ -23,7 +23,7 @@ interface TransactionItemsListProps {
   onItemsChange: (items: TransactionItemFormData[]) => void
   onAddItem?: (item: TransactionItemFormData) => Promise<void> | void
   onUpdateItem?: (item: TransactionItemFormData) => Promise<void> | void
-  onDuplicateItem?: (item: TransactionItemFormData) => Promise<void> | void
+  onDuplicateItem?: (item: TransactionItemFormData, quantity?: number) => Promise<void> | void
   projectId?: string
   projectName?: string
   onImageFilesChange?: (itemId: string, imageFiles: File[]) => void
@@ -485,28 +485,28 @@ export default function TransactionItemsList({
     })
   }
 
-  const handleDuplicateItem = (itemId: string) => {
+  const handleDuplicateItem = (itemId: string, quantity = 1) => {
     const itemToDuplicate = items.find(item => item.id === itemId)
     if (!itemToDuplicate) return
 
     const isDraftItem = itemToDuplicate.id?.toString().startsWith('item-')
 
     if (!isDraftItem && onDuplicateItem) {
-      return onDuplicateItem(itemToDuplicate)
+      return onDuplicateItem(itemToDuplicate, quantity)
     }
 
-    // Create a duplicate with a new ID
-    const duplicatedItem: TransactionItemFormData = {
+    const safeQuantity = Math.max(1, Math.floor(quantity))
+    const duplicates: TransactionItemFormData[] = Array.from({ length: safeQuantity }, () => ({
       ...itemToDuplicate,
       id: generateTempItemId(),
       // Clear any transaction-specific fields that shouldn't be duplicated
-      transactionId: itemToDuplicate.transactionId, // Keep the same transaction ID
-    }
+      transactionId: itemToDuplicate.transactionId // Keep the same transaction ID
+    }))
 
-    // Find the index of the original item and insert the duplicate right after it
+    // Find the index of the original item and insert the duplicates right after it
     const originalIndex = items.findIndex(item => item.id === itemId)
     const newItems = [...items]
-    newItems.splice(originalIndex + 1, 0, duplicatedItem)
+    newItems.splice(originalIndex + 1, 0, ...duplicates)
     onItemsChange(newItems)
     if (projectId) {
       refreshProjectCollections().catch(err =>
