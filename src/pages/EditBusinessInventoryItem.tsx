@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useLocation, useNavigate } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
-import { ArrowLeft, Save, X } from 'lucide-react'
+import { ArrowLeft, ImagePlus, Save, X } from 'lucide-react'
 import { Item } from '@/types'
 import { unifiedItemsService } from '@/services/inventoryService'
 import { useAccount } from '@/contexts/AccountContext'
@@ -9,6 +9,8 @@ import { Combobox } from '@/components/ui/Combobox'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { useSyncError } from '@/hooks/useSyncError'
 import { useBusinessInventoryRealtime } from '@/contexts/BusinessInventoryRealtimeContext'
+import ImagePreview from '@/components/ui/ImagePreview'
+import { ImageUploadService } from '@/services/imageService'
 
 export default function EditBusinessInventoryItem() {
   const { id } = useParams<{ id: string }>()
@@ -20,6 +22,8 @@ export default function EditBusinessInventoryItem() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [item, setItem] = useState<Item | null>(null)
+  const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState<number>(0)
 
   // Track if user has manually edited project_price
   const projectPriceEditedRef = useRef(false)
@@ -122,6 +126,100 @@ export default function EditBusinessInventoryItem() {
 
     setFormErrors(errors)
     return Object.keys(errors).length === 0
+  }
+
+  useEffect(() => {
+    if (!formErrors.description) return
+    if (formData.description.trim() || (item?.images && item.images.length > 0)) {
+      setFormErrors(prev => ({ ...prev, description: '' }))
+    }
+  }, [formErrors.description, formData.description, item?.images])
+
+  const handleSelectFromGallery = async () => {
+    if (!item || !item.itemId) return
+
+    try {
+      setIsUploadingImage(true)
+      setUploadProgress(0)
+
+      const files = await ImageUploadService.selectFromGallery()
+
+      if (files && files.length > 0) {
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i]
+          await processImageUpload(file)
+        }
+      }
+    } catch (error: any) {
+      console.error('Error selecting from gallery:', error)
+
+      if (error.message?.includes('timeout') || error.message?.includes('canceled')) {
+        return
+      }
+
+      alert('Failed to add images. Please try again.')
+    } finally {
+      setIsUploadingImage(false)
+      setUploadProgress(0)
+    }
+  }
+
+  const processImageUpload = async (file: File) => {
+    if (!item?.itemId || !currentAccountId) return
+
+    const uploadResult = await ImageUploadService.uploadItemImage(
+      file,
+      'Business Inventory',
+      item.itemId
+    )
+
+    const newImage = {
+      url: uploadResult.url,
+      alt: file.name,
+      isPrimary: item.images?.length === 0,
+      uploadedAt: new Date(),
+      fileName: file.name,
+      size: file.size,
+      mimeType: file.type
+    }
+
+    const currentImages = item.images || []
+    const updatedImages = [...currentImages, newImage]
+
+    await unifiedItemsService.updateItem(currentAccountId, item.itemId, { images: updatedImages })
+    setItem({ ...item, images: updatedImages })
+    await refreshCollections()
+  }
+
+  const handleRemoveImage = async (imageUrl: string) => {
+    if (!item?.itemId || !currentAccountId) return
+
+    try {
+      const updatedImages = item.images?.filter(img => img.url !== imageUrl) || []
+      await unifiedItemsService.updateItem(currentAccountId, item.itemId, { images: updatedImages })
+      setItem({ ...item, images: updatedImages })
+      await refreshCollections()
+    } catch (error) {
+      console.error('Error removing image:', error)
+      alert('Error removing image. Please try again.')
+    }
+  }
+
+  const handleSetPrimaryImage = async (imageUrl: string) => {
+    if (!item?.itemId || !currentAccountId) return
+
+    try {
+      const updatedImages = item.images?.map(img => ({
+        ...img,
+        isPrimary: img.url === imageUrl
+      })) || []
+      await unifiedItemsService.updateItem(currentAccountId, item.itemId, { images: updatedImages })
+      setItem({ ...item, images: updatedImages })
+      await refreshCollections()
+    } catch (error) {
+      console.error('Error setting primary image:', error)
+      alert('Error setting primary image. Please try again.')
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -240,6 +338,47 @@ export default function EditBusinessInventoryItem() {
               />
               {formErrors.description && (
                 <p className="mt-1 text-sm text-red-600">{formErrors.description}</p>
+              )}
+            </div>
+
+            {/* Item Images */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-lg font-medium text-gray-900 flex items-center">
+                  <ImagePlus className="h-5 w-5 mr-2" />
+                  Item Images
+                </h3>
+                <button
+                  type="button"
+                  onClick={handleSelectFromGallery}
+                  disabled={isUploadingImage}
+                  className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+                  title="Add images from gallery or camera"
+                >
+                  <ImagePlus className="h-3 w-3 mr-1" />
+                  {isUploadingImage
+                    ? uploadProgress > 0 && uploadProgress < 100
+                      ? `Uploading... ${Math.round(uploadProgress)}%`
+                      : 'Uploading...'
+                    : 'Add Images'
+                  }
+                </button>
+              </div>
+
+              {item?.images && item.images.length > 0 ? (
+                <ImagePreview
+                  images={item.images}
+                  onRemoveImage={handleRemoveImage}
+                  onSetPrimary={handleSetPrimaryImage}
+                  maxImages={5}
+                  size="md"
+                  showControls={true}
+                />
+              ) : (
+                <div className="text-center py-8">
+                  <ImagePlus className="mx-auto h-8 w-8 text-gray-400" />
+                  <h3 className="mt-2 text-sm font-medium text-gray-900">No images uploaded</h3>
+                </div>
               )}
             </div>
 
