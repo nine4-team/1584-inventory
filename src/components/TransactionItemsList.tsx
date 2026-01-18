@@ -495,8 +495,12 @@ export default function TransactionItemsList({
       return onDuplicateItem(itemToDuplicate, quantity)
     }
 
-    const safeQuantity = Math.max(1, Math.floor(quantity))
-    const duplicates: TransactionItemFormData[] = Array.from({ length: safeQuantity }, () => ({
+    const totalCount = Math.max(1, Math.floor(quantity))
+    const duplicateCount = Math.max(0, totalCount - 1)
+
+    if (duplicateCount === 0) return
+
+    const duplicates: TransactionItemFormData[] = Array.from({ length: duplicateCount }, () => ({
       ...itemToDuplicate,
       id: generateTempItemId(),
       // Clear any transaction-specific fields that shouldn't be duplicated
