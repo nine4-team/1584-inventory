@@ -1109,9 +1109,11 @@ export default function BusinessInventory() {
                             {/* Right column: Text content */}
                             <div className="flex-1 min-w-0">
                               <div>
-                                <h4 className="text-sm font-medium text-gray-900 mb-1">
-                                  {firstItem.description || 'No description'}
-                                </h4>
+                                {firstItem.description && (
+                                  <h4 className="text-sm font-medium text-gray-900 mb-1">
+                                    {firstItem.description}
+                                  </h4>
+                                )}
 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
                                   {/* SKU and conditional transaction/source display */}
