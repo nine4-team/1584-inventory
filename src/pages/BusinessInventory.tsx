@@ -63,7 +63,15 @@ export default function BusinessInventory() {
   const [uploadingImages, setUploadingImages] = useState<Set<string>>(new Set())
 
   // Filter and selection state for inventory items (matching InventoryList.tsx)
-  const [filterMode, setFilterMode] = useState<'all' | 'bookmarked'>('all')
+  const [filterMode, setFilterMode] = useState<
+    'all'
+    | 'bookmarked'
+    | 'no-sku'
+    | 'no-description'
+    | 'no-project-price'
+    | 'no-image'
+    | 'no-transaction'
+  >('all')
   const [showFilterMenu, setShowFilterMenu] = useState(false)
   const [sortMode, setSortMode] = useState<'alphabetical' | 'creationDate'>('creationDate')
   const [showSortMenu, setShowSortMenu] = useState(false)
@@ -162,6 +170,13 @@ export default function BusinessInventory() {
     }
   }
 
+  const hasNonEmptyMoneyString = (value?: string | number | null) => {
+    if (value === undefined || value === null) return false
+    if (typeof value === 'number') return Number.isFinite(value)
+    if (typeof value !== 'string') return false
+    return value.trim().length > 0 && Number.isFinite(Number.parseFloat(value))
+  }
+
   // Compute filtered items (matching InventoryList.tsx)
   const filteredItems = useMemo(() => {
     let filtered = items.filter(item => {
@@ -174,8 +189,33 @@ export default function BusinessInventory() {
       // Apply status filter
       const matchesStatus = !filters.status || item.inventoryStatus === filters.status
 
-      // Apply bookmark filter
-      const matchesFilter = filterMode === 'all' || (filterMode === 'bookmarked' && item.bookmark)
+      // Apply filter based on filterMode
+      let matchesFilter = false
+      switch (filterMode) {
+        case 'all':
+          matchesFilter = true
+          break
+        case 'bookmarked':
+          matchesFilter = !!item.bookmark
+          break
+        case 'no-sku':
+          matchesFilter = !item.sku?.trim()
+          break
+        case 'no-description':
+          matchesFilter = !item.description?.trim()
+          break
+        case 'no-project-price':
+          matchesFilter = !hasNonEmptyMoneyString(item.projectPrice)
+          break
+        case 'no-image':
+          matchesFilter = !item.images || item.images.length === 0
+          break
+        case 'no-transaction':
+          matchesFilter = !item.transactionId
+          break
+        default:
+          matchesFilter = true
+      }
 
       return matchesSearch && matchesStatus && matchesFilter
     })
@@ -856,7 +896,7 @@ export default function BusinessInventory() {
 
                   {/* Filter Dropdown Menu */}
                   {showFilterMenu && (
-                    <div className="filter-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                    <div className="filter-menu absolute top-full right-0 mt-1 w-56 bg-white border border-gray-200 rounded-md shadow-lg z-10">
                       <div className="py-1">
                         <button
                           onClick={() => {
@@ -879,6 +919,61 @@ export default function BusinessInventory() {
                           }`}
                         >
                           Bookmarked Only
+                        </button>
+                        <button
+                          onClick={() => {
+                            setFilterMode('no-sku')
+                            setShowFilterMenu(false)
+                          }}
+                          className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                            filterMode === 'no-sku' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                          }`}
+                        >
+                          No SKU
+                        </button>
+                        <button
+                          onClick={() => {
+                            setFilterMode('no-description')
+                            setShowFilterMenu(false)
+                          }}
+                          className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                            filterMode === 'no-description' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                          }`}
+                        >
+                          No Description
+                        </button>
+                        <button
+                          onClick={() => {
+                            setFilterMode('no-project-price')
+                            setShowFilterMenu(false)
+                          }}
+                          className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                            filterMode === 'no-project-price' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                          }`}
+                        >
+                          No Project Price
+                        </button>
+                        <button
+                          onClick={() => {
+                            setFilterMode('no-image')
+                            setShowFilterMenu(false)
+                          }}
+                          className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                            filterMode === 'no-image' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                          }`}
+                        >
+                          No Image
+                        </button>
+                        <button
+                          onClick={() => {
+                            setFilterMode('no-transaction')
+                            setShowFilterMenu(false)
+                          }}
+                          className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                            filterMode === 'no-transaction' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                          }`}
+                        >
+                          No Transaction
                         </button>
                       </div>
                     </div>
