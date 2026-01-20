@@ -524,9 +524,11 @@ function ItemContent({
 }) {
   return (
     <div>
-      <h4 className="text-sm font-medium text-gray-900 mb-1">
-        {item.description || 'No description'}
-      </h4>
+      {item.description && (
+        <h4 className="text-sm font-medium text-gray-900 mb-1">
+          {item.description}
+        </h4>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
         {/* SKU and conditional transaction/source display */}

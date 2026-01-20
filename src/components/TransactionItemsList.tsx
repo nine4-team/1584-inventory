@@ -65,7 +65,14 @@ export default function TransactionItemsList({
   const [transactionDisplayInfos, setTransactionDisplayInfos] = useState<Map<string, {title: string, amount: string} | null>>(new Map())
   const [transactionRoutes, setTransactionRoutes] = useState<Map<string, {path: string, projectId: string | null}>>(new Map())
   const [searchQuery, setSearchQuery] = useState('')
-  const [filterMode, setFilterMode] = useState<'all' | 'bookmarked'>('all')
+  const [filterMode, setFilterMode] = useState<
+    'all'
+    | 'bookmarked'
+    | 'no-sku'
+    | 'no-description'
+    | 'no-project-price'
+    | 'no-image'
+  >('all')
   const [showFilterMenu, setShowFilterMenu] = useState(false)
   const [sortMode, setSortMode] = useState<'alphabetical' | 'price'>('alphabetical')
   const [showSortMenu, setShowSortMenu] = useState(false)
@@ -291,6 +298,14 @@ export default function TransactionItemsList({
     [items, selectedItemIds]
   )
 
+  const hasNonEmptyMoneyString = (value: string | undefined) => {
+    if (value === undefined) return false
+    if (typeof value !== 'string') return false
+    if (!value.trim()) return false
+    const n = Number.parseFloat(value)
+    return Number.isFinite(n)
+  }
+
   // Filter and sort items
   const filteredItems = useMemo(() => {
     let result = items
@@ -309,8 +324,24 @@ export default function TransactionItemsList({
     }
 
     // Apply filter based on filterMode
-    if (filterMode === 'bookmarked') {
-      result = result.filter(item => bookmarkedItemIds.has(item.id))
+    switch (filterMode) {
+      case 'bookmarked':
+        result = result.filter(item => bookmarkedItemIds.has(item.id))
+        break
+      case 'no-sku':
+        result = result.filter(item => !item.sku?.trim())
+        break
+      case 'no-description':
+        result = result.filter(item => !item.description?.trim())
+        break
+      case 'no-project-price':
+        result = result.filter(item => !hasNonEmptyMoneyString(item.projectPrice))
+        break
+      case 'no-image':
+        result = result.filter(item => !item.images || item.images.length === 0)
+        break
+      default:
+        break
     }
 
     // Apply sorting
@@ -584,14 +615,6 @@ export default function TransactionItemsList({
   const formatCurrency = (amount: string) => {
     const num = parseFloat(amount)
     return isNaN(num) ? '$0.00' : `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  }
-
-  const hasNonEmptyMoneyString = (value: string | undefined) => {
-    if (value === undefined) return false
-    if (typeof value !== 'string') return false
-    if (!value.trim()) return false
-    const n = Number.parseFloat(value)
-    return Number.isFinite(n)
   }
 
   const getDispositionBadgeClasses = (disposition?: string | null) => {
@@ -1032,7 +1055,7 @@ export default function TransactionItemsList({
 
               {/* Filter Dropdown Menu */}
               {showFilterMenu && (
-                <div className="filter-menu absolute top-full right-0 mt-1 w-48 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                <div className="filter-menu absolute top-full right-0 mt-1 w-56 bg-white border border-gray-200 rounded-md shadow-lg z-10">
                   <div className="py-1">
                     <button
                       onClick={() => {
@@ -1055,6 +1078,50 @@ export default function TransactionItemsList({
                       }`}
                     >
                       Bookmarked
+                    </button>
+                    <button
+                      onClick={() => {
+                        setFilterMode('no-sku')
+                        setShowFilterMenu(false)
+                      }}
+                      className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                        filterMode === 'no-sku' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      No SKU
+                    </button>
+                    <button
+                      onClick={() => {
+                        setFilterMode('no-description')
+                        setShowFilterMenu(false)
+                      }}
+                      className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                        filterMode === 'no-description' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      No Description
+                    </button>
+                    <button
+                      onClick={() => {
+                        setFilterMode('no-project-price')
+                        setShowFilterMenu(false)
+                      }}
+                      className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                        filterMode === 'no-project-price' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      No Project Price
+                    </button>
+                    <button
+                      onClick={() => {
+                        setFilterMode('no-image')
+                        setShowFilterMenu(false)
+                      }}
+                      className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                        filterMode === 'no-image' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      No Image
                     </button>
                   </div>
                 </div>
@@ -1165,9 +1232,11 @@ export default function TransactionItemsList({
 
                   {/* Right column: Text content */}
                   <div className="flex-1 min-w-0">
-                    <h4 className="text-sm font-medium text-gray-900 mb-1">
-                      {firstItem.description || 'No description'}
-                    </h4>
+                    {firstItem.description && (
+                      <h4 className="text-sm font-medium text-gray-900 mb-1">
+                        {firstItem.description}
+                      </h4>
+                    )}
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
                       {/* SKU display (no transaction link in transaction context) */}
