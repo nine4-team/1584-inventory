@@ -43,7 +43,18 @@ export default function InventoryList({ projectId, projectName, items: propItems
   const isLoading = accountLoading
   const [uploadingImages, setUploadingImages] = useState<Set<string>>(new Set())
   const [openDispositionMenu, setOpenDispositionMenu] = useState<string | null>(null)
-  const [filterMode, setFilterMode] = useState<'all' | 'bookmarked' | 'to-inventory' | 'from-inventory' | 'to-return' | 'returned'>('all')
+  const [filterMode, setFilterMode] = useState<
+    'all'
+    | 'bookmarked'
+    | 'from-inventory'
+    | 'to-return'
+    | 'returned'
+    | 'no-sku'
+    | 'no-description'
+    | 'no-project-price'
+    | 'no-image'
+    | 'no-transaction'
+  >('all')
   const [showFilterMenu, setShowFilterMenu] = useState(false)
   const [sortMode, setSortMode] = useState<'alphabetical' | 'creationDate'>('creationDate')
   const [showSortMenu, setShowSortMenu] = useState(false)
@@ -600,8 +611,20 @@ export default function InventoryList({ projectId, projectName, items: propItems
       case 'bookmarked':
         matchesFilter = item.bookmark
         break
-      case 'to-inventory':
-        matchesFilter = item.disposition === 'inventory'
+      case 'no-sku':
+        matchesFilter = !item.sku?.trim()
+        break
+      case 'no-description':
+        matchesFilter = !item.description?.trim()
+        break
+      case 'no-project-price':
+        matchesFilter = !hasNonEmptyMoneyString(item.projectPrice)
+        break
+      case 'no-image':
+        matchesFilter = !item.images || item.images.length === 0
+        break
+      case 'no-transaction':
+        matchesFilter = !item.transactionId
         break
       case 'from-inventory':
         matchesFilter = item.source === 'Inventory'
@@ -742,7 +765,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
 
             {/* Filter Dropdown Menu */}
             {showFilterMenu && (
-              <div className="filter-menu absolute top-full right-0 mt-1 w-48 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+              <div className="filter-menu absolute top-full right-0 mt-1 w-56 bg-white border border-gray-200 rounded-md shadow-lg z-10">
                 <div className="py-1">
                   <button
                     onClick={() => {
@@ -768,25 +791,58 @@ export default function InventoryList({ projectId, projectName, items: propItems
                   </button>
                   <button
                     onClick={() => {
-                      setFilterMode('to-inventory')
+                      setFilterMode('no-sku')
                       setShowFilterMenu(false)
                     }}
                     className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                      filterMode === 'to-inventory' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      filterMode === 'no-sku' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
                     }`}
                   >
-                    To Inventory
+                    No SKU
                   </button>
                   <button
                     onClick={() => {
-                      setFilterMode('from-inventory')
+                      setFilterMode('no-description')
                       setShowFilterMenu(false)
                     }}
                     className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                      filterMode === 'from-inventory' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      filterMode === 'no-description' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
                     }`}
                   >
-                    From Inventory
+                    No Description
+                  </button>
+                  <button
+                    onClick={() => {
+                      setFilterMode('no-project-price')
+                      setShowFilterMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      filterMode === 'no-project-price' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    No Project Price
+                  </button>
+                  <button
+                    onClick={() => {
+                      setFilterMode('no-image')
+                      setShowFilterMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      filterMode === 'no-image' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    No Image
+                  </button>
+                  <button
+                    onClick={() => {
+                      setFilterMode('no-transaction')
+                      setShowFilterMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      filterMode === 'no-transaction' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    No Transaction
                   </button>
                   <button
                     onClick={() => {
@@ -809,6 +865,17 @@ export default function InventoryList({ projectId, projectName, items: propItems
                     }`}
                   >
                     Returned
+                  </button>
+                  <button
+                    onClick={() => {
+                      setFilterMode('from-inventory')
+                      setShowFilterMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      filterMode === 'from-inventory' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    From Inventory
                   </button>
                 </div>
               </div>
