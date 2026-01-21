@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Plus, Search, RotateCcw, Camera, Trash2, QrCode, Filter, ArrowUpDown, Receipt } from 'lucide-react'
 import ContextLink from '@/components/ContextLink'
 import { unifiedItemsService, integrationService, transactionService } from '@/services/inventoryService'
@@ -32,6 +33,8 @@ interface InventoryListProps {
 export default function InventoryList({ projectId, projectName, items: propItems }: InventoryListProps) {
   const { currentAccountId, loading: accountLoading } = useAccount()
   const ENABLE_QR = import.meta.env.VITE_ENABLE_QR === 'true'
+  const location = useLocation()
+  const navigate = useNavigate()
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
   const [items, setItems] = useState<Item[]>(propItems || [])
@@ -60,6 +63,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
   const [showSortMenu, setShowSortMenu] = useState(false)
   const { showSuccess, showError } = useToast()
   const { refreshCollections: refreshRealtimeCollections } = useProjectRealtime(projectId)
+  const hasRestoredScrollRef = useRef(false)
   const refreshRealtimeAfterWrite = useCallback(() => {
     return refreshRealtimeCollections().catch(err => {
       console.debug('InventoryList: realtime refresh failed', err)
@@ -120,6 +124,20 @@ export default function InventoryList({ projectId, projectName, items: propItems
     console.log('🔍 InventoryList - propItems changed:', propItems?.length || 0)
     setItems(propItems || [])
   }, [propItems])
+
+  useEffect(() => {
+    if (hasRestoredScrollRef.current || isLoading) return
+    const state = location.state && typeof location.state === 'object' ? (location.state as Record<string, unknown>) : null
+    const restoreScrollY = state?.restoreScrollY
+    if (!Number.isFinite(restoreScrollY)) return
+
+    hasRestoredScrollRef.current = true
+    requestAnimationFrame(() => window.scrollTo(0, restoreScrollY as number))
+
+    const { restoreScrollY: _restoreScrollY, ...rest } = state || {}
+    const nextState = Object.keys(rest).length > 0 ? rest : undefined
+    navigate(location.pathname + location.search, { replace: true, state: nextState })
+  }, [isLoading, location.pathname, location.search, location.state, navigate])
 
   // Per-visible-item lineage subscriptions: when an item has a lineage edge, refetch that item and update/remove as needed
   useEffect(() => {
@@ -255,7 +273,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
         href,
         projectId ? { project: projectId } : undefined
       )
-      stackedNavigate(targetUrl)
+      stackedNavigate(targetUrl, undefined, { scrollY: window.scrollY })
     },
     [buildContextUrl, projectId, stackedNavigate]
   )

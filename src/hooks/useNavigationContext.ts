@@ -22,7 +22,7 @@ export function useNavigationContext(): NavigationContext {
       // updates and can cause render-time side-effects / freezes.
       try {
         const candidate = navigationStack.peek(location.pathname + location.search)
-        if (candidate) return candidate
+        if (candidate?.path) return candidate.path
       } catch {
         // ignore if stack not available
       }

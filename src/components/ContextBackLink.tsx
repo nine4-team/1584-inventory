@@ -17,8 +17,13 @@ export default function ContextBackLink({ fallback, className, children, title }
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault()
     try {
-      const target = navigationStack.pop(location.pathname + location.search) || fallback
-      navigate(target)
+      const entry = navigationStack.pop(location.pathname + location.search)
+      const target = entry?.path || fallback
+      if (Number.isFinite(entry?.scrollY)) {
+        navigate(target, { state: { restoreScrollY: entry?.scrollY } })
+      } else {
+        navigate(target)
+      }
     } catch {
       // fallback if stack not available
       navigate(fallback)

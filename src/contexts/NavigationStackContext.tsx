@@ -1,9 +1,14 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useCallback } from 'react'
 
+export interface NavigationStackEntry {
+  path: string
+  scrollY?: number
+}
+
 export interface NavigationStack {
-  push: (entry: string) => void
-  pop: (currentLocation?: string) => string | null
-  peek: (currentLocation?: string) => string | null
+  push: (entry: string | NavigationStackEntry) => void
+  pop: (currentLocation?: string) => NavigationStackEntry | null
+  peek: (currentLocation?: string) => NavigationStackEntry | null
   clear: () => void
   size: () => number
 }
@@ -23,7 +28,7 @@ export function NavigationStackProvider({
   mirrorToSessionStorage = true,
   maxLength = 200,
 }: NavigationStackProviderProps) {
-  const stackRef = useRef<string[]>([])
+  const stackRef = useRef<NavigationStackEntry[]>([])
   const debugEnabled = useMemo(
     () => typeof window !== 'undefined' && sessionStorage.getItem('navStack:debug') === '1',
     []
@@ -37,8 +42,21 @@ export function NavigationStackProvider({
       if (raw) {
         const parsed = JSON.parse(raw)
         if (Array.isArray(parsed)) {
-          // keep only strings
-          stackRef.current = parsed.filter((e) => typeof e === 'string')
+          stackRef.current = parsed
+            .map((entry) => {
+              if (typeof entry === 'string') {
+                return { path: entry }
+              }
+              if (entry && typeof entry === 'object' && typeof (entry as any).path === 'string') {
+                const scrollY = (entry as any).scrollY
+                return {
+                  path: (entry as any).path,
+                  scrollY: Number.isFinite(scrollY) ? scrollY : undefined,
+                }
+              }
+              return null
+            })
+            .filter((entry): entry is NavigationStackEntry => Boolean(entry?.path))
         }
       }
       if (debugEnabled) {
@@ -63,11 +81,25 @@ export function NavigationStackProvider({
   }, [debugEnabled, mirrorToSessionStorage])
 
   const push = useCallback(
-    (entry: string) => {
-      if (!entry) return
+    (entry: string | NavigationStackEntry) => {
+      const normalized: NavigationStackEntry | null =
+        typeof entry === 'string'
+          ? { path: entry }
+          : entry && typeof entry.path === 'string'
+            ? { path: entry.path, scrollY: entry.scrollY }
+            : null
+      if (!normalized?.path) return
+
       const top = stackRef.current[stackRef.current.length - 1]
-      if (top === entry) return
-      stackRef.current.push(entry)
+      if (top?.path === normalized.path) {
+        if (Number.isFinite(normalized.scrollY)) {
+          top.scrollY = normalized.scrollY
+          persist()
+        }
+        return
+      }
+
+      stackRef.current.push(normalized)
       // trim to maxLength
       if (stackRef.current.length > maxLength) {
         stackRef.current = stackRef.current.slice(-maxLength)
@@ -81,11 +113,11 @@ export function NavigationStackProvider({
   )
 
   const pop = useCallback(
-    (currentLocation?: string): string | null => {
+    (currentLocation?: string): NavigationStackEntry | null => {
       while (stackRef.current.length > 0) {
-        const top = stackRef.current.pop() as string
+        const top = stackRef.current.pop() as NavigationStackEntry
         // skip entries equal to current location if provided
-        if (currentLocation && top === currentLocation) {
+        if (currentLocation && top.path === currentLocation) {
           continue
         }
         persist()
@@ -99,10 +131,10 @@ export function NavigationStackProvider({
     [debugEnabled, persist]
   )
 
-  const peek = useCallback((currentLocation?: string): string | null => {
+  const peek = useCallback((currentLocation?: string): NavigationStackEntry | null => {
     for (let i = stackRef.current.length - 1; i >= 0; i--) {
       const entry = stackRef.current[i]
-      if (currentLocation && entry === currentLocation) {
+      if (currentLocation && entry.path === currentLocation) {
         continue
       }
       return entry || null

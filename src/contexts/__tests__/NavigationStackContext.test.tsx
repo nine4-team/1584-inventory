@@ -30,19 +30,19 @@ describe('NavigationStackProvider', () => {
     })
 
     expect(nav.size()).toBe(2)
-    expect(nav.peek()).toBe('/two')
+    expect(nav.peek()?.path).toBe('/two')
 
-    let popped: string | null
+    let popped: { path: string } | null
     act(() => {
       popped = nav.pop()
     })
-    expect(popped).toBe('/two')
+    expect(popped?.path).toBe('/two')
     expect(nav.size()).toBe(1)
 
     act(() => {
       popped = nav.pop()
     })
-    expect(popped).toBe('/one')
+    expect(popped?.path).toBe('/one')
     expect(nav.size()).toBe(0)
     expect(nav.pop()).toBeNull()
   })
@@ -74,8 +74,8 @@ describe('NavigationStackProvider', () => {
 
     // after mount the provider should have hydrated entries
     expect(nav.size()).toBe(2)
-    expect(nav.pop()).toBe('/b')
-    expect(nav.pop()).toBe('/a')
+    expect(nav.pop()?.path).toBe('/b')
+    expect(nav.pop()?.path).toBe('/a')
   })
 })
 
