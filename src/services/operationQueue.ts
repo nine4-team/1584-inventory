@@ -1181,6 +1181,8 @@ class OperationQueue {
         ...processedTransaction,
         ...(data.updates.amount !== undefined && { amount: data.updates.amount }),
         ...(data.updates.categoryId !== undefined && { categoryId: data.updates.categoryId }),
+        ...(data.updates.taxRatePct !== undefined && { taxRatePct: data.updates.taxRatePct }),
+        ...(data.updates.subtotal !== undefined && { subtotal: data.updates.subtotal }),
         ...(data.updates.taxRatePreset !== undefined && { taxRatePreset: data.updates.taxRatePreset }),
         ...(data.updates.status !== undefined && { status: data.updates.status as 'pending' | 'completed' | 'canceled' }),
         version: version

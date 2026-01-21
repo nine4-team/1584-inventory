@@ -408,6 +408,7 @@ export default function AddTransaction() {
         projectName: projectName,
         createdBy: user.id,
         taxRatePreset: taxRatePreset ?? null,
+        taxRatePct: taxRatePreset ? undefined : 0,
         receiptEmailed: formData.receiptEmailed ?? false,
         subtotal: taxRatePreset === 'Other' ? subtotal : null,
         ...(processedReceiptImages && { receiptImages: processedReceiptImages }),
@@ -902,7 +903,7 @@ export default function AddTransaction() {
                   className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
                 />
                 <label htmlFor="tax_preset_none" className="ml-2 block text-sm text-gray-900">
-                  None
+                  No tax (0%)
                 </label>
               </div>
               {taxPresets.map((preset) => (
