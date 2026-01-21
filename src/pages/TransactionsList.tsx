@@ -1,4 +1,4 @@
-import { Plus, Search, Filter, FileUp, ArrowUpDown, Check } from 'lucide-react'
+import { Plus, Search, Filter, FileUp, FileDown, ArrowUpDown, Check } from 'lucide-react'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
@@ -45,6 +45,98 @@ const getBudgetCategoryDisplayName = (transaction: TransactionType, categories: 
   }
   // Fall back to legacy budgetCategory field
   return transaction.budgetCategory
+}
+
+const parseMoney = (value: string | undefined): number => {
+  if (!value) return 0
+  const n = Number.parseFloat(value)
+  return Number.isFinite(n) ? n : 0
+}
+
+const parseDate = (value: string | undefined): number => {
+  if (!value) return 0
+  const ms = Date.parse(value)
+  return Number.isFinite(ms) ? ms : 0
+}
+
+const sortTransactionsByMode = (items: Transaction[], sortMode: typeof TRANSACTION_SORT_MODES[number]) => {
+  return [...items].sort((a, b) => {
+    if (sortMode === 'date-desc' || sortMode === 'date-asc') {
+      const diff = parseDate(a.transactionDate) - parseDate(b.transactionDate)
+      if (diff !== 0) return sortMode === 'date-asc' ? diff : -diff
+    }
+    if (sortMode === 'created-desc' || sortMode === 'created-asc') {
+      const diff = parseDate(a.createdAt) - parseDate(b.createdAt)
+      if (diff !== 0) return sortMode === 'created-asc' ? diff : -diff
+    }
+    if (sortMode === 'source-asc' || sortMode === 'source-desc') {
+      const aTitle = getCanonicalTransactionTitle(a)
+      const bTitle = getCanonicalTransactionTitle(b)
+      const diff = aTitle.localeCompare(bTitle)
+      if (diff !== 0) return sortMode === 'source-asc' ? diff : -diff
+    }
+    if (sortMode === 'amount-desc' || sortMode === 'amount-asc') {
+      const diff = parseMoney(a.amount) - parseMoney(b.amount)
+      if (diff !== 0) return sortMode === 'amount-asc' ? diff : -diff
+    }
+    const createdDiff = parseDate(a.createdAt) - parseDate(b.createdAt)
+    if (createdDiff !== 0) return -createdDiff
+    // Stable-ish tie-breaker to avoid jitter during realtime updates
+    return a.transactionId.localeCompare(b.transactionId)
+  })
+}
+
+const escapeCsvValue = (value: string): string => {
+  if (value.includes('"') || value.includes(',') || value.includes('\n')) {
+    return `"${value.replace(/"/g, '""')}"`
+  }
+  return value
+}
+
+const buildTransactionsCsv = (items: Transaction[], categories: BudgetCategory[]) => {
+  const header = [
+    'Transaction ID',
+    'Transaction Date',
+    'Source',
+    'Canonical Source',
+    'Transaction Type',
+    'Payment Method',
+    'Amount',
+    'Budget Category',
+    'Category ID',
+    'Notes',
+    'Reimbursement Type',
+    'Status',
+    'Receipt Emailed',
+    'Tax Rate Pct',
+    'Subtotal',
+    'Created At',
+    'Project ID',
+  ]
+  const rows = items.map(transaction => {
+    const categoryName = getBudgetCategoryDisplayName(transaction, categories) ?? ''
+    return [
+      transaction.transactionId ?? '',
+      transaction.transactionDate ?? '',
+      transaction.source ?? '',
+      getCanonicalTransactionTitle(transaction) ?? '',
+      transaction.transactionType ?? '',
+      transaction.paymentMethod ?? '',
+      transaction.amount ?? '',
+      categoryName,
+      transaction.categoryId ?? '',
+      transaction.notes ?? '',
+      transaction.reimbursementType ?? '',
+      transaction.status ?? '',
+      transaction.receiptEmailed ? 'true' : 'false',
+      transaction.taxRatePct != null ? String(transaction.taxRatePct) : '',
+      transaction.subtotal ?? '',
+      transaction.createdAt ?? '',
+      transaction.projectId ?? '',
+    ].map(value => escapeCsvValue(String(value)))
+  })
+
+  return [header.map(value => escapeCsvValue(value)).join(','), ...rows.map(row => row.join(','))].join('\n')
 }
 
 interface TransactionsListProps {
@@ -347,18 +439,6 @@ export default function TransactionsList({ projectId: propProjectId, transaction
 
   // Filter transactions based on search and filter mode
   const filteredTransactions = useMemo(() => {
-    const parseMoney = (value: string | undefined): number => {
-      if (!value) return 0
-      const n = Number.parseFloat(value)
-      return Number.isFinite(n) ? n : 0
-    }
-
-    const parseDate = (value: string | undefined): number => {
-      if (!value) return 0
-      const ms = Date.parse(value)
-      return Number.isFinite(ms) ? ms : 0
-    }
-
     let filtered = transactions
 
     // Apply reimbursement type filter based on filter mode
@@ -411,33 +491,25 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     }
 
     // Apply sorting
-    const sorted = [...filtered].sort((a, b) => {
-      if (sortMode === 'date-desc' || sortMode === 'date-asc') {
-        const diff = parseDate(a.transactionDate) - parseDate(b.transactionDate)
-        if (diff !== 0) return sortMode === 'date-asc' ? diff : -diff
-      }
-      if (sortMode === 'created-desc' || sortMode === 'created-asc') {
-        const diff = parseDate(a.createdAt) - parseDate(b.createdAt)
-        if (diff !== 0) return sortMode === 'created-asc' ? diff : -diff
-      }
-      if (sortMode === 'source-asc' || sortMode === 'source-desc') {
-        const aTitle = getCanonicalTransactionTitle(a)
-        const bTitle = getCanonicalTransactionTitle(b)
-        const diff = aTitle.localeCompare(bTitle)
-        if (diff !== 0) return sortMode === 'source-asc' ? diff : -diff
-      }
-      if (sortMode === 'amount-desc' || sortMode === 'amount-asc') {
-        const diff = parseMoney(a.amount) - parseMoney(b.amount)
-        if (diff !== 0) return sortMode === 'amount-asc' ? diff : -diff
-      }
-      const createdDiff = parseDate(a.createdAt) - parseDate(b.createdAt)
-      if (createdDiff !== 0) return -createdDiff
-      // Stable-ish tie-breaker to avoid jitter during realtime updates
-      return a.transactionId.localeCompare(b.transactionId)
-    })
-
-    return sorted
+    return sortTransactionsByMode(filtered, sortMode)
   }, [transactions, filterMode, receiptFilter, sourceFilter, searchQuery, sortMode, transactionTypeFilter])
+
+  const handleExportCsv = useCallback(() => {
+    if (!transactions.length) return
+    const sortedTransactions = sortTransactionsByMode(transactions, sortMode)
+    const csv = buildTransactionsCsv(sortedTransactions, budgetCategories)
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    const dateStamp = new Date().toISOString().slice(0, 10)
+    const fileName = `project-${projectId ?? 'transactions'}-${dateStamp}.csv`
+    link.href = url
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }, [transactions, sortMode, budgetCategories, projectId])
 
   const availableSources = useMemo(() => {
     const titles = transactions
@@ -517,6 +589,16 @@ export default function TransactionsList({ projectId: propProjectId, transaction
             <FileUp className="h-4 w-4 mr-2" />
             Import Wayfair Invoice
           </ContextLink>
+
+          {/* Export CSV Button */}
+          <button
+            onClick={handleExportCsv}
+            className="inline-flex items-center justify-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 transition-colors duration-200 flex-shrink-0"
+            title="Export all transactions to CSV"
+          >
+            <FileDown className="h-4 w-4 mr-2" />
+            Export CSV
+          </button>
 
           {/* Sort Button */}
           <div className="relative flex-shrink-0">

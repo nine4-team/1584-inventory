@@ -50,6 +50,7 @@ type CreateItemOptions = {
 }
 
 const CANONICAL_TRANSACTION_PREFIXES = ['INV_PURCHASE_', 'INV_SALE_', 'INV_TRANSFER_'] as const
+const MISSING_BUDGET_CATEGORY_ERROR_REGEX = /Category ID .* does not exist in budget categories for account/i
 
 export const isCanonicalTransactionId = (transactionId: string | null | undefined): boolean => {
   if (!transactionId) return false
@@ -67,6 +68,26 @@ const getCanonicalBudgetCategoryId = async (accountId: string): Promise<string |
   } catch (error) {
     console.warn('⚠️ Failed to load default budget category for canonical transaction:', error)
     return null
+  }
+}
+
+const isMissingBudgetCategoryError = (error: any): boolean => {
+  if (!error) return false
+  const message = typeof error?.message === 'string' ? error.message : ''
+  const details = typeof error?.details === 'string' ? error.details : ''
+  return MISSING_BUDGET_CATEGORY_ERROR_REGEX.test(message) || MISSING_BUDGET_CATEGORY_ERROR_REGEX.test(details)
+}
+
+const clearLocalTransactionCategory = async (transactionId: string): Promise<void> => {
+  try {
+    await offlineStore.init()
+    const tx = await offlineStore.getTransactionById(transactionId)
+    if (!tx) return
+    tx.categoryId = undefined
+    tx.budgetCategory = undefined
+    await offlineStore.upsertTransaction(tx)
+  } catch (error) {
+    console.warn('Failed to clear local transaction category after invalid category error:', error)
   }
 }
 
@@ -1583,6 +1604,7 @@ async function _updateTransactionItemIds(
   }
 
   let updateError: any = null
+  let repairedCategory = false
   try {
     const response = await withNetworkTimeout(async () => {
       return await supabase
@@ -1599,6 +1621,29 @@ async function _updateTransactionItemIds(
     updateError = e
   }
 
+  if (updateError && isMissingBudgetCategoryError(updateError)) {
+    try {
+      const response = await withNetworkTimeout(async () => {
+        return await supabase
+          .from('transactions')
+          .update({
+            item_ids: updatedItemIds,
+            category_id: null,
+            budget_category: null,
+            updated_at: new Date().toISOString()
+          })
+          .eq('account_id', accountId)
+          .eq('transaction_id', transactionId)
+      })
+      updateError = response?.error
+      if (!updateError) {
+        repairedCategory = true
+      }
+    } catch (retryError) {
+      updateError = retryError
+    }
+  }
+
   if (updateError) {
     console.warn('⚠️ Failed to update transaction item_ids during sync:', transactionId, updateError)
     await enqueueTransactionItemIdsRetry(accountId, transactionId, localTransaction?.version)
@@ -1611,6 +1656,10 @@ async function _updateTransactionItemIds(
         tx.pendingItemIds = undefined
         tx.pendingItemIdsAction = undefined
         tx.pendingItemIdsUpdatedAt = undefined
+        if (repairedCategory) {
+          tx.categoryId = undefined
+          tx.budgetCategory = undefined
+        }
         await offlineStore.upsertTransaction(tx)
       }
     } catch (e) {
@@ -2115,11 +2164,31 @@ export const transactionService = {
         needs_review: needs,
         updated_at: new Date().toISOString()
       }
-      const { error } = await supabase
+      let { error } = await supabase
         .from('transactions')
         .update(dbUpdates)
         .eq('account_id', accountId)
         .eq('transaction_id', transactionId)
+
+      if (error && isMissingBudgetCategoryError(error)) {
+        try {
+          const retry = await supabase
+            .from('transactions')
+            .update({
+              ...dbUpdates,
+              category_id: null,
+              budget_category: null
+            })
+            .eq('account_id', accountId)
+            .eq('transaction_id', transactionId)
+          error = retry?.error
+          if (!error) {
+            await clearLocalTransactionCategory(transactionId)
+          }
+        } catch (retryError) {
+          error = retryError as any
+        }
+      }
 
       if (error) {
         console.warn('Failed to persist needs_review for transaction', transactionId, error)
