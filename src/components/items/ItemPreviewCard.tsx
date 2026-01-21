@@ -271,7 +271,7 @@ export default function ItemPreviewCard({
 
   const cardContent = (
     <>
-      {/* Top row: checkbox, item count, price, controls */}
+      {/* Top row: checkbox, price, controls */}
       {(showCheckbox || duplicateCount || priceLabel || hasActions) && (
         <div className="flex items-center gap-4 mb-3">
           {/* Checkbox */}
@@ -287,13 +287,6 @@ export default function ItemPreviewCard({
               }}
               onClick={(e) => e.stopPropagation()}
             />
-          )}
-
-          {/* Duplicate count for individual items in groups */}
-          {duplicateCount && duplicateCount > 1 && duplicateIndex && (
-            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
-              ×{duplicateIndex}/{duplicateCount}
-            </span>
           )}
 
           {/* Price */}
@@ -410,7 +403,7 @@ export default function ItemPreviewCard({
       {/* Bottom row: image and text content in two columns */}
       <div className="flex gap-4">
         {/* Left column: Image */}
-        <div className="flex-shrink-0">
+        <div className="flex-shrink-0 flex flex-col items-center">
           {item.images && item.images.length > 0 ? (
             (() => {
               const primaryImage = item.images.find(img => img.isPrimary) || item.images[0]
@@ -441,6 +434,11 @@ export default function ItemPreviewCard({
                 <Camera className="h-5 w-5" />
               </div>
             )
+          )}
+          {duplicateCount && duplicateCount > 1 && duplicateIndex && (
+            <span className="mt-1 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
+              ×{duplicateIndex}/{duplicateCount}
+            </span>
           )}
         </div>
 

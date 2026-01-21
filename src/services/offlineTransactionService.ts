@@ -4,7 +4,7 @@ import type { Transaction, TransactionItemFormData } from '../types'
 import type { Operation } from '../types/operations'
 import { isNetworkOnline } from './networkStatusService'
 import { offlineItemService } from './offlineItemService'
-import { getCachedBudgetCategoryById, getCachedTaxPresetById } from './offlineMetadataService'
+import { getCachedBudgetCategoryById, getCachedTaxPresetById, areMetadataCachesWarm } from './offlineMetadataService'
 import { refreshBusinessInventorySnapshot, refreshProjectSnapshot } from '../utils/realtimeSnapshotUpdater'
 import { CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { removeTransactionFromCaches } from '@/utils/queryCacheHelpers'
@@ -402,6 +402,26 @@ export class OfflineTransactionService {
       ...(updates.receiptImages !== undefined && { receiptImages: updates.receiptImages }),
       ...(updates.otherImages !== undefined && { otherImages: updates.otherImages }),
       version: nextVersion
+    }
+
+    // Validate existing categoryId to prevent sync failures (P0001)
+    // If we're not explicitly updating the category, but the existing one is invalid,
+    // we must clear it to allow the transaction update to proceed.
+    if (optimisticTransaction.categoryId && updates.categoryId === undefined) {
+      const cacheWarmth = await areMetadataCachesWarm(accountId)
+      
+      if (cacheWarmth.budgetCategories) {
+        const category = await getCachedBudgetCategoryById(accountId, optimisticTransaction.categoryId)
+        if (!category) {
+          console.warn(`[offlineTransactionService] Clearing invalid category ${optimisticTransaction.categoryId} during update to prevent sync failure`)
+          optimisticTransaction.categoryId = null
+          
+          // Force the update to include the cleared category
+          if (operation.data && typeof operation.data === 'object' && 'updates' in operation.data) {
+             (operation.data as any).updates.categoryId = null
+          }
+        }
+      }
     }
 
     try {
