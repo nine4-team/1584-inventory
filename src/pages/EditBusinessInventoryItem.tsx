@@ -12,6 +12,7 @@ import { useSyncError } from '@/hooks/useSyncError'
 import { useBusinessInventoryRealtime } from '@/contexts/BusinessInventoryRealtimeContext'
 import ImagePreview from '@/components/ui/ImagePreview'
 import { ImageUploadService } from '@/services/imageService'
+import SpeechMicButton from '@/components/ui/SpeechMicButton'
 
 export default function EditBusinessInventoryItem() {
   const { id } = useParams<{ id: string }>()
@@ -323,14 +324,23 @@ export default function EditBusinessInventoryItem() {
               <label htmlFor="sku" className="block text-sm font-medium text-gray-700">
                 SKU
               </label>
-              <input
-                type="text"
-                id="sku"
-                value={formData.sku}
-                onChange={(e) => handleInputChange('sku', e.target.value)}
-                placeholder="e.g., CHR-001"
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-              />
+              <div className="mt-1 relative">
+                <input
+                  type="text"
+                  id="sku"
+                  value={formData.sku}
+                  onChange={(e) => handleInputChange('sku', e.target.value)}
+                  placeholder="e.g., CHR-001"
+                  className="block w-full px-3 py-2 pr-12 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                />
+                <SpeechMicButton
+                  value={formData.sku}
+                  onChangeText={(next) => handleInputChange('sku', next)}
+                  label="SKU"
+                  append={false}
+                  normalize="sku"
+                />
+              </div>
             </div>
 
             {/* Description */}
@@ -338,16 +348,24 @@ export default function EditBusinessInventoryItem() {
               <label htmlFor="description" className="block text-sm font-medium text-gray-700">
                 Description
               </label>
-              <input
-                type="text"
-                id="description"
-                value={formData.description}
-                onChange={(e) => handleInputChange('description', e.target.value)}
-                placeholder="e.g., Vintage leather armchair"
-                className={`mt-1 block w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 ${
-                  formErrors.description ? 'border-red-300' : 'border-gray-300'
-                }`}
-              />
+              <div className="mt-1 relative">
+                <input
+                  type="text"
+                  id="description"
+                  value={formData.description}
+                  onChange={(e) => handleInputChange('description', e.target.value)}
+                  placeholder="e.g., Vintage leather armchair"
+                  className={`block w-full px-3 py-2 pr-12 border rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 ${
+                    formErrors.description ? 'border-red-300' : 'border-gray-300'
+                  }`}
+                />
+                <SpeechMicButton
+                  value={formData.description}
+                  onChangeText={(next) => handleInputChange('description', next)}
+                  label="Description"
+                  append={true}
+                />
+              </div>
               {formErrors.description && (
                 <p className="mt-1 text-sm text-red-600">{formErrors.description}</p>
               )}
@@ -492,16 +510,24 @@ export default function EditBusinessInventoryItem() {
               <label htmlFor="businessInventoryLocation" className="block text-sm font-medium text-gray-700">
                 Storage Location
               </label>
-              <input
-                type="text"
-                id="businessInventoryLocation"
-                value={formData.businessInventoryLocation}
-                onChange={(e) => handleInputChange('businessInventoryLocation', e.target.value)}
-                placeholder="e.g., Warehouse A - Section 3 - Shelf 5"
-                className={`mt-1 block w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 ${
-                  formErrors.businessInventoryLocation ? 'border-red-300' : 'border-gray-300'
-                }`}
-              />
+              <div className="mt-1 relative">
+                <input
+                  type="text"
+                  id="businessInventoryLocation"
+                  value={formData.businessInventoryLocation}
+                  onChange={(e) => handleInputChange('businessInventoryLocation', e.target.value)}
+                  placeholder="e.g., Warehouse A - Section 3 - Shelf 5"
+                  className={`block w-full px-3 py-2 pr-12 border rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 ${
+                    formErrors.businessInventoryLocation ? 'border-red-300' : 'border-gray-300'
+                  }`}
+                />
+                <SpeechMicButton
+                  value={formData.businessInventoryLocation}
+                  onChangeText={(next) => handleInputChange('businessInventoryLocation', next)}
+                  label="Storage Location"
+                  append={false}
+                />
+              </div>
               {formErrors.businessInventoryLocation && (
                 <p className="mt-1 text-sm text-red-600">{formErrors.businessInventoryLocation}</p>
               )}
@@ -534,14 +560,23 @@ export default function EditBusinessInventoryItem() {
               <label htmlFor="notes" className="block text-sm font-medium text-gray-700">
                 Notes
               </label>
-              <textarea
-                id="notes"
-                rows={3}
-                value={formData.notes}
-                onChange={(e) => handleInputChange('notes', e.target.value)}
-                placeholder="Additional notes about this item..."
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-              />
+              <div className="mt-1 relative">
+                <textarea
+                  id="notes"
+                  rows={3}
+                  value={formData.notes}
+                  onChange={(e) => handleInputChange('notes', e.target.value)}
+                  placeholder="Additional notes about this item..."
+                  className="block w-full px-3 py-2 pr-12 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                />
+                <SpeechMicButton
+                  value={formData.notes}
+                  onChangeText={(next) => handleInputChange('notes', next)}
+                  label="Notes"
+                  append={true}
+                  className="top-3 translate-y-0"
+                />
+              </div>
             </div>
 
             {/* Inventory Status */}
