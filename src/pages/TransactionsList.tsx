@@ -54,6 +54,7 @@ interface TransactionsListProps {
 
 const TRANSACTION_FILTER_MODES = ['all', 'we-owe', 'client-owes'] as const
 const RECEIPT_FILTER_MODES = ['all', 'no-email'] as const
+const TRANSACTION_TYPE_FILTER_MODES = ['all', 'purchase', 'return'] as const
 const TRANSACTION_SORT_MODES = [
   'date-desc',
   'date-asc',
@@ -67,6 +68,7 @@ const TRANSACTION_SORT_MODES = [
 const DEFAULT_FILTER_MODE = 'all'
 const DEFAULT_SOURCE_FILTER = 'all'
 const DEFAULT_RECEIPT_FILTER = 'all'
+const DEFAULT_TRANSACTION_TYPE_FILTER = 'all'
 const DEFAULT_SORT_MODE = 'date-desc'
 
 const parseFilterMode = (value: string | null) =>
@@ -83,6 +85,11 @@ const parseReceiptFilter = (value: string | null) =>
   RECEIPT_FILTER_MODES.includes(value as (typeof RECEIPT_FILTER_MODES)[number])
     ? (value as (typeof RECEIPT_FILTER_MODES)[number])
     : DEFAULT_RECEIPT_FILTER
+
+const parseTransactionTypeFilter = (value: string | null) =>
+  TRANSACTION_TYPE_FILTER_MODES.includes(value as (typeof TRANSACTION_TYPE_FILTER_MODES)[number])
+    ? (value as (typeof TRANSACTION_TYPE_FILTER_MODES)[number])
+    : DEFAULT_TRANSACTION_TYPE_FILTER
 
 export default function TransactionsList({ projectId: propProjectId, transactions: propTransactions }: TransactionsListProps) {
   const { id, projectId: routeProjectId } = useParams<{ id?: string; projectId?: string }>()
@@ -109,6 +116,9 @@ export default function TransactionsList({ projectId: propProjectId, transaction
   const [sourceFilter, setSourceFilter] = useState<string>(() => searchParams.get('txSource') ?? DEFAULT_SOURCE_FILTER)
   const [receiptFilter, setReceiptFilter] = useState<'all' | 'no-email'>(() =>
     parseReceiptFilter(searchParams.get('txReceipt'))
+  )
+  const [transactionTypeFilter, setTransactionTypeFilter] = useState<'all' | 'purchase' | 'return'>(() =>
+    parseTransactionTypeFilter(searchParams.get('txType'))
   )
 
   // Sort state
@@ -146,6 +156,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     const nextFilterMode = parseFilterMode(searchParams.get('txFilter'))
     const nextSourceFilter = searchParams.get('txSource') ?? DEFAULT_SOURCE_FILTER
     const nextReceiptFilter = parseReceiptFilter(searchParams.get('txReceipt'))
+    const nextTransactionTypeFilter = parseTransactionTypeFilter(searchParams.get('txType'))
     const nextSortMode = parseSortMode(searchParams.get('txSort'))
 
     const hasChanges =
@@ -153,6 +164,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
       filterMode !== nextFilterMode ||
       sourceFilter !== nextSourceFilter ||
       receiptFilter !== nextReceiptFilter ||
+      transactionTypeFilter !== nextTransactionTypeFilter ||
       sortMode !== nextSortMode
 
     if (!hasChanges) return
@@ -162,6 +174,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     if (filterMode !== nextFilterMode) setFilterMode(nextFilterMode)
     if (sourceFilter !== nextSourceFilter) setSourceFilter(nextSourceFilter)
     if (receiptFilter !== nextReceiptFilter) setReceiptFilter(nextReceiptFilter)
+    if (transactionTypeFilter !== nextTransactionTypeFilter) setTransactionTypeFilter(nextTransactionTypeFilter)
     if (sortMode !== nextSortMode) setSortMode(nextSortMode)
   }, [searchParams])
 
@@ -184,12 +197,13 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     setParam('txFilter', filterMode, DEFAULT_FILTER_MODE)
     setParam('txSource', sourceFilter, DEFAULT_SOURCE_FILTER)
     setParam('txReceipt', receiptFilter, DEFAULT_RECEIPT_FILTER)
+    setParam('txType', transactionTypeFilter, DEFAULT_TRANSACTION_TYPE_FILTER)
     setParam('txSort', sortMode, DEFAULT_SORT_MODE)
 
     if (nextParams.toString() !== searchParams.toString()) {
       setSearchParams(nextParams, { replace: true, state: location.state })
     }
-  }, [filterMode, location.state, receiptFilter, searchQuery, setSearchParams, sortMode, sourceFilter])
+  }, [filterMode, location.state, receiptFilter, searchQuery, setSearchParams, sortMode, sourceFilter, transactionTypeFilter])
 
   useEffect(() => {
     if (hasRestoredScrollRef.current || isLoading) return
@@ -361,6 +375,11 @@ export default function TransactionsList({ projectId: propProjectId, transaction
       filtered = filtered.filter(t => getCanonicalTransactionTitle(t) === sourceFilter)
     }
 
+    if (transactionTypeFilter !== 'all') {
+      const filterValue = transactionTypeFilter.toLowerCase()
+      filtered = filtered.filter(t => (t.transactionType ?? '').toLowerCase() === filterValue)
+    }
+
     if (receiptFilter === 'no-email') {
       filtered = filtered.filter(t => !t.receiptEmailed)
     }
@@ -418,7 +437,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     })
 
     return sorted
-  }, [transactions, filterMode, receiptFilter, sourceFilter, searchQuery, sortMode])
+  }, [transactions, filterMode, receiptFilter, sourceFilter, searchQuery, sortMode, transactionTypeFilter])
 
   const availableSources = useMemo(() => {
     const titles = transactions
@@ -619,7 +638,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                 if (next) setFilterMenuView('main')
               }}
               className={`filter-button inline-flex items-center justify-center px-3 py-2 border text-sm font-medium rounded-md transition-colors duration-200 ${
-                filterMode === 'all' && sourceFilter === 'all' && receiptFilter === 'all'
+                filterMode === 'all' && sourceFilter === 'all' && receiptFilter === 'all' && transactionTypeFilter === 'all'
                   ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
                   : 'border-primary-500 text-primary-600 bg-primary-50 hover:bg-primary-100'
               }`}
@@ -639,6 +658,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                         setFilterMode('all')
                         setSourceFilter('all')
                         setReceiptFilter('all')
+                        setTransactionTypeFilter('all')
                         setShowFilterMenu(false)
                       }}
                       className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
@@ -671,6 +691,33 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                     >
                       <span>Client Owes</span>
                       {filterMode === 'client-owes' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+
+                    <div className="my-1 border-t border-gray-100" />
+
+                    <button
+                      onClick={() => {
+                        setTransactionTypeFilter('purchase')
+                        setShowFilterMenu(false)
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        transactionTypeFilter === 'purchase' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>Purchase</span>
+                      {transactionTypeFilter === 'purchase' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setTransactionTypeFilter('return')
+                        setShowFilterMenu(false)
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        transactionTypeFilter === 'return' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>Return</span>
+                      {transactionTypeFilter === 'return' ? <Check className="h-4 w-4" /> : null}
                     </button>
 
                     <div className="my-1 border-t border-gray-100" />

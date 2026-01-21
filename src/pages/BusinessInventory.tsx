@@ -41,12 +41,14 @@ const BUSINESS_ITEM_FILTER_MODES = [
 const BUSINESS_ITEM_SORT_MODES = ['alphabetical', 'creationDate'] as const
 const BUSINESS_TX_FILTER_MODES = ['all', 'pending', 'completed', 'canceled', 'inventory-only'] as const
 const BUSINESS_TX_RECEIPT_FILTER_MODES = ['all', 'no-email'] as const
+const BUSINESS_TX_TYPE_FILTER_MODES = ['all', 'purchase', 'return'] as const
 const BUSINESS_TX_SORT_MODES = ['date-desc', 'date-asc', 'created-desc', 'created-asc'] as const
 
 const DEFAULT_BUSINESS_ITEM_FILTER = 'all'
 const DEFAULT_BUSINESS_ITEM_SORT = 'creationDate'
 const DEFAULT_BUSINESS_TX_FILTER = 'all'
 const DEFAULT_BUSINESS_TX_RECEIPT_FILTER = 'all'
+const DEFAULT_BUSINESS_TX_TYPE_FILTER = 'all'
 const DEFAULT_BUSINESS_TX_SORT = 'date-desc'
 const DEFAULT_BUSINESS_TAB = 'inventory'
 
@@ -69,6 +71,11 @@ const parseBusinessTxReceiptFilterMode = (value: string | null) =>
   BUSINESS_TX_RECEIPT_FILTER_MODES.includes(value as (typeof BUSINESS_TX_RECEIPT_FILTER_MODES)[number])
     ? (value as (typeof BUSINESS_TX_RECEIPT_FILTER_MODES)[number])
     : DEFAULT_BUSINESS_TX_RECEIPT_FILTER
+
+const parseBusinessTxTypeFilterMode = (value: string | null) =>
+  BUSINESS_TX_TYPE_FILTER_MODES.includes(value as (typeof BUSINESS_TX_TYPE_FILTER_MODES)[number])
+    ? (value as (typeof BUSINESS_TX_TYPE_FILTER_MODES)[number])
+    : DEFAULT_BUSINESS_TX_TYPE_FILTER
 
 const parseBusinessTxSortMode = (value: string | null) =>
   BUSINESS_TX_SORT_MODES.includes(value as (typeof BUSINESS_TX_SORT_MODES)[number])
@@ -131,6 +138,9 @@ export default function BusinessInventory() {
   const [transactionReceiptFilter, setTransactionReceiptFilter] = useState<'all' | 'no-email'>(() =>
     parseBusinessTxReceiptFilterMode(searchParams.get('bizTxReceipt'))
   )
+  const [transactionTypeFilter, setTransactionTypeFilter] = useState<'all' | 'purchase' | 'return'>(() =>
+    parseBusinessTxTypeFilterMode(searchParams.get('bizTxType'))
+  )
   const [transactionSortMode, setTransactionSortMode] = useState<'date-desc' | 'date-asc' | 'created-desc' | 'created-asc'>(() =>
     parseBusinessTxSortMode(searchParams.get('bizTxSort'))
   )
@@ -173,6 +183,7 @@ export default function BusinessInventory() {
     const nextItemSort = parseBusinessItemSortMode(searchParams.get('bizItemSort'))
     const nextTxFilter = parseBusinessTxFilterMode(searchParams.get('bizTxFilter'))
     const nextTxReceiptFilter = parseBusinessTxReceiptFilterMode(searchParams.get('bizTxReceipt'))
+    const nextTxTypeFilter = parseBusinessTxTypeFilterMode(searchParams.get('bizTxType'))
     const nextTxSort = parseBusinessTxSortMode(searchParams.get('bizTxSort'))
 
     const hasChanges =
@@ -183,6 +194,7 @@ export default function BusinessInventory() {
       sortMode !== nextItemSort ||
       transactionFilterMode !== nextTxFilter ||
       transactionReceiptFilter !== nextTxReceiptFilter ||
+      transactionTypeFilter !== nextTxTypeFilter ||
       transactionSortMode !== nextTxSort
 
     if (!hasChanges) return
@@ -195,6 +207,7 @@ export default function BusinessInventory() {
     if (sortMode !== nextItemSort) setSortMode(nextItemSort)
     if (transactionFilterMode !== nextTxFilter) setTransactionFilterMode(nextTxFilter)
     if (transactionReceiptFilter !== nextTxReceiptFilter) setTransactionReceiptFilter(nextTxReceiptFilter)
+    if (transactionTypeFilter !== nextTxTypeFilter) setTransactionTypeFilter(nextTxTypeFilter)
     if (transactionSortMode !== nextTxSort) setTransactionSortMode(nextTxSort)
   }, [searchParams])
 
@@ -220,6 +233,7 @@ export default function BusinessInventory() {
     setParam('bizItemSort', sortMode, DEFAULT_BUSINESS_ITEM_SORT)
     setParam('bizTxFilter', transactionFilterMode, DEFAULT_BUSINESS_TX_FILTER)
     setParam('bizTxReceipt', transactionReceiptFilter, DEFAULT_BUSINESS_TX_RECEIPT_FILTER)
+    setParam('bizTxType', transactionTypeFilter, DEFAULT_BUSINESS_TX_TYPE_FILTER)
     setParam('bizTxSort', transactionSortMode, DEFAULT_BUSINESS_TX_SORT)
 
     if (nextParams.toString() !== searchParams.toString()) {
@@ -236,6 +250,7 @@ export default function BusinessInventory() {
     transactionFilterMode,
     transactionReceiptFilter,
     transactionSearchQuery,
+    transactionTypeFilter,
     transactionSortMode,
   ])
 
@@ -438,6 +453,11 @@ export default function BusinessInventory() {
       filtered = filtered.filter(t => !t.receiptEmailed)
     }
 
+    if (transactionTypeFilter !== 'all') {
+      const filterValue = transactionTypeFilter.toLowerCase()
+      filtered = filtered.filter(t => (t.transactionType ?? '').toLowerCase() === filterValue)
+    }
+
     // Apply search filter
     if (transactionSearchQuery) {
       const query = transactionSearchQuery.toLowerCase()
@@ -464,7 +484,7 @@ export default function BusinessInventory() {
     })
 
     return sorted
-  }, [transactions, transactionFilterMode, transactionReceiptFilter, transactionSearchQuery, transactionSortMode])
+  }, [transactions, transactionFilterMode, transactionReceiptFilter, transactionSearchQuery, transactionSortMode, transactionTypeFilter])
 
   const inventoryValue = useMemo(() => {
     return items.reduce((sum, item) => {
@@ -1533,7 +1553,7 @@ export default function BusinessInventory() {
                       <button
                         onClick={() => setShowTransactionFilterMenu(!showTransactionFilterMenu)}
                         className={`transaction-filter-button inline-flex items-center justify-center px-3 py-2 border text-sm font-medium rounded-md transition-colors duration-200 ${
-                          transactionFilterMode === 'all' && transactionReceiptFilter === 'all'
+                          transactionFilterMode === 'all' && transactionReceiptFilter === 'all' && transactionTypeFilter === 'all'
                             ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
                             : 'border-primary-500 text-primary-600 bg-primary-50 hover:bg-primary-100'
                         }`}
@@ -1551,6 +1571,7 @@ export default function BusinessInventory() {
                               onClick={() => {
                                 setTransactionFilterMode('all')
                                 setTransactionReceiptFilter('all')
+                                setTransactionTypeFilter('all')
                                 setShowTransactionFilterMenu(false)
                               }}
                               className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
@@ -1607,6 +1628,33 @@ export default function BusinessInventory() {
                             >
                               <span>Inventory Only</span>
                               {transactionFilterMode === 'inventory-only' ? <Check className="h-4 w-4" /> : null}
+                            </button>
+
+                            <div className="my-1 border-t border-gray-100" />
+
+                            <button
+                              onClick={() => {
+                                setTransactionTypeFilter('purchase')
+                                setShowTransactionFilterMenu(false)
+                              }}
+                              className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                transactionTypeFilter === 'purchase' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                              }`}
+                            >
+                              <span>Purchase</span>
+                              {transactionTypeFilter === 'purchase' ? <Check className="h-4 w-4" /> : null}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setTransactionTypeFilter('return')
+                                setShowTransactionFilterMenu(false)
+                              }}
+                              className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                transactionTypeFilter === 'return' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                              }`}
+                            >
+                              <span>Return</span>
+                              {transactionTypeFilter === 'return' ? <Check className="h-4 w-4" /> : null}
                             </button>
 
                             <div className="my-1 border-t border-gray-100" />
