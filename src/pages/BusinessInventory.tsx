@@ -1,7 +1,7 @@
 import { Plus, Search, Package, Receipt, Filter, QrCode, Trash2, Camera, DollarSign, ArrowUpDown, RefreshCw } from 'lucide-react'
 import { useMemo } from 'react'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import { Item, Transaction, ItemImage, Project, ItemDisposition } from '@/types'
 import type { Transaction as TransactionType } from '@/types'
@@ -29,6 +29,38 @@ interface FilterOptions {
   searchQuery?: string
 }
 
+const BUSINESS_ITEM_FILTER_MODES = [
+  'all',
+  'bookmarked',
+  'no-sku',
+  'no-description',
+  'no-project-price',
+  'no-image',
+  'no-transaction',
+] as const
+const BUSINESS_ITEM_SORT_MODES = ['alphabetical', 'creationDate'] as const
+const BUSINESS_TX_FILTER_MODES = ['all', 'pending', 'completed', 'canceled', 'inventory-only'] as const
+
+const DEFAULT_BUSINESS_ITEM_FILTER = 'all'
+const DEFAULT_BUSINESS_ITEM_SORT = 'creationDate'
+const DEFAULT_BUSINESS_TX_FILTER = 'all'
+const DEFAULT_BUSINESS_TAB = 'inventory'
+
+const parseBusinessItemFilterMode = (value: string | null) =>
+  BUSINESS_ITEM_FILTER_MODES.includes(value as (typeof BUSINESS_ITEM_FILTER_MODES)[number])
+    ? (value as (typeof BUSINESS_ITEM_FILTER_MODES)[number])
+    : DEFAULT_BUSINESS_ITEM_FILTER
+
+const parseBusinessItemSortMode = (value: string | null) =>
+  BUSINESS_ITEM_SORT_MODES.includes(value as (typeof BUSINESS_ITEM_SORT_MODES)[number])
+    ? (value as (typeof BUSINESS_ITEM_SORT_MODES)[number])
+    : DEFAULT_BUSINESS_ITEM_SORT
+
+const parseBusinessTxFilterMode = (value: string | null) =>
+  BUSINESS_TX_FILTER_MODES.includes(value as (typeof BUSINESS_TX_FILTER_MODES)[number])
+    ? (value as (typeof BUSINESS_TX_FILTER_MODES)[number])
+    : DEFAULT_BUSINESS_TX_FILTER
+
 export default function BusinessInventory() {
   const { currentAccountId, loading: accountLoading } = useAccount()
   const { items: snapshotItems, transactions: snapshotTransactions, isLoading: realtimeLoading, refreshCollections } =
@@ -38,7 +70,11 @@ export default function BusinessInventory() {
   const stackedNavigate = useStackedNavigate()
   const location = useLocation()
   const navigate = useNavigate()
-  const [activeTab, setActiveTab] = useState<'inventory' | 'transactions'>('inventory')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [activeTab, setActiveTab] = useState<'inventory' | 'transactions'>(() => {
+    const tab = searchParams.get('bizTab')
+    return tab === 'transactions' ? 'transactions' : DEFAULT_BUSINESS_TAB
+  })
   const [items, setItems] = useState<Item[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -54,12 +90,18 @@ export default function BusinessInventory() {
     [buildContextUrl, stackedNavigate]
   )
 
-  const [inventorySearchQuery, setInventorySearchQuery] = useState<string>('')
-  const [transactionSearchQuery, setTransactionSearchQuery] = useState<string>('')
+  const [inventorySearchQuery, setInventorySearchQuery] = useState<string>(() =>
+    searchParams.get('bizItemSearch') ?? ''
+  )
+  const [transactionSearchQuery, setTransactionSearchQuery] = useState<string>(() =>
+    searchParams.get('bizTxSearch') ?? ''
+  )
 
   // Filter state for transactions tab
   const [showTransactionFilterMenu, setShowTransactionFilterMenu] = useState(false)
-  const [transactionFilterMode, setTransactionFilterMode] = useState<'all' | 'pending' | 'completed' | 'canceled' | 'inventory-only'>('all')
+  const [transactionFilterMode, setTransactionFilterMode] = useState<'all' | 'pending' | 'completed' | 'canceled' | 'inventory-only'>(() =>
+    parseBusinessTxFilterMode(searchParams.get('bizTxFilter'))
+  )
 
   // Image upload state
   const [uploadingImages, setUploadingImages] = useState<Set<string>>(new Set())
@@ -73,17 +115,84 @@ export default function BusinessInventory() {
     | 'no-project-price'
     | 'no-image'
     | 'no-transaction'
-  >('all')
+  >(() => parseBusinessItemFilterMode(searchParams.get('bizItemFilter')))
   const [showFilterMenu, setShowFilterMenu] = useState(false)
-  const [sortMode, setSortMode] = useState<'alphabetical' | 'creationDate'>('creationDate')
+  const [sortMode, setSortMode] = useState<'alphabetical' | 'creationDate'>(() =>
+    parseBusinessItemSortMode(searchParams.get('bizItemSort'))
+  )
   const [showSortMenu, setShowSortMenu] = useState(false)
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
   const [openDispositionMenu, setOpenDispositionMenu] = useState<string | null>(null)
   const { showSuccess, showError } = useToast()
   const { showOfflineSaved } = useOfflineFeedback()
   const { isOnline } = useNetworkState()
+  const isSyncingFromUrlRef = useRef(false)
   const hasRestoredScrollRef = useRef(false)
   const isLoading = accountLoading || realtimeLoading
+
+  useEffect(() => {
+    const nextTab = searchParams.get('bizTab')
+    const nextActiveTab = nextTab === 'transactions' ? 'transactions' : DEFAULT_BUSINESS_TAB
+    const nextItemSearch = searchParams.get('bizItemSearch') ?? ''
+    const nextTxSearch = searchParams.get('bizTxSearch') ?? ''
+    const nextItemFilter = parseBusinessItemFilterMode(searchParams.get('bizItemFilter'))
+    const nextItemSort = parseBusinessItemSortMode(searchParams.get('bizItemSort'))
+    const nextTxFilter = parseBusinessTxFilterMode(searchParams.get('bizTxFilter'))
+
+    const hasChanges =
+      activeTab !== nextActiveTab ||
+      inventorySearchQuery !== nextItemSearch ||
+      transactionSearchQuery !== nextTxSearch ||
+      filterMode !== nextItemFilter ||
+      sortMode !== nextItemSort ||
+      transactionFilterMode !== nextTxFilter
+
+    if (!hasChanges) return
+
+    isSyncingFromUrlRef.current = true
+    if (activeTab !== nextActiveTab) setActiveTab(nextActiveTab)
+    if (inventorySearchQuery !== nextItemSearch) setInventorySearchQuery(nextItemSearch)
+    if (transactionSearchQuery !== nextTxSearch) setTransactionSearchQuery(nextTxSearch)
+    if (filterMode !== nextItemFilter) setFilterMode(nextItemFilter)
+    if (sortMode !== nextItemSort) setSortMode(nextItemSort)
+    if (transactionFilterMode !== nextTxFilter) setTransactionFilterMode(nextTxFilter)
+  }, [searchParams])
+
+  useEffect(() => {
+    if (isSyncingFromUrlRef.current) {
+      isSyncingFromUrlRef.current = false
+      return
+    }
+
+    const nextParams = new URLSearchParams(searchParams)
+    const setParam = (key: string, value: string, defaultValue: string) => {
+      if (!value || value === defaultValue) {
+        nextParams.delete(key)
+      } else {
+        nextParams.set(key, value)
+      }
+    }
+
+    setParam('bizTab', activeTab, DEFAULT_BUSINESS_TAB)
+    setParam('bizItemSearch', inventorySearchQuery, '')
+    setParam('bizTxSearch', transactionSearchQuery, '')
+    setParam('bizItemFilter', filterMode, DEFAULT_BUSINESS_ITEM_FILTER)
+    setParam('bizItemSort', sortMode, DEFAULT_BUSINESS_ITEM_SORT)
+    setParam('bizTxFilter', transactionFilterMode, DEFAULT_BUSINESS_TX_FILTER)
+
+    if (nextParams.toString() !== searchParams.toString()) {
+      setSearchParams(nextParams, { replace: true })
+    }
+  }, [
+    activeTab,
+    filterMode,
+    inventorySearchQuery,
+    searchParams,
+    setSearchParams,
+    sortMode,
+    transactionFilterMode,
+    transactionSearchQuery,
+  ])
 
   // Batch allocation state
   const [projects, setProjects] = useState<Project[]>([])

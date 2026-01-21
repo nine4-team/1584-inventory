@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Plus, Search, RotateCcw, Camera, Trash2, QrCode, Filter, ArrowUpDown, Receipt } from 'lucide-react'
 import ContextLink from '@/components/ContextLink'
 import { unifiedItemsService, integrationService, transactionService } from '@/services/inventoryService'
@@ -30,12 +30,39 @@ interface InventoryListProps {
   items: Item[]
 }
 
+const ITEM_FILTER_MODES = [
+  'all',
+  'bookmarked',
+  'from-inventory',
+  'to-return',
+  'returned',
+  'no-sku',
+  'no-description',
+  'no-project-price',
+  'no-image',
+  'no-transaction',
+] as const
+const ITEM_SORT_MODES = ['alphabetical', 'creationDate'] as const
+const DEFAULT_ITEM_FILTER = 'all'
+const DEFAULT_ITEM_SORT = 'creationDate'
+
+const parseItemFilterMode = (value: string | null) =>
+  ITEM_FILTER_MODES.includes(value as (typeof ITEM_FILTER_MODES)[number])
+    ? (value as (typeof ITEM_FILTER_MODES)[number])
+    : DEFAULT_ITEM_FILTER
+
+const parseItemSortMode = (value: string | null) =>
+  ITEM_SORT_MODES.includes(value as (typeof ITEM_SORT_MODES)[number])
+    ? (value as (typeof ITEM_SORT_MODES)[number])
+    : DEFAULT_ITEM_SORT
+
 export default function InventoryList({ projectId, projectName, items: propItems }: InventoryListProps) {
   const { currentAccountId, loading: accountLoading } = useAccount()
   const ENABLE_QR = import.meta.env.VITE_ENABLE_QR === 'true'
   const location = useLocation()
   const navigate = useNavigate()
-  const [searchQuery, setSearchQuery] = useState('')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchQuery, setSearchQuery] = useState(() => searchParams.get('itemSearch') ?? '')
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
   const [items, setItems] = useState<Item[]>(propItems || [])
   const [error, setError] = useState<string | null>(null)
@@ -57,10 +84,13 @@ export default function InventoryList({ projectId, projectName, items: propItems
     | 'no-project-price'
     | 'no-image'
     | 'no-transaction'
-  >('all')
+  >(() => parseItemFilterMode(searchParams.get('itemFilter')))
   const [showFilterMenu, setShowFilterMenu] = useState(false)
-  const [sortMode, setSortMode] = useState<'alphabetical' | 'creationDate'>('creationDate')
+  const [sortMode, setSortMode] = useState<'alphabetical' | 'creationDate'>(() =>
+    parseItemSortMode(searchParams.get('itemSort'))
+  )
   const [showSortMenu, setShowSortMenu] = useState(false)
+  const isSyncingFromUrlRef = useRef(false)
   const { showSuccess, showError } = useToast()
   const { refreshCollections: refreshRealtimeCollections } = useProjectRealtime(projectId)
   const hasRestoredScrollRef = useRef(false)
@@ -82,6 +112,48 @@ export default function InventoryList({ projectId, projectName, items: propItems
     window.addEventListener('resize', updateWidth)
     return () => window.removeEventListener('resize', updateWidth)
   }, [])
+
+  useEffect(() => {
+    const nextSearchQuery = searchParams.get('itemSearch') ?? ''
+    const nextFilterMode = parseItemFilterMode(searchParams.get('itemFilter'))
+    const nextSortMode = parseItemSortMode(searchParams.get('itemSort'))
+
+    const hasChanges =
+      searchQuery !== nextSearchQuery ||
+      filterMode !== nextFilterMode ||
+      sortMode !== nextSortMode
+
+    if (!hasChanges) return
+
+    isSyncingFromUrlRef.current = true
+    if (searchQuery !== nextSearchQuery) setSearchQuery(nextSearchQuery)
+    if (filterMode !== nextFilterMode) setFilterMode(nextFilterMode)
+    if (sortMode !== nextSortMode) setSortMode(nextSortMode)
+  }, [searchParams])
+
+  useEffect(() => {
+    if (isSyncingFromUrlRef.current) {
+      isSyncingFromUrlRef.current = false
+      return
+    }
+
+    const nextParams = new URLSearchParams(searchParams)
+    const setParam = (key: string, value: string, defaultValue: string) => {
+      if (!value || value === defaultValue) {
+        nextParams.delete(key)
+      } else {
+        nextParams.set(key, value)
+      }
+    }
+
+    setParam('itemSearch', searchQuery, '')
+    setParam('itemFilter', filterMode, DEFAULT_ITEM_FILTER)
+    setParam('itemSort', sortMode, DEFAULT_ITEM_SORT)
+
+    if (nextParams.toString() !== searchParams.toString()) {
+      setSearchParams(nextParams, { replace: true })
+    }
+  }, [filterMode, searchParams, searchQuery, setSearchParams, sortMode])
 
   const parseMoney = (value?: string | number | null) => {
     if (value === undefined || value === null) return 0
@@ -737,7 +809,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
 
             {/* Sort Dropdown Menu */}
             {showSortMenu && (
-              <div className="sort-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+              <div className="sort-menu absolute top-full left-0 mt-1 w-[min(10rem,calc(100vw-2rem))] bg-white border border-gray-200 rounded-md shadow-lg z-10 max-h-[70vh] overflow-y-auto sm:left-auto sm:right-0 sm:w-40">
                 <div className="py-1">
                   <button
                     onClick={() => {
@@ -783,7 +855,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
 
             {/* Filter Dropdown Menu */}
             {showFilterMenu && (
-              <div className="filter-menu absolute top-full right-0 mt-1 w-56 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+              <div className="filter-menu absolute top-full left-0 mt-1 w-[min(14rem,calc(100vw-2rem))] bg-white border border-gray-200 rounded-md shadow-lg z-10 max-h-[70vh] overflow-y-auto sm:left-auto sm:right-0 sm:w-56">
                 <div className="py-1">
                   <button
                     onClick={() => {

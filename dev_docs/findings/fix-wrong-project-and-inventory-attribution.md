@@ -1,5 +1,29 @@
 # Fixing “wrong project” mistakes + inventory attribution (grounded in current app behavior)
 
+## Contents
+
+- What’s already in place: current behaviors and constraints that shape the fixes.
+- 1) Canonical “Company Inventory” transactions: allocation creates/updates canonical inventory transactions.
+- 2) Project “Items” page is `InventoryList`: likely UI surface for fixes and bulk actions.
+- 3) Items can be created directly in a project: explains “no transaction” items.
+- 4) “Assign items to a transaction” UI: existing single/bulk reassignment is project-scoped.
+- 5) “Set disposition to inventory”: inventory designation triggers deallocation workflow.
+- The two problems you described: wrong-project corrections vs inventory attribution mistakes.
+- A) Users put transactions/items in the wrong project: needs safe cross-project correction.
+- B) Users add items directly to a project from inventory: needs a repair path.
+- Recommendations: proposed UX and service-level changes.
+- 0) “Associate with project” control: item detail/edit control with guarded behavior.
+- 1) Clarify vendor vs “came from inventory”: optional field to avoid source confusion.
+- 2) Move transaction to another project: non-canonical transaction move flow.
+- 3) Move item to another project: safe item-only reassignment rules.
+- 4) Make “add from inventory” the happy path: default entry point on project items.
+- 5) “Mark as from inventory” repair action: retrofit canonical purchase links.
+- Phase plan: incremental rollout plan by phase.
+- Phase 1: item-level association + safe move paths.
+- Phase 2: prevent recurrence with add-from-inventory.
+- Phase 3: repair tooling for inventory attribution.
+- Edge cases to explicitly handle: canonical IDs, moved-out items, offline behavior.
+
 ## What’s already in place (relevant to these problems)
 
 ### 1) Canonical “Company Inventory” transactions are real and are created/updated by allocation logic
@@ -95,7 +119,29 @@ You need a fast path that:
 
 ## Recommendations (least disruption, reuse existing components)
 
-## 0) Clarify vendor vs “came from inventory” with a new field (recommended)
+## 0) Add a simple “Associate with project” control in item detail + edit
+
+This is the simplest UX fix for wrong-project mistakes and keeps the correction where users are already looking.
+
+### UI (item detail + edit)
+
+- Control label: **“Associate with project”**
+- Helper text below: “If you accidentally added this item to the wrong project.”
+- The control is available on both Item Detail and Edit Item.
+
+### Behavior rules (consistent with current app logic)
+
+- If the item has **no transaction** (`!item.transactionId`), allow reassignment directly.
+- If the item has a **non-canonical transaction**, redirect to “Move transaction to project…” instead of splitting the transaction.
+- If the item is tied to a **canonical inventory transaction**, redirect to inventory allocation/deallocation workflows.
+
+### Why this is a better default
+
+- Keeps the correction in-context (users fix it where they notice it).
+- Avoids accidentally creating canonical inventory transactions.
+- Still leaves room for future bulk actions, but doesn’t require them upfront.
+
+## 1) Clarify vendor vs “came from inventory” with a new field (recommended)
 
 Right now `Item.source` is used everywhere as the “vendor/source” string (it’s displayed in item cards and also comes from the account’s vendor defaults list). That makes it a bad place to encode *two different meanings*:
 
@@ -130,7 +176,7 @@ Automation behavior with this field:
 
 This keeps your accounting model intact (inventory purchase/sale automation) while avoiding the confusing implication that “Inventory” replaces the original vendor.
 
-## 1) Add an explicit “Move transaction to another project” workflow (non-canonical only)
+## 2) Add an explicit “Move transaction to another project” workflow (non-canonical only)
 
 ### Why this is the lowest-disruption fix for wrong-project mistakes
 
@@ -159,13 +205,14 @@ Add a new method in `transactionService` (or a small dedicated service) that:
 - **TransactionDetail page**: add an overflow menu action “Move to project…”
   - Reuse your existing `Combobox` patterns (same as allocation modals in BusinessInventory).
 - **TransactionsList**: same action in each transaction row’s context menu.
+- **Item detail/edit**: this is the fallback path when the item has a non-canonical transaction.
 
 ### UX copy that steers users away from canonical inventory side effects
 
 - If `isCanonicalTransactionId(transactionId)`:
   - Show: “This is a Company Inventory transaction. Use inventory allocation/deallocation instead.”
 
-## 2) Add a simple “Move item to another project” workflow, but only for safe cases
+## 3) Add a simple “Move item to another project” workflow, but only for safe cases
 
 ### When item-only move is safe
 
@@ -184,8 +231,9 @@ Add a new method in `transactionService` (or a small dedicated service) that:
 - In `BulkItemControls`: add a “Move to project…” bulk action, but enforce the rules above:
   - If selection includes items tied to non-canonical transactions → suggest “move transaction instead”
   - If selection includes inventory-canonical items → suggest “reallocate inventory items instead”
+- In **Item detail/edit**: this is the direct path when `!item.transactionId`.
 
-## 3) Make “add from inventory” the default happy path on project items pages
+## 4) Make “add from inventory” the default happy path on project items pages
 
 This addresses the root cause behind problem (B): users are creating new project items instead of allocating existing inventory items.
 
@@ -207,7 +255,7 @@ Why this is low disruption:
 - You already have the correct canonical behavior implemented (`allocateItemToProject`).
 - You avoid building any new “canonical purchase creation” logic: you reuse the existing one.
 
-## 4) Add a “Mark as from inventory” repair action for items that were created directly in a project
+## 5) Add a “Mark as from inventory” repair action for items that were created directly in a project
 
 This is the repair path for already-bad data.
 
@@ -261,10 +309,11 @@ Important caution:
 
 ### Phase 1 (fastest value)
 
-- Add **Move transaction to project** (non-canonical only).
-- Add **Move item to project** for items with **no transaction** only.
+- Add **Associate with project** control to item detail + edit.
+- Back it with **Move item to project** for items with **no transaction** only.
+- Back it with **Move transaction to project** for items with **non-canonical transactions**.
 
-This immediately solves “wrong project” mistakes without touching the canonical inventory machinery.
+This immediately solves “wrong project” mistakes where users are already looking, without touching the canonical inventory machinery.
 
 ### Phase 2 (prevent recurrence)
 
