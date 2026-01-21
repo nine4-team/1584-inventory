@@ -90,6 +90,18 @@ export default function BusinessInventory() {
     [buildContextUrl, stackedNavigate]
   )
 
+  const handleTransactionNavigate = useCallback(
+    (transactionId: string) => {
+      if (!transactionId) return
+      stackedNavigate(
+        buildContextUrl(`/business-inventory/transaction/${transactionId}`),
+        undefined,
+        { scrollY: window.scrollY }
+      )
+    },
+    [buildContextUrl, stackedNavigate]
+  )
+
   const [inventorySearchQuery, setInventorySearchQuery] = useState<string>(() =>
     searchParams.get('bizItemSearch') ?? ''
   )
@@ -127,7 +139,8 @@ export default function BusinessInventory() {
   const { showOfflineSaved } = useOfflineFeedback()
   const { isOnline } = useNetworkState()
   const isSyncingFromUrlRef = useRef(false)
-  const hasRestoredScrollRef = useRef(false)
+  const hasRestoredInventoryScrollRef = useRef(false)
+  const hasRestoredTransactionScrollRef = useRef(false)
   const isLoading = accountLoading || realtimeLoading
 
   useEffect(() => {
@@ -181,12 +194,13 @@ export default function BusinessInventory() {
     setParam('bizTxFilter', transactionFilterMode, DEFAULT_BUSINESS_TX_FILTER)
 
     if (nextParams.toString() !== searchParams.toString()) {
-      setSearchParams(nextParams, { replace: true })
+      setSearchParams(nextParams, { replace: true, state: location.state })
     }
   }, [
     activeTab,
     filterMode,
     inventorySearchQuery,
+    location.state,
     searchParams,
     setSearchParams,
     sortMode,
@@ -429,18 +443,40 @@ export default function BusinessInventory() {
   }, [snapshotItems])
 
   useEffect(() => {
-    if (hasRestoredScrollRef.current || isLoading || activeTab !== 'inventory') return
+    if (hasRestoredInventoryScrollRef.current || isLoading || activeTab !== 'inventory') return
     const state = location.state && typeof location.state === 'object' ? (location.state as Record<string, unknown>) : null
     const restoreScrollY = state?.restoreScrollY
     if (!Number.isFinite(restoreScrollY)) return
 
-    hasRestoredScrollRef.current = true
+    // If we have a scroll position to restore, but no items yet, wait for items to load
+    // to ensure the page has enough height to scroll.
+    if (filteredItems.length === 0 && (restoreScrollY as number) > 0) return
+
+    hasRestoredInventoryScrollRef.current = true
     requestAnimationFrame(() => window.scrollTo(0, restoreScrollY as number))
 
     const { restoreScrollY: _restoreScrollY, ...rest } = state || {}
     const nextState = Object.keys(rest).length > 0 ? rest : undefined
     navigate(location.pathname + location.search, { replace: true, state: nextState })
-  }, [activeTab, isLoading, location.pathname, location.search, location.state, navigate])
+  }, [activeTab, isLoading, location.pathname, location.search, location.state, navigate, filteredItems])
+
+  useEffect(() => {
+    if (hasRestoredTransactionScrollRef.current || isLoading || activeTab !== 'transactions') return
+    const state = location.state && typeof location.state === 'object' ? (location.state as Record<string, unknown>) : null
+    const restoreScrollY = state?.restoreScrollY
+    if (!Number.isFinite(restoreScrollY)) return
+
+    // If we have a scroll position to restore, but no transactions yet, wait for transactions to load
+    // to ensure the page has enough height to scroll.
+    if (filteredTransactions.length === 0 && (restoreScrollY as number) > 0) return
+
+    hasRestoredTransactionScrollRef.current = true
+    requestAnimationFrame(() => window.scrollTo(0, restoreScrollY as number))
+
+    const { restoreScrollY: _restoreScrollY, ...rest } = state || {}
+    const nextState = Object.keys(rest).length > 0 ? rest : undefined
+    navigate(location.pathname + location.search, { replace: true, state: nextState })
+  }, [activeTab, isLoading, location.pathname, location.search, location.state, navigate, filteredTransactions])
 
   useEffect(() => {
     setTransactions(snapshotTransactions)
@@ -1466,7 +1502,23 @@ export default function BusinessInventory() {
                   <ul className="divide-y divide-gray-200">
                     {filteredTransactions.map((transaction) => (
                       <li key={transaction.transactionId} className="relative">
-                        <ContextLink to={buildContextUrl(`/business-inventory/transaction/${transaction.transactionId}`)}>
+                        <a
+                          href={buildContextUrl(`/business-inventory/transaction/${transaction.transactionId}`)}
+                          onClick={(event) => {
+                            if (
+                              event.defaultPrevented ||
+                              event.button !== 0 ||
+                              event.metaKey ||
+                              event.altKey ||
+                              event.ctrlKey ||
+                              event.shiftKey
+                            ) {
+                              return
+                            }
+                            event.preventDefault()
+                            handleTransactionNavigate(transaction.transactionId)
+                          }}
+                        >
                           <div className="block bg-gray-50 transition-colors duration-200 hover:bg-gray-100">
                             <div className="px-4 py-4 sm:px-6">
                             {/* Top row: Header with source and status */}
@@ -1522,7 +1574,7 @@ export default function BusinessInventory() {
 
                             </div>
                           </div>
-                        </ContextLink>
+                        </a>
                       </li>
                     ))}
                   </ul>

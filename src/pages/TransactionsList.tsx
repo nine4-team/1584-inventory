@@ -1,8 +1,9 @@
 import { Plus, Search, Filter, FileUp, ArrowUpDown } from 'lucide-react'
-import { useParams, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useStackedNavigate } from '@/hooks/useStackedNavigate'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Transaction, TransactionCompleteness, BudgetCategory } from '@/types'
 import { transactionService } from '@/services/inventoryService'
 import type { Transaction as TransactionType } from '@/types'
@@ -77,6 +78,9 @@ const parseSortMode = (value: string | null) =>
 export default function TransactionsList({ projectId: propProjectId, transactions: propTransactions }: TransactionsListProps) {
   const { id, projectId: routeProjectId } = useParams<{ id?: string; projectId?: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const stackedNavigate = useStackedNavigate()
   const { currentAccountId } = useAccount()
   // Use prop if provided, otherwise fall back to route param
   const projectId = propProjectId || routeProjectId || id
@@ -106,6 +110,22 @@ export default function TransactionsList({ projectId: propProjectId, transaction
   >(() => parseSortMode(searchParams.get('txSort')))
   const [showSortMenu, setShowSortMenu] = useState(false)
   const isSyncingFromUrlRef = useRef(false)
+  const hasRestoredScrollRef = useRef(false)
+
+  const handleTransactionNavigate = useCallback(
+    (transactionId: string) => {
+      if (!projectId || !transactionId) return
+      stackedNavigate(
+        buildContextUrl(
+          projectTransactionDetail(projectId, transactionId),
+          { project: projectId, transactionId }
+        ),
+        undefined,
+        { scrollY: window.scrollY }
+      )
+    },
+    [buildContextUrl, projectId, stackedNavigate]
+  )
 
   useEffect(() => {
     const nextSearchQuery = searchParams.get('txSearch') ?? ''
@@ -149,9 +169,23 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     setParam('txSort', sortMode, DEFAULT_SORT_MODE)
 
     if (nextParams.toString() !== searchParams.toString()) {
-      setSearchParams(nextParams, { replace: true })
+      setSearchParams(nextParams, { replace: true, state: location.state })
     }
-  }, [filterMode, searchQuery, setSearchParams, sortMode, sourceFilter])
+  }, [filterMode, location.state, searchQuery, setSearchParams, sortMode, sourceFilter])
+
+  useEffect(() => {
+    if (hasRestoredScrollRef.current || isLoading) return
+    const state = location.state && typeof location.state === 'object' ? (location.state as Record<string, unknown>) : null
+    const restoreScrollY = state?.restoreScrollY
+    if (!Number.isFinite(restoreScrollY)) return
+
+    hasRestoredScrollRef.current = true
+    requestAnimationFrame(() => window.scrollTo(0, restoreScrollY as number))
+
+    const { restoreScrollY: _restoreScrollY, ...rest } = state || {}
+    const nextState = Object.keys(rest).length > 0 ? rest : undefined
+    navigate(location.pathname + location.search, { replace: true, state: nextState })
+  }, [isLoading, location.pathname, location.search, location.state, navigate])
 
   // Load budget categories for display
   useEffect(() => {
@@ -680,8 +714,25 @@ export default function TransactionsList({ projectId: propProjectId, transaction
           <ul className="divide-y divide-gray-200">
             {filteredTransactions.map((transaction) => (
               <li key={transaction.transactionId} className="relative">
-                <ContextLink
-                  to={buildContextUrl(projectTransactionDetail(projectId, transaction.transactionId), { project: projectId, transactionId: transaction.transactionId })}
+                <a
+                  href={buildContextUrl(
+                    projectTransactionDetail(projectId, transaction.transactionId),
+                    { project: projectId, transactionId: transaction.transactionId }
+                  )}
+                  onClick={(event) => {
+                    if (
+                      event.defaultPrevented ||
+                      event.button !== 0 ||
+                      event.metaKey ||
+                      event.altKey ||
+                      event.ctrlKey ||
+                      event.shiftKey
+                    ) {
+                      return
+                    }
+                    event.preventDefault()
+                    handleTransactionNavigate(transaction.transactionId)
+                  }}
                   className="block bg-gray-50 transition-colors duration-200 hover:bg-gray-100"
                 >
                   <div className="px-4 py-4 sm:px-6">
@@ -765,7 +816,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                     </div>
 
                   </div>
-                </ContextLink>
+                </a>
               </li>
             ))}
           </ul>
