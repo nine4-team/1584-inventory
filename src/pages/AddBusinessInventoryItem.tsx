@@ -25,6 +25,7 @@ import { OfflineContextError } from '@/services/operationQueue'
 import { useBusinessInventoryRealtime } from '@/contexts/BusinessInventoryRealtimeContext'
 
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE } from '@/constants/company'
+import SpeechMicButton from '@/components/ui/SpeechMicButton'
 
 // Get canonical transaction title for display
 const getCanonicalTransactionTitle = (transaction: Transaction): string => {
@@ -497,14 +498,23 @@ export default function AddBusinessInventoryItem() {
                   <label htmlFor="sku" className="block text-sm font-medium text-gray-700">
                     SKU
                   </label>
-                  <input
-                    type="text"
-                    id="sku"
-                    value={formData.sku}
-                    onChange={(e) => handleInputChange('sku', e.target.value)}
-              placeholder="Product SKU or model number"
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                  />
+                  <div className="mt-1 relative">
+                    <input
+                      type="text"
+                      id="sku"
+                      value={formData.sku}
+                      onChange={(e) => handleInputChange('sku', e.target.value)}
+                      placeholder="Product SKU or model number"
+                      className="block w-full px-3 py-2 pr-12 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                    />
+                    <SpeechMicButton
+                      value={formData.sku}
+                      onChangeText={(next) => handleInputChange('sku', next)}
+                      label="SKU"
+                      append={false}
+                      normalize="sku"
+                    />
+                  </div>
                 </div>
 
           {/* Quantity */}
@@ -529,20 +539,28 @@ export default function AddBusinessInventoryItem() {
             <label htmlFor="description" className="block text-sm font-medium text-gray-700">
               Description
             </label>
-                  <input
-                    type="text"
-                    id="description"
-                    value={formData.description}
-                    onChange={(e) => handleInputChange('description', e.target.value)}
-              placeholder="e.g., Wooden dining table, 6 chairs"
-              className={`mt-1 block w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 ${
-                errors.description ? 'border-red-300' : 'border-gray-300'
-                    }`}
-                  />
+            <div className="mt-1 relative">
+              <input
+                type="text"
+                id="description"
+                value={formData.description}
+                onChange={(e) => handleInputChange('description', e.target.value)}
+                placeholder="e.g., Wooden dining table, 6 chairs"
+                className={`block w-full px-3 py-2 pr-12 border rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 ${
+                  errors.description ? 'border-red-300' : 'border-gray-300'
+                }`}
+              />
+              <SpeechMicButton
+                value={formData.description}
+                onChangeText={(next) => handleInputChange('description', next)}
+                label="Description"
+                append={true}
+              />
+            </div>
             {errors.description && (
               <p className="mt-1 text-sm text-red-600">{errors.description}</p>
-                  )}
-                </div>
+            )}
+          </div>
 
           {/* Transaction Selection */}
           <Combobox
@@ -725,16 +743,24 @@ export default function AddBusinessInventoryItem() {
                   <label htmlFor="businessInventoryLocation" className="block text-sm font-medium text-gray-700">
                     Storage Location
                   </label>
-                  <input
-                    type="text"
-                    id="businessInventoryLocation"
-                    value={formData.businessInventoryLocation}
-                    onChange={(e) => handleInputChange('businessInventoryLocation', e.target.value)}
-                    placeholder="e.g., Warehouse A - Section 3 - Shelf 5"
-              className={`mt-1 block w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 ${
-                errors.businessInventoryLocation ? 'border-red-300' : 'border-gray-300'
-              }`}
-            />
+                  <div className="mt-1 relative">
+                    <input
+                      type="text"
+                      id="businessInventoryLocation"
+                      value={formData.businessInventoryLocation}
+                      onChange={(e) => handleInputChange('businessInventoryLocation', e.target.value)}
+                      placeholder="e.g., Warehouse A - Section 3 - Shelf 5"
+                      className={`block w-full px-3 py-2 pr-12 border rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 ${
+                        errors.businessInventoryLocation ? 'border-red-300' : 'border-gray-300'
+                      }`}
+                    />
+                    <SpeechMicButton
+                      value={formData.businessInventoryLocation}
+                      onChangeText={(next) => handleInputChange('businessInventoryLocation', next)}
+                      label="Storage Location"
+                      append={false}
+                    />
+                  </div>
             {errors.businessInventoryLocation && (
               <p className="mt-1 text-sm text-red-600">{errors.businessInventoryLocation}</p>
                   )}
@@ -768,14 +794,23 @@ export default function AddBusinessInventoryItem() {
                   <label htmlFor="notes" className="block text-sm font-medium text-gray-700">
                     Notes
                   </label>
-                  <textarea
-                    id="notes"
-                    rows={3}
-                    value={formData.notes}
-                    onChange={(e) => handleInputChange('notes', e.target.value)}
-                    placeholder="Additional notes about this item..."
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                  />
+                  <div className="mt-1 relative">
+                    <textarea
+                      id="notes"
+                      rows={3}
+                      value={formData.notes}
+                      onChange={(e) => handleInputChange('notes', e.target.value)}
+                      placeholder="Additional notes about this item..."
+                      className="block w-full px-3 py-2 pr-12 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                    />
+                    <SpeechMicButton
+                      value={formData.notes}
+                      onChangeText={(next) => handleInputChange('notes', next)}
+                      label="Notes"
+                      append={true}
+                      className="top-3 translate-y-0"
+                    />
+                  </div>
                 </div>
 
           {/* Error message */}
