@@ -491,27 +491,39 @@ export default function ImageGallery({ images, initialIndex = 0, onClose }: Imag
       onClick={() => {
         if (suppressClickRef.current) {
           suppressClickRef.current = false
+          // First tap after a drag/pinch should bring controls back.
+          setUiVisible(true)
+          showUi()
           return
         }
-        setUiVisible(v => !v)
+        setUiVisible(v => {
+          const next = !v
+          if (next) showUi()
+          return next
+        })
       }}
       aria-modal="true"
       role="dialog"
     >
       <div className="w-full h-full flex flex-col">
+        {/* Close button should ALWAYS be accessible */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onClose()
+          }}
+          className={`absolute top-4 right-4 z-30 p-2 text-white hover:text-gray-300 transition-colors ${
+            uiVisible ? '' : 'opacity-90 bg-black/40 rounded-full'
+          }`}
+          aria-label="Close gallery"
+          title="Close (Esc)"
+        >
+          <X className="h-6 w-6" />
+        </button>
+
         {/* Top overlay controls */}
         {uiVisible && (
           <>
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                onClose()
-              }}
-              className="absolute top-4 right-4 z-20 p-2 text-white hover:text-gray-300 transition-colors"
-              aria-label="Close gallery"
-            >
-              <X className="h-6 w-6" />
-            </button>
 
             {isMultiImage && (
               <>
