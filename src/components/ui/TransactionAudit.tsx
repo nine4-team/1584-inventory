@@ -27,6 +27,7 @@ export default function TransactionAudit({
   const [showSuggested, setShowSuggested] = useState(true)
   const [suggestedItems, setSuggestedItems] = useState<Item[]>([])
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false)
+  const [suggestedSearch, setSuggestedSearch] = useState('')
   const transactionItemIds = useMemo(() => {
     const ids = new Set<string>()
 
@@ -181,6 +182,16 @@ export default function TransactionAudit({
       showError('Failed to add item to transaction')
     }
   }
+
+  const filteredSuggestedItems = useMemo(() => {
+    const query = suggestedSearch.trim().toLowerCase()
+    if (!query) return suggestedItems
+    return suggestedItems.filter(item => {
+      const description = item.description?.toLowerCase() ?? ''
+      const sku = item.sku?.toLowerCase() ?? ''
+      return description.includes(query) || sku.includes(query)
+    })
+  }, [suggestedItems, suggestedSearch])
 
   if (isLoading || !completeness) {
     return (
@@ -383,7 +394,17 @@ export default function TransactionAudit({
                 <div className="text-sm text-gray-500 mt-3">Loading suggestions...</div>
               ) : suggestedItems.length > 0 ? (
                 <div className="space-y-2 mt-3">
-                  {suggestedItems.map((item) => (
+                  <div>
+                    <input
+                      type="search"
+                      value={suggestedSearch}
+                      onChange={event => setSuggestedSearch(event.target.value)}
+                      placeholder="Search suggested items"
+                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                    />
+                  </div>
+                  {filteredSuggestedItems.length > 0 ? (
+                    filteredSuggestedItems.map((item) => (
                     <div
                       key={item.itemId}
                       className="flex items-center justify-between p-2 bg-gray-50 rounded-md"
@@ -403,7 +424,10 @@ export default function TransactionAudit({
                         Add
                       </button>
                     </div>
-                  ))}
+                  ))
+                  ) : (
+                    <div className="text-sm text-gray-500">No suggested items match your search.</div>
+                  )}
                 </div>
               ) : (
                 <div className="text-sm text-gray-500 mt-3">No unassociated items found for this vendor.</div>
