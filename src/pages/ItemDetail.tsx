@@ -53,6 +53,7 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
   const [loadingProjects, setLoadingProjects] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState('')
   const [isUpdatingProject, setIsUpdatingProject] = useState(false)
+  const [showProjectMenu, setShowProjectMenu] = useState(false)
   const { showError, showSuccess } = useToast()
   const { buildContextUrl, getBackDestination } = useNavigationContext()
   const { isOnline } = useNetworkState()
@@ -498,6 +499,7 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
       showError('Failed to associate project. Please try again.')
     } finally {
       setIsUpdatingProject(false)
+      setShowProjectMenu(false)
     }
   }, [item, currentAccountId, showError, showSuccess, navigate, buildContextUrl, projects])
 
@@ -1106,23 +1108,6 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
                 <dt className="text-xs font-medium text-gray-500 uppercase tracking-wide">Project</dt>
                 <dd className="mt-1 text-sm text-gray-900">{projectName}</dd>
               </div>
-              {!isBusinessInventoryItem && (
-                <div className="sm:col-span-3">
-                  <Combobox
-                    label="Associate with project"
-                    value={selectedProjectValue}
-                    onChange={handleAssociateProject}
-                    helperText="If you accidentally added this item to the wrong project."
-                    disabled={associateDisabled}
-                    loading={loadingProjects || isUpdatingProject}
-                    placeholder={loadingProjects ? 'Loading projects...' : 'Select a project'}
-                    options={projectOptions}
-                  />
-                  {associateDisabledReason && (
-                    <p className="mt-1 text-xs text-amber-600">{associateDisabledReason}</p>
-                  )}
-                </div>
-              )}
               <div>
                 <dt className="text-xs font-medium text-gray-500 uppercase tracking-wide">Created</dt>
                 <dd className="mt-1 text-sm text-gray-900">{formatDate(item.dateCreated)}</dd>
@@ -1255,93 +1240,134 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
     <div className="space-y-6">
       {onClose ? (
         <div className="bg-white border border-gray-200 rounded-lg p-6">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-2">
             <h3 className="text-lg font-medium text-gray-900">Item</h3>
             <div className="flex items-center gap-2">
-              <button
-                onClick={toggleBookmark}
-                className={`inline-flex items-center justify-center p-2 border text-sm font-medium rounded-md ${
-                  item.bookmark
-                    ? 'border-red-300 text-red-700 bg-red-50 hover:bg-red-100'
-                    : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
-                } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500`}
-                title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
-              >
-                <Bookmark className="h-4 w-4" fill={item.bookmark ? 'currentColor' : 'none'} />
-              </button>
+                  <button
+                    onClick={toggleBookmark}
+                    className={`inline-flex items-center justify-center p-2 border text-sm font-medium rounded-md ${
+                      item.bookmark
+                        ? 'border-red-300 text-red-700 bg-red-50 hover:bg-red-100'
+                        : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
+                    } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500`}
+                    title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
+                  >
+                    <Bookmark className="h-4 w-4" fill={item.bookmark ? 'currentColor' : 'none'} />
+                  </button>
 
-              <ContextLink
-                to={isBusinessInventoryItem
-                  ? buildContextUrl(`/business-inventory/${item.itemId}/edit`)
-                : projectId
-                  ? buildContextUrl(projectItemEdit(projectId, item.itemId), { project: projectId })
-                  : buildContextUrl(`/business-inventory/${item.itemId}/edit`)
-                }
-                className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                title="Edit Item"
-              >
-                <Edit className="h-4 w-4" />
-              </ContextLink>
+                  <ContextLink
+                    to={isBusinessInventoryItem
+                      ? buildContextUrl(`/business-inventory/${item.itemId}/edit`)
+                    : projectId
+                      ? buildContextUrl(projectItemEdit(projectId, item.itemId), { project: projectId })
+                      : buildContextUrl(`/business-inventory/${item.itemId}/edit`)
+                    }
+                    className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                    title="Edit Item"
+                  >
+                    <Edit className="h-4 w-4" />
+                  </ContextLink>
 
-              <DuplicateQuantityMenu
-                onDuplicate={(quantity) => duplicateItem(item.itemId, quantity)}
-                buttonClassName="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                buttonTitle="Duplicate Item"
-                buttonContent={<Copy className="h-4 w-4" />}
-              />
+                  <DuplicateQuantityMenu
+                    onDuplicate={(quantity) => duplicateItem(item.itemId, quantity)}
+                    buttonClassName="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                    buttonTitle="Duplicate Item"
+                    buttonContent={<Copy className="h-4 w-4" />}
+                  />
 
-              {ENABLE_QR && (
-                <button
-                  className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                  onClick={() => window.open(`/qr-image/${item.qrKey}`, '_blank')}
-                  title="View QR Code"
-                >
-                  <QrCode className="h-4 w-4" />
-                </button>
-              )}
+                  {ENABLE_QR && (
+                    <button
+                      className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                      onClick={() => window.open(`/qr-image/${item.qrKey}`, '_blank')}
+                      title="View QR Code"
+                    >
+                      <QrCode className="h-4 w-4" />
+                    </button>
+                  )}
 
+                  <div className="relative">
+                    <span
+                      onClick={toggleDispositionMenu}
+                      className={`disposition-badge ${getDispositionBadgeClasses(item.disposition)}`}
+                    >
+                      {displayDispositionLabel(item.disposition)}
+                      <ChevronDown className="h-3 w-3 ml-1" />
+                    </span>
+
+                    {/* Dropdown menu */}
+                    {openDispositionMenu && (
+                      <div className="disposition-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-20">
+                        <div className="py-2">
+                          {DISPOSITION_OPTIONS.map((disposition) => (
+                            <button
+                              key={disposition}
+                              onClick={() => updateDisposition(disposition)}
+                              className={`block w-full text-left px-4 py-3 text-sm hover:bg-gray-50 ${
+                                dispositionsEqual(item.disposition, disposition) ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
+                              }`}
+                            >
+                              {displayDispositionLabel(disposition)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault()
+                      onClose()
+                    }}
+                    className="text-gray-400 hover:text-gray-600"
+                    type="button"
+                    aria-label="Close item view"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+              </div>
+            </div>
+          {!isBusinessInventoryItem && (
+            <div className="flex justify-end mb-4">
               <div className="relative">
-                <span
-                  onClick={toggleDispositionMenu}
-                  className={`disposition-badge ${getDispositionBadgeClasses(item.disposition)}`}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!associateDisabled) {
+                      setShowProjectMenu(prev => !prev)
+                    }
+                  }}
+                  className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-900 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+                  title={associateDisabledReason || 'Associate with project'}
+                  disabled={associateDisabled}
                 >
-                  {displayDispositionLabel(item.disposition)}
+                  Associate with project
                   <ChevronDown className="h-3 w-3 ml-1" />
-                </span>
-
-                {/* Dropdown menu */}
-                {openDispositionMenu && (
-                  <div className="disposition-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-20">
-                    <div className="py-2">
-                      {DISPOSITION_OPTIONS.map((disposition) => (
+                </button>
+                {item.transactionId && associateDisabledReason && (
+                  <p className="mt-1 text-xs text-gray-500">{associateDisabledReason}</p>
+                )}
+                {showProjectMenu && !associateDisabled && (
+                  <div className="absolute right-0 mt-1 w-64 bg-white border border-gray-200 rounded-md shadow-lg z-20">
+                    <div className="py-1">
+                      {projectOptions.map((option) => (
                         <button
-                          key={disposition}
-                          onClick={() => updateDisposition(disposition)}
-                          className={`block w-full text-left px-4 py-3 text-sm hover:bg-gray-50 ${
-                            dispositionsEqual(item.disposition, disposition) ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
+                          key={option.id}
+                          type="button"
+                          onClick={() => handleAssociateProject(option.id)}
+                          className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                            option.id === item.projectId ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
                           }`}
                         >
-                          {displayDispositionLabel(disposition)}
+                          {option.label}
                         </button>
                       ))}
                     </div>
                   </div>
                 )}
               </div>
-
-              <button
-                onClick={(e) => {
-                  e.preventDefault()
-                  onClose()
-                }}
-                className="text-gray-400 hover:text-gray-600"
-                type="button"
-                aria-label="Close item view"
-              >
-                <X className="h-5 w-5" />
-              </button>
             </div>
-          </div>
+          )}
           {content}
         </div>
       ) : (
@@ -1385,71 +1411,112 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
               </div>
 
               <div className="flex flex-wrap gap-2 sm:space-x-2">
-                <button
-                  onClick={toggleBookmark}
-                  className={`inline-flex items-center justify-center p-2 border text-sm font-medium rounded-md ${
-                    item.bookmark
-                      ? 'border-red-300 text-red-700 bg-red-50 hover:bg-red-100'
-                      : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
-                  } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500`}
-                  title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
-                >
-                  <Bookmark className="h-4 w-4" fill={item.bookmark ? 'currentColor' : 'none'} />
-                </button>
-
-                <ContextLink
-                  to={isBusinessInventoryItem
-                    ? buildContextUrl(`/business-inventory/${item.itemId}/edit`)
-                  : projectId
-                    ? buildContextUrl(projectItemEdit(projectId, item.itemId), { project: projectId })
-                    : buildContextUrl(`/business-inventory/${item.itemId}/edit`)
-                  }
-                  className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                  title="Edit Item"
-                >
-                  <Edit className="h-4 w-4" />
-                </ContextLink>
-
-                <DuplicateQuantityMenu
-                  onDuplicate={(quantity) => duplicateItem(item.itemId, quantity)}
-                  buttonClassName="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                  buttonTitle="Duplicate Item"
-                  buttonContent={<Copy className="h-4 w-4" />}
-                />
-
-                {ENABLE_QR && (
                   <button
-                    className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                    onClick={() => window.open(`/qr-image/${item.qrKey}`, '_blank')}
-                    title="View QR Code"
+                    onClick={toggleBookmark}
+                    className={`inline-flex items-center justify-center p-2 border text-sm font-medium rounded-md ${
+                      item.bookmark
+                        ? 'border-red-300 text-red-700 bg-red-50 hover:bg-red-100'
+                        : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
+                    } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500`}
+                    title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
                   >
-                    <QrCode className="h-4 w-4" />
+                    <Bookmark className="h-4 w-4" fill={item.bookmark ? 'currentColor' : 'none'} />
                   </button>
-                )}
 
-
-                <div className="relative">
-                  <span
-                    onClick={toggleDispositionMenu}
-                    className={`disposition-badge ${getDispositionBadgeClasses(item.disposition)}`}
+                  <ContextLink
+                    to={isBusinessInventoryItem
+                      ? buildContextUrl(`/business-inventory/${item.itemId}/edit`)
+                    : projectId
+                      ? buildContextUrl(projectItemEdit(projectId, item.itemId), { project: projectId })
+                      : buildContextUrl(`/business-inventory/${item.itemId}/edit`)
+                    }
+                    className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                    title="Edit Item"
                   >
-                    {displayDispositionLabel(item.disposition)}
-                    <ChevronDown className="h-3 w-3 ml-1" />
-                  </span>
+                    <Edit className="h-4 w-4" />
+                  </ContextLink>
 
-                  {/* Dropdown menu */}
-                  {openDispositionMenu && (
-                    <div className="disposition-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-20">
-                      <div className="py-2">
-                        {DISPOSITION_OPTIONS.map((disposition) => (
+                  <DuplicateQuantityMenu
+                    onDuplicate={(quantity) => duplicateItem(item.itemId, quantity)}
+                    buttonClassName="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                    buttonTitle="Duplicate Item"
+                    buttonContent={<Copy className="h-4 w-4" />}
+                  />
+
+                  {ENABLE_QR && (
+                    <button
+                      className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                      onClick={() => window.open(`/qr-image/${item.qrKey}`, '_blank')}
+                      title="View QR Code"
+                    >
+                      <QrCode className="h-4 w-4" />
+                    </button>
+                  )}
+
+
+                  <div className="relative">
+                    <span
+                      onClick={toggleDispositionMenu}
+                      className={`disposition-badge ${getDispositionBadgeClasses(item.disposition)}`}
+                    >
+                      {displayDispositionLabel(item.disposition)}
+                      <ChevronDown className="h-3 w-3 ml-1" />
+                    </span>
+
+                    {/* Dropdown menu */}
+                    {openDispositionMenu && (
+                      <div className="disposition-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-20">
+                        <div className="py-2">
+                          {DISPOSITION_OPTIONS.map((disposition) => (
+                            <button
+                              key={disposition}
+                              onClick={() => updateDisposition(disposition)}
+                              className={`block w-full text-left px-4 py-3 text-sm hover:bg-gray-50 ${
+                                dispositionsEqual(item.disposition, disposition) ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
+                              }`}
+                            >
+                              {displayDispositionLabel(disposition)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+              </div>
+            </div>
+            {!isBusinessInventoryItem && (
+              <div className="mt-2 flex justify-end">
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!associateDisabled) {
+                        setShowProjectMenu(prev => !prev)
+                      }
+                    }}
+                    className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-900 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+                    title={associateDisabledReason || 'Associate with project'}
+                    disabled={associateDisabled}
+                  >
+                    Associate with project
+                    <ChevronDown className="h-3 w-3 ml-1" />
+                  </button>
+                  {item.transactionId && associateDisabledReason && (
+                    <p className="mt-1 text-xs text-gray-500">{associateDisabledReason}</p>
+                  )}
+                  {showProjectMenu && !associateDisabled && (
+                    <div className="absolute right-0 mt-1 w-64 bg-white border border-gray-200 rounded-md shadow-lg z-20">
+                      <div className="py-1">
+                        {projectOptions.map((option) => (
                           <button
-                            key={disposition}
-                            onClick={() => updateDisposition(disposition)}
-                            className={`block w-full text-left px-4 py-3 text-sm hover:bg-gray-50 ${
-                              dispositionsEqual(item.disposition, disposition) ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
+                            key={option.id}
+                            type="button"
+                            onClick={() => handleAssociateProject(option.id)}
+                            className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                              option.id === item.projectId ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
                             }`}
                           >
-                            {displayDispositionLabel(disposition)}
+                            {option.label}
                           </button>
                         ))}
                       </div>
@@ -1457,7 +1524,7 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
                   )}
                 </div>
               </div>
-            </div>
+            )}
           </div>
           {content}
         </>
