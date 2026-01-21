@@ -136,7 +136,7 @@ export interface Item {
   lastUpdated: string;
   images?: ItemImage[];         // Images associated with this item
   // Tax fields
-  taxRatePct?: number; // percentage, e.g., 8.25
+  taxRatePct?: number | null; // percentage, e.g., 8.25; null = none
   taxAmountPurchasePrice?: string; // Tax amount applied to `purchasePrice` (stored as four-decimal string; display as 2-decimal)
   taxAmountProjectPrice?: string;  // Tax amount applied to `projectPrice` (stored as four-decimal string; display as 2-decimal)
   createdBy?: string;
@@ -262,9 +262,9 @@ export interface Transaction {
   // NEW: Item linkage for unified inventory system
   itemIds?: string[]; // Links to items in the top-level items collection
   // Tax fields
-  taxRatePreset?: string; // ID of the selected preset (e.g., 'nv', 'ut', etc.) or 'Other' for custom
-  taxRatePct?: number; // percentage, e.g., 8.25 (calculated from preset or subtotal)
-  subtotal?: string; // pre-tax amount as string, e.g. '100.00' (used when tax_rate_preset is 'Other')
+  taxRatePreset?: string | null; // ID of the selected preset (e.g., 'nv', 'ut', etc.) or 'Other' for custom; null = none
+  taxRatePct?: number | null; // percentage, e.g., 8.25 (calculated from preset or subtotal); null = none
+  subtotal?: string | null; // pre-tax amount as string, e.g. '100.00' (used when tax_rate_preset is 'Other'); null = none
   needsReview?: boolean; // Denormalized flag from DB: true if transaction needs audit review
   sumItemPurchasePrices?: string; // Denormalized numeric string stored as two-decimal string, e.g. '123.45'
 }
@@ -307,8 +307,8 @@ export interface TransactionFormData {
   receiptEmailed?: boolean;
   items?: TransactionItemFormData[];
   // Tax form fields
-  taxRatePreset?: string; // ID of the selected preset (e.g., 'nv', 'ut', etc.) or 'Other' for custom
-  subtotal?: string; // pre-tax amount as string, e.g. '100.00' (used when tax_rate_preset is 'Other')
+  taxRatePreset?: string | null; // ID of the selected preset (e.g., 'nv', 'ut', etc.) or 'Other' for custom; null = none
+  subtotal?: string | null; // pre-tax amount as string, e.g. '100.00' (used when tax_rate_preset is 'Other'); null = none
 }
 
 export interface TransactionItemFormData {

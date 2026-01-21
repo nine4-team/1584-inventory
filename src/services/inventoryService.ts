@@ -305,7 +305,7 @@ async function queueTransactionItemsOffline(
       qrKey,
       bookmark: false,
       createdAt: transactionData.transactionDate ? new Date(transactionData.transactionDate) : new Date(timestamp),
-      taxRatePct: taxRatePct ?? transactionData.taxRatePct,
+      taxRatePct: (taxRatePct ?? transactionData.taxRatePct) ?? undefined,
       taxAmountPurchasePrice: itemData.taxAmountPurchasePrice,
       taxAmountProjectPrice: itemData.taxAmountProjectPrice,
       images: itemData.images || [],
@@ -2638,7 +2638,11 @@ export const transactionService = {
       await ensureAuthenticatedForDatabase()
 
       // Apply business rules for reimbursement type and status (using camelCase)
-      const finalUpdates: Partial<Transaction> = { ...updates }
+      const finalUpdates: Partial<Transaction> & {
+        taxRatePreset?: string | null
+        taxRatePct?: number | null
+        subtotal?: string | null
+      } = { ...updates }
 
       // If status is being set to 'completed', clear reimbursementType
       if (finalUpdates.status === 'completed' && finalUpdates.reimbursementType !== undefined) {
@@ -2658,7 +2662,14 @@ export const transactionService = {
 
       // Apply tax mapping / computation before save (using camelCase)
       if (finalUpdates.taxRatePreset !== undefined) {
-        if (finalUpdates.taxRatePreset === 'Other') {
+        const presetSelection = finalUpdates.taxRatePreset
+
+        // Treat null/empty-string as an explicit "None" selection (clear tax fields)
+        if (presetSelection === null || presetSelection === '') {
+          finalUpdates.taxRatePreset = null
+          finalUpdates.taxRatePct = null
+          finalUpdates.subtotal = null
+        } else if (presetSelection === 'Other') {
           // Compute from provided subtotal and amount if present in updates or existing doc
           const { data: existing } = await supabase
             .from('transactions')
@@ -2669,16 +2680,19 @@ export const transactionService = {
 
           const existingData = existing as { amount?: string; subtotal?: string } | null
           const amountVal = finalUpdates.amount !== undefined ? parseFloat(finalUpdates.amount) : parseFloat(existingData?.amount || '0')
-          const subtotalVal = finalUpdates.subtotal !== undefined ? parseFloat(finalUpdates.subtotal) : parseFloat(existingData?.subtotal || '0')
+          const subtotalVal =
+            finalUpdates.subtotal !== undefined && finalUpdates.subtotal !== null
+              ? parseFloat(finalUpdates.subtotal)
+              : parseFloat(existingData?.subtotal || '0')
           if (!isNaN(amountVal) && !isNaN(subtotalVal) && subtotalVal > 0 && amountVal >= subtotalVal) {
             const rate = ((amountVal - subtotalVal) / subtotalVal) * 100
             finalUpdates.taxRatePct = rate
           }
         } else {
           // Look up preset by ID
-          const preset = await getTaxPresetById(accountId, finalUpdates.taxRatePreset)
+          const preset = await getTaxPresetById(accountId, presetSelection)
           if (!preset) {
-            throw new Error(`Tax preset with ID '${finalUpdates.taxRatePreset}' not found.`)
+            throw new Error(`Tax preset with ID '${presetSelection}' not found.`)
           }
           finalUpdates.taxRatePct = preset.rate
           // Remove subtotal when using presets

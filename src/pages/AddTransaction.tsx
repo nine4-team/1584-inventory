@@ -407,9 +407,9 @@ export default function AddTransaction() {
         projectId: projectId,
         projectName: projectName,
         createdBy: user.id,
-        taxRatePreset: taxRatePreset,
+        taxRatePreset: taxRatePreset ?? null,
         receiptEmailed: formData.receiptEmailed ?? false,
-        subtotal: taxRatePreset === 'Other' ? subtotal : '',
+        subtotal: taxRatePreset === 'Other' ? subtotal : null,
         ...(processedReceiptImages && { receiptImages: processedReceiptImages }),
         ...(processedOtherImages && { otherImages: processedOtherImages })
       }
@@ -888,12 +888,29 @@ export default function AddTransaction() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-3">Tax Rate Preset</label>
             <div className="space-y-2">
+              <div className="flex items-center">
+                <input
+                  type="radio"
+                  id="tax_preset_none"
+                  name="tax_rate_preset"
+                  value=""
+                  checked={!taxRatePreset}
+                  onChange={() => {
+                    setTaxRatePreset(undefined)
+                    setSubtotal('')
+                  }}
+                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
+                />
+                <label htmlFor="tax_preset_none" className="ml-2 block text-sm text-gray-900">
+                  None
+                </label>
+              </div>
               {taxPresets.map((preset) => (
                 <div key={preset.id} className="flex items-center">
                   <input
                     type="radio"
                     id={`tax_preset_${preset.id}`}
-                    name="taxRatePreset"
+                    name="tax_rate_preset"
                     value={preset.id}
                     checked={taxRatePreset === preset.id}
                     onChange={(e) => setTaxRatePreset(e.target.value)}
@@ -911,7 +928,9 @@ export default function AddTransaction() {
                   name="tax_rate_preset"
                   value="Other"
                   checked={taxRatePreset === 'Other'}
-                  onChange={(e) => setTaxRatePreset(e.target.value)}
+                  onChange={(e) => {
+                    setTaxRatePreset(e.target.value)
+                  }}
                   className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
                 />
                 <label htmlFor="tax_preset_other" className="ml-2 block text-sm text-gray-900">
