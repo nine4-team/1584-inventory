@@ -1,4 +1,4 @@
-import { Plus, Search, Filter, FileUp } from 'lucide-react'
+import { Plus, Search, Filter, FileUp, ArrowUpDown } from 'lucide-react'
 import { useParams } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
@@ -65,7 +65,20 @@ export default function TransactionsList({ projectId: propProjectId, transaction
   // Search and filter state
   const [searchQuery, setSearchQuery] = useState<string>('')
   const [showFilterMenu, setShowFilterMenu] = useState(false)
+  const [filterMenuView, setFilterMenuView] = useState<'main' | 'source'>('main')
   const [filterMode, setFilterMode] = useState<'all' | 'we-owe' | 'client-owes'>('all')
+  const [sourceFilter, setSourceFilter] = useState<string>('all')
+
+  // Sort state
+  const [sortMode, setSortMode] = useState<
+    'date-desc'
+    | 'date-asc'
+    | 'source-asc'
+    | 'source-desc'
+    | 'amount-desc'
+    | 'amount-asc'
+  >('date-desc')
+  const [showSortMenu, setShowSortMenu] = useState(false)
 
   // Load budget categories for display
   useEffect(() => {
@@ -195,6 +208,18 @@ export default function TransactionsList({ projectId: propProjectId, transaction
 
   // Filter transactions based on search and filter mode
   const filteredTransactions = useMemo(() => {
+    const parseMoney = (value: string | undefined): number => {
+      if (!value) return 0
+      const n = Number.parseFloat(value)
+      return Number.isFinite(n) ? n : 0
+    }
+
+    const parseDate = (value: string | undefined): number => {
+      if (!value) return 0
+      const ms = Date.parse(value)
+      return Number.isFinite(ms) ? ms : 0
+    }
+
     let filtered = transactions
 
     // Apply reimbursement type filter based on filter mode
@@ -206,18 +231,66 @@ export default function TransactionsList({ projectId: propProjectId, transaction
       }
     }
 
-    // Apply search filter
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase()
-      filtered = filtered.filter(t =>
-        t.source?.toLowerCase().includes(query) ||
-        t.transactionType?.toLowerCase().includes(query) ||
-        t.notes?.toLowerCase().includes(query)
-      )
+    // Apply source filter (based on what we display in the title)
+    if (sourceFilter !== 'all') {
+      filtered = filtered.filter(t => getCanonicalTransactionTitle(t) === sourceFilter)
     }
 
-    return filtered
-  }, [transactions, filterMode, searchQuery])
+    // Apply search filter (source/title/type/notes/amount)
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase().trim()
+      const numericQuery = query.replace(/[^0-9.]/g, '')
+      filtered = filtered.filter(t => {
+        const title = getCanonicalTransactionTitle(t).toLowerCase()
+        const source = t.source?.toLowerCase() ?? ''
+        const type = t.transactionType?.toLowerCase() ?? ''
+        const notes = t.notes?.toLowerCase() ?? ''
+        const amountStr = (t.amount ?? '').toString()
+        const amountNormalized = amountStr.replace(/[^0-9.]/g, '')
+
+        const matchesText =
+          title.includes(query) ||
+          source.includes(query) ||
+          type.includes(query) ||
+          notes.includes(query)
+
+        const matchesAmount =
+          numericQuery.length > 0 &&
+          (amountStr.toLowerCase().includes(query) || amountNormalized.includes(numericQuery))
+
+        return matchesText || matchesAmount
+      })
+    }
+
+    // Apply sorting
+    const sorted = [...filtered].sort((a, b) => {
+      if (sortMode === 'date-desc' || sortMode === 'date-asc') {
+        const diff = parseDate(a.transactionDate) - parseDate(b.transactionDate)
+        if (diff !== 0) return sortMode === 'date-asc' ? diff : -diff
+      }
+      if (sortMode === 'source-asc' || sortMode === 'source-desc') {
+        const aTitle = getCanonicalTransactionTitle(a)
+        const bTitle = getCanonicalTransactionTitle(b)
+        const diff = aTitle.localeCompare(bTitle)
+        if (diff !== 0) return sortMode === 'source-asc' ? diff : -diff
+      }
+      if (sortMode === 'amount-desc' || sortMode === 'amount-asc') {
+        const diff = parseMoney(a.amount) - parseMoney(b.amount)
+        if (diff !== 0) return sortMode === 'amount-asc' ? diff : -diff
+      }
+      // Stable-ish tie-breaker to avoid jitter during realtime updates
+      return a.transactionId.localeCompare(b.transactionId)
+    })
+
+    return sorted
+  }, [transactions, filterMode, sourceFilter, searchQuery, sortMode])
+
+  const availableSources = useMemo(() => {
+    const titles = transactions
+      .map(t => getCanonicalTransactionTitle(t))
+      .filter(Boolean)
+    return Array.from(new Set(titles)).sort((a, b) => a.localeCompare(b))
+  }, [transactions])
 
   // Close filter menu when clicking outside
   useEffect(() => {
@@ -227,6 +300,9 @@ export default function TransactionsList({ projectId: propProjectId, transaction
       const target = event.target as Element
       if (!target.closest('.filter-menu') && !target.closest('.filter-button')) {
         setShowFilterMenu(false)
+      }
+      if (!target.closest('.sort-menu') && !target.closest('.sort-button')) {
+        setShowSortMenu(false)
       }
     }
 
@@ -288,12 +364,105 @@ export default function TransactionsList({ projectId: propProjectId, transaction
             Import Wayfair Invoice
           </ContextLink>
 
+          {/* Sort Button */}
+          <div className="relative flex-shrink-0">
+            <button
+              onClick={() => setShowSortMenu(!showSortMenu)}
+              className={`sort-button inline-flex items-center justify-center px-3 py-2 border text-sm font-medium rounded-md transition-colors duration-200 ${
+                sortMode === 'date-desc'
+                  ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
+                  : 'border-primary-500 text-primary-600 bg-primary-50 hover:bg-primary-100'
+              }`}
+              title="Sort transactions"
+            >
+              <ArrowUpDown className="h-4 w-4 mr-2" />
+              Sort
+            </button>
+
+            {showSortMenu && (
+              <div className="sort-menu absolute top-full right-0 mt-1 w-52 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                <div className="py-1">
+                  <button
+                    onClick={() => {
+                      setSortMode('date-desc')
+                      setShowSortMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      sortMode === 'date-desc' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    Date (newest)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSortMode('date-asc')
+                      setShowSortMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      sortMode === 'date-asc' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    Date (oldest)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSortMode('source-asc')
+                      setShowSortMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      sortMode === 'source-asc' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    Source (A→Z)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSortMode('source-desc')
+                      setShowSortMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      sortMode === 'source-desc' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    Source (Z→A)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSortMode('amount-desc')
+                      setShowSortMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      sortMode === 'amount-desc' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    Price (high→low)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSortMode('amount-asc')
+                      setShowSortMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      sortMode === 'amount-asc' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    Price (low→high)
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Filter Button */}
           <div className="relative flex-shrink-0">
             <button
-              onClick={() => setShowFilterMenu(!showFilterMenu)}
+              onClick={() => {
+                const next = !showFilterMenu
+                setShowFilterMenu(next)
+                if (next) setFilterMenuView('main')
+              }}
               className={`filter-button inline-flex items-center justify-center px-3 py-2 border text-sm font-medium rounded-md transition-colors duration-200 ${
-                filterMode === 'all'
+                filterMode === 'all' && sourceFilter === 'all'
                   ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
                   : 'border-primary-500 text-primary-600 bg-primary-50 hover:bg-primary-100'
               }`}
@@ -305,42 +474,100 @@ export default function TransactionsList({ projectId: propProjectId, transaction
 
             {/* Filter Dropdown Menu */}
             {showFilterMenu && (
-              <div className="filter-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-10">
-                <div className="py-1">
-                  <button
-                    onClick={() => {
-                      setFilterMode('all')
-                      setShowFilterMenu(false)
-                    }}
-                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                      filterMode === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                    }`}
-                  >
-                    All Transactions
-                  </button>
-                  <button
-                    onClick={() => {
-                      setFilterMode('we-owe')
-                      setShowFilterMenu(false)
-                    }}
-                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                      filterMode === 'we-owe' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                    }`}
-                  >
-                    We Owe
-                  </button>
-                  <button
-                    onClick={() => {
-                      setFilterMode('client-owes')
-                      setShowFilterMenu(false)
-                    }}
-                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                      filterMode === 'client-owes' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                    }`}
-                  >
-                    Client Owes
-                  </button>
-                </div>
+              <div className="filter-menu absolute top-full right-0 mt-1 w-56 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                {filterMenuView === 'main' ? (
+                  <div className="py-1">
+                    <button
+                      onClick={() => {
+                        setFilterMode('all')
+                        setShowFilterMenu(false)
+                      }}
+                      className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                        filterMode === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      All Transactions
+                    </button>
+                    <button
+                      onClick={() => {
+                        setFilterMode('we-owe')
+                        setShowFilterMenu(false)
+                      }}
+                      className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                        filterMode === 'we-owe' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      We Owe
+                    </button>
+                    <button
+                      onClick={() => {
+                        setFilterMode('client-owes')
+                        setShowFilterMenu(false)
+                      }}
+                      className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                        filterMode === 'client-owes' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      Client Owes
+                    </button>
+
+                    <div className="my-1 border-t border-gray-100" />
+
+                    <button
+                      onClick={() => setFilterMenuView('source')}
+                      className={`w-full px-3 py-2 text-sm hover:bg-gray-50 ${
+                        sourceFilter !== 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                      aria-label="Source"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span>Source</span>
+                        <span className="text-xs text-gray-500 truncate max-w-[10rem]">
+                          {sourceFilter === 'all' ? 'All sources' : sourceFilter}
+                        </span>
+                      </div>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="py-1">
+                    <button
+                      onClick={() => setFilterMenuView('main')}
+                      className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      ← Back
+                    </button>
+
+                    <div className="my-1 border-t border-gray-100" />
+
+                    <button
+                      onClick={() => {
+                        setSourceFilter('all')
+                        setShowFilterMenu(false)
+                        setFilterMenuView('main')
+                      }}
+                      className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                        sourceFilter === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      All sources
+                    </button>
+                    {availableSources.map(source => (
+                      <button
+                        key={source}
+                        onClick={() => {
+                          setSourceFilter(source)
+                          setShowFilterMenu(false)
+                          setFilterMenuView('main')
+                        }}
+                        className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                          sourceFilter === source ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                        }`}
+                      >
+                        {source}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -353,7 +580,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
             <input
               type="text"
               className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
-              placeholder="Search transactions by source, type, or notes..."
+              placeholder="Search transactions by source or amount..."
               value={searchQuery || ''}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -369,7 +596,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
             No transactions found
           </h3>
           <p className="text-sm text-gray-500 mb-4">
-            {searchQuery || filterMode !== 'all'
+            {searchQuery || filterMode !== 'all' || sourceFilter !== 'all'
               ? 'Try adjusting your search or filter criteria.'
               : 'No transactions found.'
             }
