@@ -1,5 +1,6 @@
 import { ArrowLeft, ImagePlus, Save, X } from 'lucide-react'
 import { useParams, useLocation, useNavigate } from 'react-router-dom'
+import { useNavigationStack } from '@/contexts/NavigationStackContext'
 import ContextBackLink from '@/components/ContextBackLink'
 import { useState, FormEvent, useEffect, useRef, useMemo } from 'react'
 import { projectService, transactionService, unifiedItemsService } from '@/services/inventoryService'
@@ -44,6 +45,7 @@ export default function EditItem() {
   const { id, projectId: routeProjectId, itemId } = useParams<{ id?: string; projectId?: string; itemId?: string }>()
   const projectId = routeProjectId || id
   const navigate = useNavigate()
+  const navigationStack = useNavigationStack()
   const hasSyncError = useSyncError()
   const location = useLocation()
   const { hasRole } = useAuth()
@@ -285,9 +287,16 @@ export default function EditItem() {
     try {
       await unifiedItemsService.updateItem(currentAccountId, itemId, itemData)
       if (projectId) {
+        const priorDetailUrl = getReturnToFromLocation(location)
+        if (priorDetailUrl) {
+          const top = navigationStack.peek()
+          if (top?.path === priorDetailUrl) {
+            navigationStack.pop()
+          }
+        }
         const detailPath = projectItemDetail(projectId, itemId)
-        const returnTo = projectItems(projectId)
-        const detailUrl = `${detailPath}?returnTo=${encodeURIComponent(returnTo)}`
+        const listReturnTo = projectItems(projectId)
+        const detailUrl = `${detailPath}?returnTo=${encodeURIComponent(listReturnTo)}`
         navigate(detailUrl, { replace: true })
       } else {
         navigateToReturnToOrFallback(navigate, location, fallbackPath)
