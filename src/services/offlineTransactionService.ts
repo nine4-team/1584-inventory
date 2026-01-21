@@ -344,14 +344,24 @@ export class OfflineTransactionService {
       }
     }
 
+    const normalizedTaxRatePreset =
+      updates.taxRatePreset === '' ? null : updates.taxRatePreset
+
+    const shouldClearTax = normalizedTaxRatePreset === null
+    const hasTaxRatePresetUpdate = updates.taxRatePreset !== undefined
+    const nextTaxRatePct = shouldClearTax ? null : updates.taxRatePct
+    const nextSubtotal = shouldClearTax ? null : updates.subtotal
+    const taxRatePctUpdate = hasTaxRatePresetUpdate ? nextTaxRatePct : updates.taxRatePct
+    const subtotalUpdate = hasTaxRatePresetUpdate ? nextSubtotal : updates.subtotal
+
     // Validate tax preset if being updated
-    if (updates.taxRatePreset !== undefined && updates.taxRatePreset !== null && updates.taxRatePreset !== 'Other') {
-      const preset = await getCachedTaxPresetById(accountId, updates.taxRatePreset)
+    if (normalizedTaxRatePreset !== undefined && normalizedTaxRatePreset !== null && normalizedTaxRatePreset !== 'Other') {
+      const preset = await getCachedTaxPresetById(accountId, normalizedTaxRatePreset)
       if (!preset) {
         throw new MissingOfflinePrerequisiteError(
-          `Tax preset '${updates.taxRatePreset}' not found in offline cache. Go online and sync tax presets before updating transactions offline.`,
+          `Tax preset '${normalizedTaxRatePreset}' not found in offline cache. Go online and sync tax presets before updating transactions offline.`,
           'taxPreset',
-          { presetId: updates.taxRatePreset }
+          { presetId: normalizedTaxRatePreset }
         )
       }
     }
@@ -368,7 +378,9 @@ export class OfflineTransactionService {
         updates: {
           amount: updates.amount,
           categoryId: updates.categoryId,
-          taxRatePreset: updates.taxRatePreset,
+          taxRatePreset: normalizedTaxRatePreset,
+          taxRatePct: taxRatePctUpdate,
+          subtotal: subtotalUpdate,
           status: updates.status,
           receiptImages: updates.receiptImages,
           otherImages: updates.otherImages,
@@ -392,9 +404,9 @@ export class OfflineTransactionService {
       ...(updates.status !== undefined && { status: updates.status }),
       ...(updates.reimbursementType !== undefined && { reimbursementType: updates.reimbursementType ?? null }),
       ...(updates.triggerEvent !== undefined && { triggerEvent: updates.triggerEvent ?? null }),
-      ...(updates.taxRatePreset !== undefined && { taxRatePreset: updates.taxRatePreset ?? null }),
-      ...(updates.taxRatePct !== undefined && { taxRatePct: updates.taxRatePct }),
-      ...(updates.subtotal !== undefined && { subtotal: updates.subtotal }),
+      ...(updates.taxRatePreset !== undefined && { taxRatePreset: normalizedTaxRatePreset }),
+      ...(taxRatePctUpdate !== undefined && { taxRatePct: taxRatePctUpdate }),
+      ...(subtotalUpdate !== undefined && { subtotal: subtotalUpdate }),
       ...(updates.needsReview !== undefined && { needsReview: updates.needsReview }),
       ...(updates.sumItemPurchasePrices !== undefined && { sumItemPurchasePrices: updates.sumItemPurchasePrices }),
       ...(updates.itemIds !== undefined && { itemIds: updates.itemIds || [] }),
