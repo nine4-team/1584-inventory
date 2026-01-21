@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { ArrowLeft, Bookmark, QrCode, Trash2, Edit, FileText, ImagePlus, ChevronDown, Copy, X, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Bookmark, QrCode, Trash2, Edit, FileText, ImagePlus, ChevronDown, Copy, X, RefreshCw, Link2Off } from 'lucide-react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import ContextBackLink from '@/components/ContextBackLink'
@@ -28,8 +28,13 @@ import { supabase } from '@/services/supabase'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import { getGlobalQueryClient } from '@/utils/queryClient'
 import { hydrateItemCache, hydrateProjectCache } from '@/utils/hydrationHelpers'
+import BlockingConfirmDialog from '@/components/ui/BlockingConfirmDialog'
 
-export default function ItemDetail({ itemId: propItemId, projectId: propProjectId, onClose }: { itemId?: string; projectId?: string; onClose?: () => void } = {}) {
+type ItemDetailProps = { itemId?: string; projectId?: string; onClose?: () => void }
+
+export default function ItemDetail(props: ItemDetailProps = {}) {
+  const { itemId: propItemId, projectId: propProjectId } = props
+  const onCloseHandler = props.onClose as unknown as (() => void) | undefined
   const { id, projectId: routeProjectId, itemId } = useParams<{ id?: string; projectId?: string; itemId?: string }>()
   const ENABLE_QR = import.meta.env.VITE_ENABLE_QR === 'true'
   const navigate = useStackedNavigate()
@@ -54,6 +59,8 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
   const [selectedProjectId, setSelectedProjectId] = useState('')
   const [isUpdatingProject, setIsUpdatingProject] = useState(false)
   const [showProjectMenu, setShowProjectMenu] = useState(false)
+  const [showRemoveFromTransactionConfirm, setShowRemoveFromTransactionConfirm] = useState(false)
+  const [isRemovingFromTransaction, setIsRemovingFromTransaction] = useState(false)
   const { showError, showSuccess } = useToast()
   const { buildContextUrl, getBackDestination } = useNavigationContext()
   const { isOnline } = useNetworkState()
@@ -650,6 +657,27 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
     }
   }
 
+  const handleRemoveFromTransaction = async () => {
+    if (!item || !currentAccountId) return
+    if (!item.transactionId) return
+
+    setIsRemovingFromTransaction(true)
+    try {
+      await unifiedItemsService.unlinkItemFromTransaction(currentAccountId, item.transactionId, item.itemId, {
+        itemCurrentTransactionId: item.transactionId
+      })
+      await refreshRealtimeAfterWrite()
+      await handleRefreshItem()
+      showSuccess('Removed from transaction')
+    } catch (error) {
+      console.error('Failed to remove item from transaction:', error)
+      showError('Failed to remove item from transaction. Please try again.')
+    } finally {
+      setIsRemovingFromTransaction(false)
+      setShowRemoveFromTransactionConfirm(false)
+    }
+  }
+
   const handleMultipleImageUpload = async (files: File[]) => {
     if (!item || !currentAccountId) return
 
@@ -906,11 +934,11 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
     return (
       <div className="space-y-6">
         <div className="flex items-center space-x-4">
-          {onClose ? (
+          {onCloseHandler ? (
             <button
               onClick={(e) => {
                 e.preventDefault()
-                onClose()
+                ;(props.onClose as any)?.()
               }}
               className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
             >
@@ -940,11 +968,11 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
     return (
       <div className="space-y-6">
         <div className="flex items-center space-x-4">
-          {onClose ? (
+          {onCloseHandler ? (
             <button
               onClick={(e) => {
                 e.preventDefault()
-                onClose()
+                ;(props.onClose as any)?.()
               }}
               className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
             >
@@ -1144,6 +1172,15 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
                           Change
                         </button>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => setShowRemoveFromTransactionConfirm(true)}
+                        className="text-xs px-2 py-1 text-gray-700 hover:text-gray-900 hover:bg-gray-50 rounded border border-gray-300 hover:border-gray-400 transition-colors inline-flex items-center gap-1"
+                        title="Remove from transaction"
+                      >
+                        <Link2Off className="h-3 w-3" />
+                        Remove
+                      </button>
                     </>
                   ) : (
                     (projectId || item.projectId) && !isBusinessInventoryItem && (
@@ -1233,12 +1270,32 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
           </div>
         </div>
       )}
+
+      <BlockingConfirmDialog
+        open={showRemoveFromTransactionConfirm}
+        title="Remove item from transaction?"
+        description={
+          <div className="text-sm text-gray-700 space-y-2">
+            <p>This will remove the item from this transaction.</p>
+            <p className="text-gray-600">The item will not be deleted.</p>
+          </div>
+        }
+        confirmLabel="Remove"
+        cancelLabel="Cancel"
+        confirmVariant="danger"
+        isConfirming={isRemovingFromTransaction}
+        onCancel={() => {
+          if (isRemovingFromTransaction) return
+          setShowRemoveFromTransactionConfirm(false)
+        }}
+        onConfirm={handleRemoveFromTransaction}
+      />
     </div>
   )
 
   return (
     <div className="space-y-6">
-      {onClose ? (
+      {onCloseHandler ? (
         <div className="bg-white border border-gray-200 rounded-lg p-6">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-lg font-medium text-gray-900">Item</h3>
@@ -1317,7 +1374,7 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
                   <button
                     onClick={(e) => {
                       e.preventDefault()
-                      onClose()
+                      ;(props.onClose as any)?.()
                     }}
                     className="text-gray-400 hover:text-gray-600"
                     type="button"
@@ -1379,11 +1436,11 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
             {/* Back button and controls row */}
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-4">
-                {onClose ? (
+                {onCloseHandler ? (
                   <button
                     onClick={(e) => {
                       e.preventDefault()
-                      onClose()
+                      ;(props.onClose as any)?.()
                     }}
                     className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
                   >

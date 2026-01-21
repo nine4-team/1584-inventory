@@ -79,7 +79,9 @@ export default function TransactionAudit({
           transactionSubtotal: parseFloat(transaction.amount || '0'),
           completenessRatio: 0,
           completenessStatus: transactionItems.length === 0 ? 'incomplete' : 'complete',
-          missingTaxData: !transaction.taxRatePct && !transaction.subtotal,
+          missingTaxData:
+            (transaction.taxRatePct === null || transaction.taxRatePct === undefined) &&
+            !transaction.subtotal,
           varianceDollars: 0,
           variancePercent: 0
         })

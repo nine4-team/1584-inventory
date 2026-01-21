@@ -35,6 +35,7 @@ import { removeItemFromCaches, removeTransactionFromCaches } from '@/utils/query
 type QueryClientGetter = () => QueryClient
 
 let cachedGetGlobalQueryClient: QueryClientGetter | null = null
+const MISSING_BUDGET_CATEGORY_ERROR_REGEX = /Category ID .* does not exist in budget categories for account/i
 function resolveQueryClient(): QueryClient | null {
   try {
     if (!cachedGetGlobalQueryClient) {
@@ -53,6 +54,13 @@ function resolveQueryClient(): QueryClient | null {
   } catch {
     return null
   }
+}
+
+const isMissingBudgetCategoryError = (error: any): boolean => {
+  if (!error) return false
+  const message = typeof error?.message === 'string' ? error.message : ''
+  const details = typeof error?.details === 'string' ? error.details : ''
+  return MISSING_BUDGET_CATEGORY_ERROR_REGEX.test(message) || MISSING_BUDGET_CATEGORY_ERROR_REGEX.test(details)
 }
 
 type OperationInput = Omit<Operation, 'id' | 'timestamp' | 'retryCount' | 'accountId' | 'updatedBy' | 'version'>
@@ -1181,100 +1189,130 @@ class OperationQueue {
         ...processedTransaction,
         ...(data.updates.amount !== undefined && { amount: data.updates.amount }),
         ...(data.updates.categoryId !== undefined && { categoryId: data.updates.categoryId }),
+        ...(data.updates.taxRatePct !== undefined && { taxRatePct: data.updates.taxRatePct }),
+        ...(data.updates.subtotal !== undefined && { subtotal: data.updates.subtotal }),
         ...(data.updates.taxRatePreset !== undefined && { taxRatePreset: data.updates.taxRatePreset }),
         ...(data.updates.status !== undefined && { status: data.updates.status as 'pending' | 'completed' | 'canceled' }),
         version: version
       }
 
-      // Update on server using the FULL transaction data from local store
-      const { data: serverTransaction, error } = await supabase
-        .from('transactions')
-        .update({
-          project_id: updatedLocalTransaction.projectId ?? null,
-          transaction_date: updatedLocalTransaction.transactionDate,
-          source: updatedLocalTransaction.source ?? '',
-          transaction_type: updatedLocalTransaction.transactionType ?? '',
-          payment_method: updatedLocalTransaction.paymentMethod ?? '',
-          amount: updatedLocalTransaction.amount ?? '0.00',
-          budget_category: updatedLocalTransaction.budgetCategory ?? null,
-          category_id: updatedLocalTransaction.categoryId ?? null,
-          notes: updatedLocalTransaction.notes ?? null,
-          transaction_images: updatedLocalTransaction.transactionImages ?? null,
-          receipt_images: updatedLocalTransaction.receiptImages ?? null,
-          other_images: updatedLocalTransaction.otherImages ?? null,
-          receipt_emailed: updatedLocalTransaction.receiptEmailed ?? false,
-          status: updatedLocalTransaction.status ?? null,
-          reimbursement_type: updatedLocalTransaction.reimbursementType ?? null,
-          trigger_event: updatedLocalTransaction.triggerEvent ?? null,
-          tax_rate_preset: updatedLocalTransaction.taxRatePreset ?? null,
-          tax_rate_pct: updatedLocalTransaction.taxRatePct ?? null,
-          subtotal: updatedLocalTransaction.subtotal ?? null,
-          needs_review: updatedLocalTransaction.needsReview ?? null,
-          sum_item_purchase_prices: updatedLocalTransaction.sumItemPurchasePrices ?? null,
-          item_ids: updatedLocalTransaction.itemIds ?? null,
-          version: version
-        })
-        .eq('transaction_id', data.id)
-        .select()
-        .single()
+      const attemptUpdate = async (transactionSnapshot: DBTransaction): Promise<{ success: boolean; error?: any }> => {
+        const { data: serverTransaction, error } = await supabase
+          .from('transactions')
+          .update({
+            project_id: transactionSnapshot.projectId ?? null,
+            transaction_date: transactionSnapshot.transactionDate,
+            source: transactionSnapshot.source ?? '',
+            transaction_type: transactionSnapshot.transactionType ?? '',
+            payment_method: transactionSnapshot.paymentMethod ?? '',
+            amount: transactionSnapshot.amount ?? '0.00',
+            budget_category: transactionSnapshot.budgetCategory ?? null,
+            category_id: transactionSnapshot.categoryId ?? null,
+            notes: transactionSnapshot.notes ?? null,
+            transaction_images: transactionSnapshot.transactionImages ?? null,
+            receipt_images: transactionSnapshot.receiptImages ?? null,
+            other_images: transactionSnapshot.otherImages ?? null,
+            receipt_emailed: transactionSnapshot.receiptEmailed ?? false,
+            status: transactionSnapshot.status ?? null,
+            reimbursement_type: transactionSnapshot.reimbursementType ?? null,
+            trigger_event: transactionSnapshot.triggerEvent ?? null,
+            tax_rate_preset: transactionSnapshot.taxRatePreset ?? null,
+            tax_rate_pct: transactionSnapshot.taxRatePct ?? null,
+            subtotal: transactionSnapshot.subtotal ?? null,
+            needs_review: transactionSnapshot.needsReview ?? null,
+            sum_item_purchase_prices: transactionSnapshot.sumItemPurchasePrices ?? null,
+            item_ids: transactionSnapshot.itemIds ?? null,
+            version: version
+          })
+          .eq('transaction_id', data.id)
+          .select()
+          .single()
 
-      if (error) throw error
+        if (error) return { success: false, error }
 
-      // Update local store with server response
-      const cachedAt = new Date().toISOString()
-      const dbTransaction: DBTransaction = {
-        transactionId: serverTransaction.transaction_id || data.id,
-        accountId,
-        projectId: serverTransaction.project_id ?? updatedLocalTransaction.projectId ?? null,
-        projectName: updatedLocalTransaction.projectName ?? localTransaction.projectName ?? null,
-        transactionDate: serverTransaction.transaction_date ?? updatedLocalTransaction.transactionDate,
-        source: serverTransaction.source ?? updatedLocalTransaction.source ?? '',
-        transactionType: serverTransaction.transaction_type ?? updatedLocalTransaction.transactionType ?? '',
-        paymentMethod: serverTransaction.payment_method ?? updatedLocalTransaction.paymentMethod ?? '',
-        amount: serverTransaction.amount ?? updatedLocalTransaction.amount ?? '0.00',
-        budgetCategory: serverTransaction.budget_category ?? updatedLocalTransaction.budgetCategory,
-        categoryId: serverTransaction.category_id ?? updatedLocalTransaction.categoryId,
-        notes: serverTransaction.notes ?? updatedLocalTransaction.notes,
-        transactionImages: serverTransaction.transaction_images ?? updatedLocalTransaction.transactionImages,
-        receiptImages: serverTransaction.receipt_images ?? updatedLocalTransaction.receiptImages,
-        otherImages: serverTransaction.other_images ?? updatedLocalTransaction.otherImages,
-        receiptEmailed: serverTransaction.receipt_emailed ?? updatedLocalTransaction.receiptEmailed ?? false,
-        createdAt: serverTransaction.created_at ?? updatedLocalTransaction.createdAt ?? cachedAt,
-        createdBy: serverTransaction.created_by ?? updatedLocalTransaction.createdBy ?? updatedBy,
-        status: serverTransaction.status ?? updatedLocalTransaction.status,
-        reimbursementType: serverTransaction.reimbursement_type ?? updatedLocalTransaction.reimbursementType,
-        triggerEvent: serverTransaction.trigger_event ?? updatedLocalTransaction.triggerEvent,
-        taxRatePreset: serverTransaction.tax_rate_preset ?? updatedLocalTransaction.taxRatePreset,
-        taxRatePct: serverTransaction.tax_rate_pct ?? updatedLocalTransaction.taxRatePct,
-        subtotal: serverTransaction.subtotal ?? updatedLocalTransaction.subtotal,
-        needsReview: serverTransaction.needs_review ?? updatedLocalTransaction.needsReview,
-        sumItemPurchasePrices: serverTransaction.sum_item_purchase_prices ?? updatedLocalTransaction.sumItemPurchasePrices,
-        itemIds: serverTransaction.item_ids ?? updatedLocalTransaction.itemIds,
-        version: version,
-        last_synced_at: cachedAt
-      }
-      await offlineStore.saveTransactions([dbTransaction])
-
-      // Clear any conflicts for this transaction
-      try {
-        if (accountId) {
-          await offlineStore.deleteConflictsForTransactions(accountId, [data.id])
-          console.log('Cleared conflicts for transaction after successful UPDATE', { transactionId: data.id })
+        // Update local store with server response
+        const cachedAt = new Date().toISOString()
+        const dbTransaction: DBTransaction = {
+          transactionId: serverTransaction.transaction_id || data.id,
+          accountId,
+          projectId: serverTransaction.project_id ?? transactionSnapshot.projectId ?? null,
+          projectName: transactionSnapshot.projectName ?? localTransaction.projectName ?? null,
+          transactionDate: serverTransaction.transaction_date ?? transactionSnapshot.transactionDate,
+          source: serverTransaction.source ?? transactionSnapshot.source ?? '',
+          transactionType: serverTransaction.transaction_type ?? transactionSnapshot.transactionType ?? '',
+          paymentMethod: serverTransaction.payment_method ?? transactionSnapshot.paymentMethod ?? '',
+          amount: serverTransaction.amount ?? transactionSnapshot.amount ?? '0.00',
+          budgetCategory: serverTransaction.budget_category ?? transactionSnapshot.budgetCategory,
+          categoryId: serverTransaction.category_id ?? transactionSnapshot.categoryId,
+          notes: serverTransaction.notes ?? transactionSnapshot.notes,
+          transactionImages: serverTransaction.transaction_images ?? transactionSnapshot.transactionImages,
+          receiptImages: serverTransaction.receipt_images ?? transactionSnapshot.receiptImages,
+          otherImages: serverTransaction.other_images ?? transactionSnapshot.otherImages,
+          receiptEmailed: serverTransaction.receipt_emailed ?? transactionSnapshot.receiptEmailed ?? false,
+          createdAt: serverTransaction.created_at ?? transactionSnapshot.createdAt ?? cachedAt,
+          createdBy: serverTransaction.created_by ?? transactionSnapshot.createdBy ?? updatedBy,
+          status: serverTransaction.status ?? transactionSnapshot.status,
+          reimbursementType: serverTransaction.reimbursement_type ?? transactionSnapshot.reimbursementType,
+          triggerEvent: serverTransaction.trigger_event ?? transactionSnapshot.triggerEvent,
+          taxRatePreset: serverTransaction.tax_rate_preset ?? transactionSnapshot.taxRatePreset,
+          taxRatePct: serverTransaction.tax_rate_pct ?? transactionSnapshot.taxRatePct,
+          subtotal: serverTransaction.subtotal ?? transactionSnapshot.subtotal,
+          needsReview: serverTransaction.needs_review ?? transactionSnapshot.needsReview,
+          sumItemPurchasePrices: serverTransaction.sum_item_purchase_prices ?? transactionSnapshot.sumItemPurchasePrices,
+          itemIds: serverTransaction.item_ids ?? transactionSnapshot.itemIds,
+          version: version,
+          last_synced_at: cachedAt
         }
-      } catch (conflictClearError) {
-        console.warn('Failed to clear conflicts after UPDATE (non-fatal)', {
-          transactionId: data.id,
-          error: conflictClearError
-        })
+        await offlineStore.saveTransactions([dbTransaction])
+
+        // Clear any conflicts for this transaction
+        try {
+          if (accountId) {
+            await offlineStore.deleteConflictsForTransactions(accountId, [data.id])
+            console.log('Cleared conflicts for transaction after successful UPDATE', { transactionId: data.id })
+          }
+        } catch (conflictClearError) {
+          console.warn('Failed to clear conflicts after UPDATE (non-fatal)', {
+            transactionId: data.id,
+            error: conflictClearError
+          })
+        }
+
+        // Refresh project snapshot after successful sync
+        const projectId = dbTransaction.projectId
+        if (projectId) {
+          refreshProjectSnapshot(projectId)
+        }
+
+        return { success: true }
       }
 
-      // Refresh project snapshot after successful sync
-      const projectId = dbTransaction.projectId
-      if (projectId) {
-        refreshProjectSnapshot(projectId)
+      const firstAttempt = await attemptUpdate(updatedLocalTransaction)
+      if (firstAttempt.success) {
+        return true
       }
 
-      return true
+      if (isMissingBudgetCategoryError(firstAttempt.error)) {
+        const repairedTransaction: DBTransaction = {
+          ...updatedLocalTransaction,
+          categoryId: null,
+          budgetCategory: null
+        }
+        try {
+          await offlineStore.init()
+          await offlineStore.upsertTransaction(repairedTransaction)
+        } catch (repairError) {
+          console.warn('Failed to clear local transaction category after invalid category error:', repairError)
+        }
+
+        const retryAttempt = await attemptUpdate(repairedTransaction)
+        if (retryAttempt.success) {
+          return true
+        }
+        throw retryAttempt.error
+      }
+
+      throw firstAttempt.error
     } catch (error: any) {
       // P0001: Raise Exception (custom validation)
       // 23503: Foreign Key Violation

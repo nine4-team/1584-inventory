@@ -267,10 +267,10 @@ export default function EditBusinessInventoryTransaction() {
       const updateData: Partial<Transaction> = {
         ...formData,
         projectId: actualProjectId,
-        // Allow explicit clearing via "None" (persist NULLs).
+        // Allow explicit clearing via "No tax" (persist 0%).
         ...(taxRatePreset
           ? { taxRatePreset: taxRatePreset, subtotal: taxRatePreset === 'Other' ? subtotal : null }
-          : { taxRatePreset: null, subtotal: null })
+          : { taxRatePreset: null, taxRatePct: 0, subtotal: null })
       }
 
       if (!currentAccountId) {
@@ -612,7 +612,7 @@ export default function EditBusinessInventoryTransaction() {
                   className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
                 />
                 <label htmlFor="tax_preset_none" className="ml-2 block text-sm text-gray-900">
-                  None
+                  No tax (0%)
                 </label>
               </div>
               {taxPresets.map((preset) => (

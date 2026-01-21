@@ -50,6 +50,7 @@ type CreateItemOptions = {
 }
 
 const CANONICAL_TRANSACTION_PREFIXES = ['INV_PURCHASE_', 'INV_SALE_', 'INV_TRANSFER_'] as const
+const MISSING_BUDGET_CATEGORY_ERROR_REGEX = /Category ID .* does not exist in budget categories for account/i
 
 export const isCanonicalTransactionId = (transactionId: string | null | undefined): boolean => {
   if (!transactionId) return false
@@ -67,6 +68,26 @@ const getCanonicalBudgetCategoryId = async (accountId: string): Promise<string |
   } catch (error) {
     console.warn('⚠️ Failed to load default budget category for canonical transaction:', error)
     return null
+  }
+}
+
+const isMissingBudgetCategoryError = (error: any): boolean => {
+  if (!error) return false
+  const message = typeof error?.message === 'string' ? error.message : ''
+  const details = typeof error?.details === 'string' ? error.details : ''
+  return MISSING_BUDGET_CATEGORY_ERROR_REGEX.test(message) || MISSING_BUDGET_CATEGORY_ERROR_REGEX.test(details)
+}
+
+const clearLocalTransactionCategory = async (transactionId: string): Promise<void> => {
+  try {
+    await offlineStore.init()
+    const tx = await offlineStore.getTransactionById(transactionId)
+    if (!tx) return
+    tx.categoryId = undefined
+    tx.budgetCategory = undefined
+    await offlineStore.upsertTransaction(tx)
+  } catch (error) {
+    console.warn('Failed to clear local transaction category after invalid category error:', error)
   }
 }
 
@@ -326,6 +347,15 @@ async function markTransactionItemIdsPending(
   transactionId: string,
   itemIds: string[]
 ): Promise<void> {
+  await markTransactionItemIdsPendingAction(accountId, transactionId, itemIds, 'add')
+}
+
+async function markTransactionItemIdsPendingAction(
+  accountId: string,
+  transactionId: string,
+  itemIds: string[],
+  action: 'add' | 'remove'
+): Promise<void> {
   const pendingItemIds = itemIds.filter(id => Boolean(id && id.trim()))
   if (pendingItemIds.length === 0) {
     return
@@ -339,16 +369,23 @@ async function markTransactionItemIdsPending(
     localTransaction = await offlineStore.getTransactionById(transactionId)
     if (localTransaction) {
       const currentLocalIds = Array.isArray(localTransaction.itemIds) ? localTransaction.itemIds : []
-      const nextIds = [...currentLocalIds]
-      for (const id of pendingItemIds) {
-        if (!nextIds.includes(id)) {
-          nextIds.push(id)
+      let nextIds = currentLocalIds
+
+      if (action === 'add') {
+        nextIds = [...currentLocalIds]
+        for (const id of pendingItemIds) {
+          if (!nextIds.includes(id)) {
+            nextIds.push(id)
+          }
         }
+      } else {
+        const removalSet = new Set(pendingItemIds)
+        nextIds = currentLocalIds.filter(id => !removalSet.has(id))
       }
 
       localTransaction.itemIds = nextIds
       localTransaction.pendingItemIds = pendingItemIds
-      localTransaction.pendingItemIdsAction = 'add'
+      localTransaction.pendingItemIdsAction = action
       localTransaction.pendingItemIdsUpdatedAt = nowIso
       await offlineStore.upsertTransaction(localTransaction)
     }
@@ -528,7 +565,10 @@ function mapSupabaseTransactionToOfflineRecord(row: any): DBTransaction {
     reimbursementType: converted.reimbursement_type || undefined,
     triggerEvent: converted.trigger_event || undefined,
     taxRatePreset: converted.tax_rate_preset || undefined,
-    taxRatePct: converted.tax_rate_pct ? Number(converted.tax_rate_pct) : undefined,
+    taxRatePct:
+      converted.tax_rate_pct !== undefined && converted.tax_rate_pct !== null
+        ? Number(converted.tax_rate_pct)
+        : undefined,
     subtotal: converted.subtotal || undefined,
     needsReview: converted.needs_review ?? undefined,
     sumItemPurchasePrices: converted.sum_item_purchase_prices !== undefined ? String(converted.sum_item_purchase_prices) : undefined,
@@ -1295,7 +1335,10 @@ function _convertTransactionFromDb(dbTransaction: any): Transaction {
     triggerEvent: converted.trigger_event || undefined,
     itemIds: Array.isArray(converted.item_ids) ? converted.item_ids : [],
     taxRatePreset: converted.tax_rate_preset || undefined,
-    taxRatePct: converted.tax_rate_pct ? parseFloat(converted.tax_rate_pct) : undefined,
+    taxRatePct:
+      converted.tax_rate_pct !== undefined && converted.tax_rate_pct !== null
+        ? parseFloat(converted.tax_rate_pct)
+        : undefined,
     subtotal: converted.subtotal || undefined,
     // Map DB snake_case needs_review -> camelCase needsReview for the client
     needsReview: converted.needs_review === true,
@@ -1561,6 +1604,7 @@ async function _updateTransactionItemIds(
   }
 
   let updateError: any = null
+  let repairedCategory = false
   try {
     const response = await withNetworkTimeout(async () => {
       return await supabase
@@ -1577,6 +1621,29 @@ async function _updateTransactionItemIds(
     updateError = e
   }
 
+  if (updateError && isMissingBudgetCategoryError(updateError)) {
+    try {
+      const response = await withNetworkTimeout(async () => {
+        return await supabase
+          .from('transactions')
+          .update({
+            item_ids: updatedItemIds,
+            category_id: null,
+            budget_category: null,
+            updated_at: new Date().toISOString()
+          })
+          .eq('account_id', accountId)
+          .eq('transaction_id', transactionId)
+      })
+      updateError = response?.error
+      if (!updateError) {
+        repairedCategory = true
+      }
+    } catch (retryError) {
+      updateError = retryError
+    }
+  }
+
   if (updateError) {
     console.warn('⚠️ Failed to update transaction item_ids during sync:', transactionId, updateError)
     await enqueueTransactionItemIdsRetry(accountId, transactionId, localTransaction?.version)
@@ -1589,6 +1656,10 @@ async function _updateTransactionItemIds(
         tx.pendingItemIds = undefined
         tx.pendingItemIdsAction = undefined
         tx.pendingItemIdsUpdatedAt = undefined
+        if (repairedCategory) {
+          tx.categoryId = undefined
+          tx.budgetCategory = undefined
+        }
         await offlineStore.upsertTransaction(tx)
       }
     } catch (e) {
@@ -2093,11 +2164,31 @@ export const transactionService = {
         needs_review: needs,
         updated_at: new Date().toISOString()
       }
-      const { error } = await supabase
+      let { error } = await supabase
         .from('transactions')
         .update(dbUpdates)
         .eq('account_id', accountId)
         .eq('transaction_id', transactionId)
+
+      if (error && isMissingBudgetCategoryError(error)) {
+        try {
+          const retry = await supabase
+            .from('transactions')
+            .update({
+              ...dbUpdates,
+              category_id: null,
+              budget_category: null
+            })
+            .eq('account_id', accountId)
+            .eq('transaction_id', transactionId)
+          error = retry?.error
+          if (!error) {
+            await clearLocalTransactionCategory(transactionId)
+          }
+        } catch (retryError) {
+          error = retryError as any
+        }
+      }
 
       if (error) {
         console.warn('Failed to persist needs_review for transaction', transactionId, error)
@@ -2664,10 +2755,10 @@ export const transactionService = {
       if (finalUpdates.taxRatePreset !== undefined) {
         const presetSelection = finalUpdates.taxRatePreset
 
-        // Treat null/empty-string as an explicit "None" selection (clear tax fields)
+        // Treat null/empty-string as an explicit "No tax" selection (store 0%)
         if (presetSelection === null || presetSelection === '') {
           finalUpdates.taxRatePreset = null
-          finalUpdates.taxRatePct = null
+          finalUpdates.taxRatePct = 0
           finalUpdates.subtotal = null
         } else if (presetSelection === 'Other') {
           // Compute from provided subtotal and amount if present in updates or existing doc
@@ -3677,7 +3768,10 @@ export const unifiedItemsService = {
       images: Array.isArray(converted.images) ? converted.images : [],
       inventoryStatus: converted.inventory_status || undefined,
       businessInventoryLocation: converted.business_inventory_location || undefined,
-      taxRatePct: converted.tax_rate_pct ? parseFloat(converted.tax_rate_pct) : undefined,
+      taxRatePct:
+        converted.tax_rate_pct !== undefined && converted.tax_rate_pct !== null
+          ? parseFloat(converted.tax_rate_pct)
+          : undefined,
       taxAmountPurchasePrice: converted.tax_amount_purchase_price || undefined,
       taxAmountProjectPrice: converted.tax_amount_project_price || undefined,
       createdBy: converted.created_by || undefined,
@@ -4652,6 +4746,68 @@ export const unifiedItemsService = {
       console.warn('Failed to update item online, falling back to offline queue:', error)
       const { offlineItemService } = await import('./offlineItemService')
       await offlineItemService.updateItem(accountId, itemId, updates)
+    }
+  },
+
+  /**
+   * Remove an item from a specific transaction without deleting it.
+   *
+   * Behavior:
+   * - Always removes `itemId` from the transaction's `item_ids` array.
+   * - If the item's *current* transaction matches `transactionId`, also detaches the item
+   *   (`transaction_id` + `latest_transaction_id` cleared).
+   *
+   * Pass `itemCurrentTransactionId` when you have it to avoid fetching.
+   */
+  async unlinkItemFromTransaction(
+    accountId: string,
+    transactionId: string,
+    itemId: string,
+    opts?: { itemCurrentTransactionId?: string | null }
+  ): Promise<void> {
+    const online = isNetworkOnline()
+    const itemCurrentTransactionId = opts?.itemCurrentTransactionId
+    const shouldDetachItem = itemCurrentTransactionId === undefined || itemCurrentTransactionId === transactionId
+
+    if (!online) {
+      // Offline: queue item update (if needed) and mark transaction.item_ids mutation pending.
+      const { offlineItemService } = await import('./offlineItemService')
+      if (shouldDetachItem) {
+        await offlineItemService.updateItem(accountId, itemId, {
+          transactionId: null,
+          latestTransactionId: null,
+          previousProjectTransactionId: transactionId
+        })
+      }
+      await markTransactionItemIdsPendingAction(accountId, transactionId, [itemId], 'remove')
+      return
+    }
+
+    await ensureAuthenticatedForDatabase()
+
+    if (shouldDetachItem) {
+      // Use the main updateItem path so derived sums / needs_review recompute stays consistent.
+      await this.updateItem(accountId, itemId, {
+        transactionId: null,
+        latestTransactionId: null,
+        previousProjectTransactionId: transactionId
+      })
+    }
+
+    try {
+      await _updateTransactionItemIds(accountId, transactionId, itemId, 'remove')
+    } catch (e) {
+      console.warn('unlinkItemFromTransaction - failed to sync transaction item_ids removal:', e)
+    }
+
+    try {
+      if (!transactionService._isBatchActive(accountId, transactionId)) {
+        transactionService.notifyTransactionChanged(accountId, transactionId, { flushImmediately: true }).catch((e: any) => {
+          console.warn('unlinkItemFromTransaction - notifyTransactionChanged failed:', e)
+        })
+      }
+    } catch (e) {
+      console.warn('unlinkItemFromTransaction - notifyTransactionChanged failed (sync path):', e)
     }
   },
 

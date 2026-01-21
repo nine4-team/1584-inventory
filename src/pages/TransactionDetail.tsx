@@ -431,6 +431,37 @@ export default function TransactionDetail() {
     [currentAccountId, refreshRealtimeAfterWrite, refreshTransactionItems, showError, showSuccess]
   )
 
+  const handleRemoveItemFromThisTransaction = useCallback(
+    async (itemId: string, item: TransactionItemFormData) => {
+      if (!currentAccountId) {
+        showError('You must belong to an account to update items.')
+        return
+      }
+
+      if (!transactionId) {
+        showError('Missing transaction ID.')
+        return
+      }
+
+      try {
+        const displayItem = item as any
+        const itemCurrentTransactionId: string | null | undefined =
+          (displayItem?._latestTransactionId ?? displayItem?._transactionId ?? null) as string | null
+
+        await unifiedItemsService.unlinkItemFromTransaction(currentAccountId, transactionId, itemId, {
+          itemCurrentTransactionId
+        })
+        await refreshTransactionItems()
+        await refreshRealtimeAfterWrite()
+        showSuccess('Removed from transaction')
+      } catch (error) {
+        console.error('Failed to remove item from transaction:', error)
+        showError('Failed to remove item from transaction. Please try again.')
+      }
+    },
+    [currentAccountId, refreshRealtimeAfterWrite, refreshTransactionItems, showError, showSuccess, transactionId]
+  )
+
   const loadTransaction = useCallback(async () => {
     if (!transactionId || !currentAccountId) return
 
@@ -1753,6 +1784,7 @@ export default function TransactionDetail() {
                     projectName={project?.name}
                     onImageFilesChange={handleImageFilesChange}
                     onDeleteItems={handleDeletePersistedItems}
+                    onRemoveFromTransaction={handleRemoveItemFromThisTransaction}
                     containerId="transaction-items-container"
                   />
                 </div>
@@ -1773,6 +1805,7 @@ export default function TransactionDetail() {
                       projectName={project?.name}
                       onImageFilesChange={handleImageFilesChange}
                       onDeleteItems={handleDeletePersistedItems}
+                      onRemoveFromTransaction={handleRemoveItemFromThisTransaction}
                       showSelectionControls={false}
                     />
                   </div>
