@@ -189,7 +189,8 @@ export default function TransactionAudit({
     return suggestedItems.filter(item => {
       const description = item.description?.toLowerCase() ?? ''
       const sku = item.sku?.toLowerCase() ?? ''
-      return description.includes(query) || sku.includes(query)
+      const price = item.purchasePrice?.toString().toLowerCase() ?? ''
+      return description.includes(query) || sku.includes(query) || price.includes(query)
     })
   }, [suggestedItems, suggestedSearch])
 
@@ -402,6 +403,9 @@ export default function TransactionAudit({
                       placeholder="Search suggested items"
                       className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
                     />
+                    <p className="mt-1 text-xs text-gray-500">
+                      Search matches name, SKU, or price. Items without a source or price still appear.
+                    </p>
                   </div>
                   {filteredSuggestedItems.length > 0 ? (
                     filteredSuggestedItems.map((item) => (
