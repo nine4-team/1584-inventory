@@ -14,6 +14,7 @@ describe('ContextLink', () => {
   })
 
   it('calls navigationStack.push with current location on click', () => {
+    Object.defineProperty(window, 'scrollY', { value: 120, configurable: true })
     const { getByText } = render(
       <MemoryRouter initialEntries={['/current?x=1']}>
         <ContextLink to="/target">Go</ContextLink>
@@ -21,7 +22,7 @@ describe('ContextLink', () => {
     )
 
     fireEvent.click(getByText('Go'))
-    expect(mockPush).toHaveBeenCalledWith('/current?x=1')
+    expect(mockPush).toHaveBeenCalledWith({ path: '/current?x=1', scrollY: 120 })
   })
 })
 

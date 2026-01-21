@@ -1,7 +1,7 @@
 import { Plus, Search, Package, Receipt, Filter, QrCode, Trash2, Camera, DollarSign, ArrowUpDown, RefreshCw } from 'lucide-react'
 import { useMemo } from 'react'
-import { useState, useEffect, useCallback } from 'react'
-import { Link } from 'react-router-dom'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import { Item, Transaction, ItemImage, Project, ItemDisposition } from '@/types'
 import type { Transaction as TransactionType } from '@/types'
@@ -36,6 +36,8 @@ export default function BusinessInventory() {
   const ENABLE_QR = import.meta.env.VITE_ENABLE_QR === 'true'
   const { buildContextUrl } = useNavigationContext()
   const stackedNavigate = useStackedNavigate()
+  const location = useLocation()
+  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState<'inventory' | 'transactions'>('inventory')
   const [items, setItems] = useState<Item[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
@@ -47,7 +49,7 @@ export default function BusinessInventory() {
   const handleNavigateToEdit = useCallback(
     (href: string) => {
       if (!href || href === '#') return
-      stackedNavigate(buildContextUrl(href))
+      stackedNavigate(buildContextUrl(href), undefined, { scrollY: window.scrollY })
     },
     [buildContextUrl, stackedNavigate]
   )
@@ -80,6 +82,8 @@ export default function BusinessInventory() {
   const { showSuccess, showError } = useToast()
   const { showOfflineSaved } = useOfflineFeedback()
   const { isOnline } = useNetworkState()
+  const hasRestoredScrollRef = useRef(false)
+  const isLoading = accountLoading || realtimeLoading
 
   // Batch allocation state
   const [projects, setProjects] = useState<Project[]>([])
@@ -314,6 +318,20 @@ export default function BusinessInventory() {
   useEffect(() => {
     setItems(snapshotItems)
   }, [snapshotItems])
+
+  useEffect(() => {
+    if (hasRestoredScrollRef.current || isLoading || activeTab !== 'inventory') return
+    const state = location.state && typeof location.state === 'object' ? (location.state as Record<string, unknown>) : null
+    const restoreScrollY = state?.restoreScrollY
+    if (!Number.isFinite(restoreScrollY)) return
+
+    hasRestoredScrollRef.current = true
+    requestAnimationFrame(() => window.scrollTo(0, restoreScrollY as number))
+
+    const { restoreScrollY: _restoreScrollY, ...rest } = state || {}
+    const nextState = Object.keys(rest).length > 0 ? rest : undefined
+    navigate(location.pathname + location.search, { replace: true, state: nextState })
+  }, [activeTab, isLoading, location.pathname, location.search, location.state, navigate])
 
   useEffect(() => {
     setTransactions(snapshotTransactions)
@@ -680,8 +698,6 @@ export default function BusinessInventory() {
     if (selectedInGroup === groupItems.length) return 'checked'
     return 'indeterminate'
   }
-
-  const isLoading = accountLoading || realtimeLoading
 
   // Guard against no account when not loading
   if (!isLoading && !accountLoading && !currentAccountId) {

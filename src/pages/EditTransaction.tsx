@@ -60,8 +60,13 @@ export default function EditTransaction() {
       return
     }
     const fallback = getBackDestination(defaultBackPath)
-    const target = navigationStack.pop(location.pathname + location.search) || fallback
-    navigate(target)
+    const entry = navigationStack.pop(location.pathname + location.search)
+    const target = entry?.path || fallback
+    if (Number.isFinite(entry?.scrollY)) {
+      navigate(target, { state: { restoreScrollY: entry?.scrollY } })
+    } else {
+      navigate(target)
+    }
   }, [defaultBackPath, getBackDestination, location, navigationStack, navigate])
 
   // Check if user has permission to edit transactions (USER role or higher)
