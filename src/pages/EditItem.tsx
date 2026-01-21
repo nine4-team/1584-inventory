@@ -3,9 +3,9 @@ import { useParams, useLocation, useNavigate } from 'react-router-dom'
 import { useNavigationStack } from '@/contexts/NavigationStackContext'
 import ContextBackLink from '@/components/ContextBackLink'
 import { useState, FormEvent, useEffect, useRef, useMemo } from 'react'
-import { projectService, transactionService, unifiedItemsService } from '@/services/inventoryService'
+import { projectService, transactionService, unifiedItemsService, isCanonicalTransactionId } from '@/services/inventoryService'
 import { getAvailableVendors } from '@/services/vendorDefaultsService'
-import { ItemImage, Transaction } from '@/types'
+import { ItemImage, Transaction, Project } from '@/types'
 import { Combobox } from '@/components/ui/Combobox'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { useSyncError } from '@/hooks/useSyncError'
@@ -108,6 +108,9 @@ export default function EditItem() {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [loadingTransactions, setLoadingTransactions] = useState(false)
+  const [projects, setProjects] = useState<Project[]>([])
+  const [loadingProjects, setLoadingProjects] = useState(false)
+  const [selectedProjectId, setSelectedProjectId] = useState('')
   const [availableVendors, setAvailableVendors] = useState<string[]>([])
   const [images, setImages] = useState<ItemImage[]>([])
   const [uploadsInFlight, setUploadsInFlight] = useState(0)
@@ -118,6 +121,8 @@ export default function EditItem() {
 
   // Track if user has manually edited project_price
   const projectPriceEditedRef = useRef(false)
+
+  const activeProjectId = selectedProjectId || projectId || ''
 
   console.log('EditItem - URL params:', { projectId, itemId })
 
@@ -134,6 +139,33 @@ export default function EditItem() {
       }
     }
     loadVendors()
+  }, [currentAccountId])
+
+  useEffect(() => {
+    if (!currentAccountId) return
+    let isMounted = true
+
+    const loadProjects = async () => {
+      setLoadingProjects(true)
+      try {
+        const fetchedProjects = await projectService.getProjects(currentAccountId)
+        if (isMounted) {
+          setProjects(fetchedProjects)
+        }
+      } catch (error) {
+        console.error('Error loading projects:', error)
+      } finally {
+        if (isMounted) {
+          setLoadingProjects(false)
+        }
+      }
+    }
+
+    loadProjects()
+
+    return () => {
+      isMounted = false
+    }
   }, [currentAccountId])
 
   // Initialize custom states based on form data
@@ -171,6 +203,7 @@ export default function EditItem() {
               notes: String(fetchedItem.notes || ''),
               selectedTransactionId: String(fetchedItem.transactionId || '')
             })
+            setSelectedProjectId(fetchedItem.projectId || projectId || '')
             console.log('Form data set:', {
               description: String(fetchedItem.description || ''),
               source: String(fetchedItem.source || ''),
@@ -194,9 +227,9 @@ export default function EditItem() {
 
   useEffect(() => {
     const fetchProjectName = async () => {
-      if (!projectId || !currentAccountId) return
+      if (!activeProjectId || !currentAccountId) return
       try {
-        const project = await projectService.getProject(currentAccountId, projectId)
+        const project = await projectService.getProject(currentAccountId, activeProjectId)
         if (project) {
           setProjectName(project.name)
         }
@@ -206,21 +239,21 @@ export default function EditItem() {
     }
 
     fetchProjectName()
-  }, [projectId, currentAccountId])
+  }, [activeProjectId, currentAccountId])
 
   // Hydrate and fetch transactions when component mounts
   useEffect(() => {
     const fetchTransactions = async () => {
-      if (projectId && currentAccountId) {
+      if (activeProjectId && currentAccountId) {
         setLoadingTransactions(true)
         try {
           // Hydrate cache first to prevent empty state flash
           try {
             const queryClient = getGlobalQueryClient()
             if (queryClient) {
-              await hydrateProjectTransactionsCache(queryClient, currentAccountId, projectId)
+              await hydrateProjectTransactionsCache(queryClient, currentAccountId, activeProjectId)
               // Check if React Query cache has transactions
-              const cached = queryClient.getQueryData<Transaction[]>(['project-transactions', currentAccountId, projectId])
+              const cached = queryClient.getQueryData<Transaction[]>(['project-transactions', currentAccountId, activeProjectId])
               if (cached && cached.length > 0) {
                 setTransactions(cached)
               }
@@ -230,7 +263,7 @@ export default function EditItem() {
           }
           
           // Fetch fresh transactions (will update cache)
-          const fetchedTransactions = await transactionService.getTransactions(currentAccountId, projectId)
+          const fetchedTransactions = await transactionService.getTransactions(currentAccountId, activeProjectId)
           setTransactions(fetchedTransactions)
         } catch (error) {
           console.error('Error fetching transactions:', error)
@@ -241,7 +274,7 @@ export default function EditItem() {
     }
 
     fetchTransactions()
-  }, [projectId, currentAccountId])
+  }, [activeProjectId, currentAccountId])
 
   // Validation function
   const validateForm = (): boolean => {
@@ -262,10 +295,17 @@ export default function EditItem() {
     }
   }, [errors.description, formData.description, images.length])
 
+  useEffect(() => {
+    if (!selectedProjectId && projectId) {
+      setSelectedProjectId(projectId)
+    }
+  }, [selectedProjectId, projectId])
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
 
-    if (!validateForm() || !itemId || !projectId || !currentAccountId) return
+    const targetProjectId = selectedProjectId || projectId || ''
+    if (!validateForm() || !itemId || !targetProjectId || !currentAccountId) return
 
     setSaving(true)
 
@@ -281,12 +321,13 @@ export default function EditItem() {
       space: formData.space,
       notes: formData.notes,
       transactionId: formData.selectedTransactionId || undefined,
+      projectId: targetProjectId,
       lastUpdated: new Date().toISOString()
     }
 
     try {
       await unifiedItemsService.updateItem(currentAccountId, itemId, itemData)
-      if (projectId) {
+      if (targetProjectId) {
         const priorDetailUrl = getReturnToFromLocation(location)
         if (priorDetailUrl) {
           const top = navigationStack.peek()
@@ -294,8 +335,8 @@ export default function EditItem() {
             navigationStack.pop()
           }
         }
-        const detailPath = projectItemDetail(projectId, itemId)
-        const listReturnTo = projectItems(projectId)
+        const detailPath = projectItemDetail(targetProjectId, itemId)
+        const listReturnTo = projectItems(targetProjectId)
         const detailUrl = `${detailPath}?returnTo=${encodeURIComponent(listReturnTo)}`
         navigate(detailUrl, { replace: true })
       } else {
@@ -305,7 +346,7 @@ export default function EditItem() {
       console.error('Error updating item:', error)
       console.error('Form data being submitted:', itemData)
       console.error('Item ID:', itemId)
-      console.error('Project ID:', projectId)
+      console.error('Project ID:', selectedProjectId || projectId)
 
       // Provide more specific error messages based on error type
       let errorMessage = 'Failed to update item. Please try again.'
@@ -352,6 +393,13 @@ export default function EditItem() {
     // Clear error when user makes selection
     if (errors.selectedTransactionId) {
       setErrors(prev => ({ ...prev, selectedTransactionId: '' }))
+    }
+  }
+
+  const handleProjectChange = (nextProjectId: string) => {
+    setSelectedProjectId(nextProjectId)
+    if (formData.selectedTransactionId) {
+      setFormData(prev => ({ ...prev, selectedTransactionId: '' }))
     }
   }
 
@@ -512,7 +560,19 @@ export default function EditItem() {
     }
   }
 
-
+  const projectOptions = useMemo(
+    () => projects.map(project => ({ id: project.id, label: project.name })),
+    [projects]
+  )
+  const selectedProjectValue = selectedProjectId && projectOptions.some(option => option.id === selectedProjectId)
+    ? selectedProjectId
+    : ''
+  const associateDisabledReason = formData.selectedTransactionId
+    ? (isCanonicalTransactionId(formData.selectedTransactionId)
+      ? 'This item is tied to a Company Inventory transaction. Use inventory allocation/deallocation instead.'
+      : 'This item is tied to a transaction. Move the transaction to another project instead.')
+    : null
+  const associateDisabled = Boolean(associateDisabledReason) || loadingProjects
 
   if (loading) {
     return (
@@ -640,6 +700,21 @@ export default function EditItem() {
                   </div>
                 )}
               </div>
+
+              {/* Project Association */}
+              <Combobox
+                label="Associate with project"
+                value={selectedProjectValue}
+                onChange={handleProjectChange}
+                helperText="If you accidentally added this item to the wrong project."
+                disabled={associateDisabled}
+                loading={loadingProjects}
+                placeholder={loadingProjects ? "Loading projects..." : "Select a project"}
+                options={projectOptions}
+              />
+              {associateDisabledReason && (
+                <p className="mt-1 text-sm text-amber-600">{associateDisabledReason}</p>
+              )}
 
               {/* Transaction Selection */}
               <Combobox
