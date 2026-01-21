@@ -83,6 +83,13 @@ export class OfflineContextError extends Error {
   }
 }
 
+export class FatalError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'FatalError'
+  }
+}
+
 class OperationQueue {
   private queue: Operation[] = []
   private isProcessing = false
@@ -503,8 +510,15 @@ class OperationQueue {
         this.emitQueueChange()
       }
     } catch (error) {
-      console.error('Error processing queue:', error)
-      this.isProcessing = false
+      if (error instanceof FatalError) {
+        console.error(`Operation ${this.queue[0]?.id} failed with fatal error, removing from queue:`, error.message)
+        this.queue.shift()
+        await this.persistQueue()
+        this.emitQueueChange()
+        setTimeout(() => this.processQueue(), 100)
+      } else {
+        console.error('Error processing queue:', error)
+      }
     } finally {
       this.isProcessing = false
     }
@@ -582,6 +596,7 @@ class OperationQueue {
           return false
       }
     } catch (error) {
+      if (error instanceof FatalError) throw error
       console.error('Failed to execute operation:', error)
       return false
     }
@@ -739,7 +754,11 @@ class OperationQueue {
       await offlineStore.saveItems([dbItem])
 
       return true
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.code === 'P0001' || error?.code === '23503' || error?.code === '42501' || error?.status === 400) {
+        console.error('Fatal error creating item:', error)
+        throw new FatalError(error.message || 'Fatal error creating item')
+      }
       console.error('Failed to create item on server:', error)
       return false
     }
@@ -947,7 +966,11 @@ class OperationQueue {
       }
 
       return true
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.code === 'P0001' || error?.code === '23503' || error?.code === '42501' || error?.status === 400) {
+        console.error('Fatal error updating item:', error)
+        throw new FatalError(error.message || 'Fatal error updating item')
+      }
       console.error('Failed to update item:', error)
       return false
     }
@@ -1128,7 +1151,11 @@ class OperationQueue {
       }
 
       return true
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.code === 'P0001' || error?.code === '23503' || error?.code === '42501' || error?.status === 400) {
+        console.error('Fatal error creating transaction:', error)
+        throw new FatalError(error.message || 'Fatal error creating transaction')
+      }
       console.error('Failed to create transaction on server:', error)
       return false
     }
@@ -1248,7 +1275,15 @@ class OperationQueue {
       }
 
       return true
-    } catch (error) {
+    } catch (error: any) {
+      // P0001: Raise Exception (custom validation)
+      // 23503: Foreign Key Violation
+      // 42501: RLS/Permission Denied
+      // 400: Bad Request (validation error)
+      if (error?.code === 'P0001' || error?.code === '23503' || error?.code === '42501' || error?.status === 400) {
+        console.error('Fatal error updating transaction:', error)
+        throw new FatalError(error.message || 'Fatal error updating transaction')
+      }
       console.error('Failed to update transaction:', error)
       return false
     }

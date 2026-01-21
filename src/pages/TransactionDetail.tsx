@@ -1,4 +1,4 @@
-import { ArrowLeft, Edit, Trash2, Image as ImageIcon, Package, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Edit, Trash2, Image as ImageIcon, Package, RefreshCw, ChevronDown } from 'lucide-react'
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import ImageGallery from '@/components/ui/ImageGallery'
 import { TransactionImagePreview } from '@/components/ui/ImagePreview'
@@ -7,7 +7,7 @@ import ContextBackLink from '@/components/ContextBackLink'
 import ContextLink from '@/components/ContextLink'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { Transaction, Project, Item, TransactionItemFormData, BudgetCategory, ItemDisposition, ItemImage, TransactionImage } from '@/types'
-import { transactionService, projectService, unifiedItemsService } from '@/services/inventoryService'
+import { transactionService, projectService, unifiedItemsService, isCanonicalTransactionId } from '@/services/inventoryService'
 import { budgetCategoriesService } from '@/services/budgetCategoriesService'
 import { lineageService } from '@/services/lineageService'
 import { ImageUploadService } from '@/services/imageService'
@@ -32,7 +32,7 @@ import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, CLIENT_OWES_COMPANY
 import TransactionAudit from '@/components/ui/TransactionAudit'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { useSyncError } from '@/hooks/useSyncError'
-import { projectTransactionEdit, projectTransactions } from '@/utils/routes'
+import { projectTransactionDetail, projectTransactionEdit, projectTransactions } from '@/utils/routes'
 import { splitItemsByMovement, type DisplayTransactionItem } from '@/utils/transactionMovement'
 import { ConflictResolutionView } from '@/components/ConflictResolutionView'
 
@@ -106,6 +106,11 @@ export default function TransactionDetail() {
   const { currentAccountId } = useAccount()
   const [transaction, setTransaction] = useState<Transaction | null>(null)
   const [project, setProject] = useState<Project | null>(null)
+  const [projects, setProjects] = useState<Project[]>([])
+  const [loadingProjects, setLoadingProjects] = useState(false)
+  const [selectedProjectId, setSelectedProjectId] = useState('')
+  const [isUpdatingProject, setIsUpdatingProject] = useState(false)
+  const [showProjectMenu, setShowProjectMenu] = useState(false)
   const transactionRef = useRef<Transaction | null>(null)
   const derivedRealtimeProjectId = projectId || transaction?.projectId || null
   const { refreshCollections: refreshRealtimeCollections, items: realtimeProjectItems } = useProjectRealtime(derivedRealtimeProjectId)
@@ -172,6 +177,38 @@ export default function TransactionDetail() {
   const isUploadingOtherImages = otherUploadsInFlight > 0
   const [imageFilesMap, setImageFilesMap] = useState<Map<string, File[]>>(new Map())
   const [itemRecords, setItemRecords] = useState<Item[]>([])
+
+  useEffect(() => {
+    if (!transaction) return
+    setSelectedProjectId(transaction.projectId || '')
+  }, [transaction])
+
+  useEffect(() => {
+    if (!currentAccountId) return
+    let isMounted = true
+
+    const fetchProjects = async () => {
+      setLoadingProjects(true)
+      try {
+        const fetchedProjects = await projectService.getProjects(currentAccountId)
+        if (isMounted) {
+          setProjects(fetchedProjects)
+        }
+      } catch (error) {
+        console.error('Failed to load projects:', error)
+      } finally {
+        if (isMounted) {
+          setLoadingProjects(false)
+        }
+      }
+    }
+
+    fetchProjects()
+
+    return () => {
+      isMounted = false
+    }
+  }, [currentAccountId])
 
   async function resolveMissingProjectIds(items: Item[]) {
     if (!currentAccountId) return
@@ -563,6 +600,53 @@ export default function TransactionDetail() {
       setIsLoadingItems(false)
     }
   }, [projectId, transactionId, currentAccountId, fetchItemsViaReconcile])
+
+  const projectOptions = useMemo(
+    () => projects.map(project => ({ id: project.id, label: project.name })),
+    [projects]
+  )
+
+  const moveDisabledReason = useMemo(() => {
+    if (!transaction) return 'Transaction not loaded.'
+    if (isCanonicalTransactionId(transaction.transactionId)) {
+      return 'This is a company inventory transaction. Use allocation/deallocation instead.'
+    }
+    if (loadingProjects) return 'Loading projects...'
+    if (projectOptions.length === 0) return 'No projects available.'
+    return ''
+  }, [transaction, loadingProjects, projectOptions.length])
+
+  const moveDisabled = Boolean(moveDisabledReason) || isUpdatingProject
+
+  const handleMoveProject = useCallback(async (nextProjectId: string) => {
+    if (!transaction || !currentAccountId) return
+    if (!nextProjectId || nextProjectId === transaction.projectId) return
+    if (isCanonicalTransactionId(transaction.transactionId)) {
+      showError('This is a company inventory transaction. Use allocation/deallocation instead.')
+      setSelectedProjectId(transaction.projectId || '')
+      return
+    }
+
+    setIsUpdatingProject(true)
+    setSelectedProjectId(nextProjectId)
+    try {
+      await transactionService.moveTransactionToProject(currentAccountId, transaction.transactionId, nextProjectId)
+      const nextProject = projects.find(project => project.id === nextProjectId)
+      if (nextProject) {
+        setProject(nextProject)
+      }
+      setTransaction(prev => prev ? { ...prev, projectId: nextProjectId } : prev)
+      showSuccess('Transaction moved to project.')
+      navigate(buildContextUrl(projectTransactionDetail(nextProjectId, transaction.transactionId)))
+    } catch (error) {
+      console.error('Failed to move transaction:', error)
+      setSelectedProjectId(transaction.projectId || '')
+      showError('Failed to move transaction. Please try again.')
+    } finally {
+      setIsUpdatingProject(false)
+      setShowProjectMenu(false)
+    }
+  }, [transaction, currentAccountId, showError, showSuccess, navigate, buildContextUrl, projects])
 
   useEffect(() => {
     loadTransaction()
@@ -1316,6 +1400,42 @@ export default function TransactionDetail() {
             </button>
           </div>
           <div className="flex items-center space-x-3">
+            {transaction && !isCanonicalTransactionId(transaction.transactionId) && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!moveDisabled) {
+                      setShowProjectMenu(prev => !prev)
+                    }
+                  }}
+                  className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-900 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+                  title={moveDisabledReason || 'Move to project'}
+                  disabled={moveDisabled}
+                >
+                  Move to project
+                  <ChevronDown className="h-3 w-3 ml-1" />
+                </button>
+                {showProjectMenu && !moveDisabled && (
+                  <div className="absolute right-0 mt-1 w-64 bg-white border border-gray-200 rounded-md shadow-lg z-20">
+                    <div className="py-1">
+                      {projectOptions.map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() => handleMoveProject(option.id)}
+                          className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                            option.id === selectedProjectId ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
+                          }`}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             <ContextLink
               to={buildContextUrl(editTransactionUrl)}
               className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"

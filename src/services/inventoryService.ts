@@ -9,7 +9,7 @@ import { offlineTransactionService } from './offlineTransactionService'
 import { isNetworkOnline, withNetworkTimeout, NetworkTimeoutError } from './networkStatusService'
 import { OfflineQueueUnavailableError } from './offlineItemService'
 import { operationQueue, OfflineContextError } from './operationQueue'
-import { refreshProjectSnapshot } from '@/utils/realtimeSnapshotUpdater'
+import { refreshBusinessInventorySnapshot, refreshProjectSnapshot } from '@/utils/realtimeSnapshotUpdater'
 import { removeTransactionFromCaches, removeItemFromCaches } from '@/utils/queryCacheHelpers'
 import type { Item, Project, FilterOptions, PaginationOptions, Transaction, TransactionItemFormData, TransactionCompleteness, CompletenessStatus, ItemImage, ItemDisposition } from '@/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
@@ -2748,6 +2748,138 @@ export const transactionService = {
     }
   },
 
+  // Move a non-canonical transaction (and its current items) to another project
+  async moveTransactionToProject(accountId: string, transactionId: string, nextProjectId: string): Promise<void> {
+    if (!accountId || !transactionId || !nextProjectId) return
+
+    const refreshCaches = (previousProjectId: string | null, nextProjectIdValue: string | null) => {
+      const queryClient = tryGetQueryClient()
+      if (queryClient) {
+        removeTransactionFromCaches(queryClient, accountId, transactionId, previousProjectId)
+        queryClient.invalidateQueries({ queryKey: ['transaction', accountId, transactionId] })
+        queryClient.invalidateQueries({ queryKey: ['transaction-items', accountId, transactionId] })
+        if (previousProjectId) {
+          queryClient.invalidateQueries({ queryKey: ['project-transactions', accountId, previousProjectId] })
+          queryClient.invalidateQueries({ queryKey: ['project-items', accountId, previousProjectId] })
+        } else {
+          queryClient.invalidateQueries({ queryKey: ['business-inventory', accountId] })
+        }
+        if (nextProjectIdValue) {
+          queryClient.invalidateQueries({ queryKey: ['project-transactions', accountId, nextProjectIdValue] })
+          queryClient.invalidateQueries({ queryKey: ['project-items', accountId, nextProjectIdValue] })
+        }
+      }
+
+      if (previousProjectId) {
+        refreshProjectSnapshot(previousProjectId)
+      } else {
+        refreshBusinessInventorySnapshot(accountId)
+      }
+      if (nextProjectIdValue) {
+        refreshProjectSnapshot(nextProjectIdValue)
+      }
+    }
+
+    const updateOfflineItemsForTransaction = async (newProjectId: string, shouldQueue: boolean) => {
+      await offlineStore.init().catch(() => {})
+      const cachedItems = await offlineStore.getAllItems().catch(() => [])
+      const itemsToUpdate = cachedItems.filter(item =>
+        item.transactionId === transactionId && (!item.accountId || item.accountId === accountId)
+      )
+      if (itemsToUpdate.length === 0) return
+
+      if (shouldQueue) {
+        const { offlineItemService } = await import('./offlineItemService')
+        for (const item of itemsToUpdate) {
+          await offlineItemService.updateItem(accountId, item.itemId, { projectId: newProjectId })
+        }
+        return
+      }
+
+      for (const item of itemsToUpdate) {
+        await offlineStore.upsertItem({
+          ...item,
+          projectId: newProjectId
+        })
+      }
+    }
+
+    const updateOfflineTransaction = async (newProjectId: string) => {
+      await offlineStore.init().catch(() => {})
+      const cached = await offlineStore.getTransactionById(transactionId).catch(() => null)
+      if (!cached) return
+      await offlineStore.upsertTransaction({
+        ...cached,
+        projectId: newProjectId
+      })
+    }
+
+    const { transaction, projectId } = await this.getTransactionById(accountId, transactionId)
+    if (!transaction) {
+      throw new Error('Transaction not found')
+    }
+    if (isCanonicalTransactionId(transaction.transactionId)) {
+      return
+    }
+    const previousProjectId = transaction.projectId ?? projectId ?? null
+    if (previousProjectId === nextProjectId) return
+
+    const online = isNetworkOnline()
+    if (!online) {
+      await offlineTransactionService.updateTransaction(accountId, transactionId, { projectId: nextProjectId })
+      await updateOfflineTransaction(nextProjectId)
+      await updateOfflineItemsForTransaction(nextProjectId, true)
+      refreshCaches(previousProjectId, nextProjectId)
+      return
+    }
+
+    try {
+      await ensureAuthenticatedForDatabase()
+
+      await withNetworkTimeout(async () => {
+        const { error } = await supabase
+          .from('transactions')
+          .update({
+            project_id: nextProjectId,
+            updated_at: new Date().toISOString()
+          })
+          .eq('account_id', accountId)
+          .eq('transaction_id', transactionId)
+        if (error) throw error
+      })
+
+      await withNetworkTimeout(async () => {
+        const { error } = await supabase
+          .from('items')
+          .update({
+            project_id: nextProjectId,
+            last_updated: new Date().toISOString()
+          })
+          .eq('account_id', accountId)
+          .eq('transaction_id', transactionId)
+        if (error) throw error
+      })
+
+      await updateOfflineTransaction(nextProjectId)
+      await updateOfflineItemsForTransaction(nextProjectId, false)
+      refreshCaches(previousProjectId, nextProjectId)
+    } catch (error) {
+      if (error instanceof NetworkTimeoutError) {
+        console.warn('Supabase move transaction timed out, queuing update for offline sync.')
+        await offlineTransactionService.updateTransaction(accountId, transactionId, { projectId: nextProjectId })
+        await updateOfflineTransaction(nextProjectId)
+        await updateOfflineItemsForTransaction(nextProjectId, true)
+        refreshCaches(previousProjectId, nextProjectId)
+        return
+      }
+      console.warn('Failed to move transaction online, falling back to offline queue:', error)
+      await offlineTransactionService.updateTransaction(accountId, transactionId, { projectId: nextProjectId })
+      await updateOfflineTransaction(nextProjectId)
+      await updateOfflineItemsForTransaction(nextProjectId, true)
+      refreshCaches(previousProjectId, nextProjectId)
+    }
+  },
+
   // Delete transaction (account-scoped)
   async deleteTransaction(accountId: string, _projectId: string, transactionId: string): Promise<void> {
     // Check network state and hydrate from offlineStore first
@@ -2871,7 +3003,9 @@ export const transactionService = {
           },
           async (payload) => {
             const { eventType, new: newRecord, old: oldRecord } = payload
-            const recordAccountId = (eventType === 'DELETE' ? oldRecord?.account_id : newRecord?.account_id) ?? null
+            const typedNewRecord = newRecord as Record<string, any> | null
+            const typedOldRecord = oldRecord as Record<string, any> | null
+            const recordAccountId = (eventType === 'DELETE' ? typedOldRecord?.account_id : typedNewRecord?.account_id) ?? null
             if (recordAccountId && recordAccountId !== accountId) {
               return
             }
@@ -3050,7 +3184,9 @@ export const transactionService = {
           },
           async (payload) => {
             const { eventType, new: newRecord, old: oldRecord } = payload
-            const recordAccountId = (eventType === 'DELETE' ? oldRecord?.account_id : newRecord?.account_id) ?? null
+            const typedNewRecord = newRecord as Record<string, any> | null
+            const typedOldRecord = oldRecord as Record<string, any> | null
+            const recordAccountId = (eventType === 'DELETE' ? typedOldRecord?.account_id : typedNewRecord?.account_id) ?? null
             if (recordAccountId && recordAccountId !== accountId) {
               return
             }
@@ -3158,7 +3294,9 @@ export const transactionService = {
           },
           async (payload) => {
             const { eventType, new: newRecord, old: oldRecord } = payload
-            const recordAccountId = (eventType === 'DELETE' ? oldRecord?.account_id : newRecord?.account_id) ?? null
+            const typedNewRecord = newRecord as Record<string, any> | null
+            const typedOldRecord = oldRecord as Record<string, any> | null
+            const recordAccountId = (eventType === 'DELETE' ? typedOldRecord?.account_id : typedNewRecord?.account_id) ?? null
             if (recordAccountId && recordAccountId !== accountId) {
               return
             }
@@ -3166,19 +3304,19 @@ export const transactionService = {
             console.log('Business inventory transactions change received!', payload)
 
             let nextTransactions = entry?.data ?? []
-            const transactionId = (eventType === 'DELETE' ? oldRecord?.transaction_id : newRecord?.transaction_id) ?? oldRecord?.transaction_id ?? null
+            const transactionId = (eventType === 'DELETE' ? typedOldRecord?.transaction_id : typedNewRecord?.transaction_id) ?? typedOldRecord?.transaction_id ?? null
 
             if (eventType === 'INSERT') {
-              if (isBusinessInventoryTransactionRecord(newRecord)) {
-                const newTransaction = _convertTransactionFromDb(newRecord)
+              if (isBusinessInventoryTransactionRecord(typedNewRecord)) {
+                const newTransaction = _convertTransactionFromDb(typedNewRecord)
                 const [enrichedTransaction] = await _enrichTransactionsWithProjectNames(accountId, [newTransaction])
                 if (enrichedTransaction) {
                   nextTransactions = [enrichedTransaction, ...nextTransactions.filter(t => t.transactionId !== enrichedTransaction.transactionId)]
                 }
               }
             } else if (eventType === 'UPDATE') {
-              if (isBusinessInventoryTransactionRecord(newRecord)) {
-                const updatedTransaction = _convertTransactionFromDb(newRecord)
+              if (isBusinessInventoryTransactionRecord(typedNewRecord)) {
+                const updatedTransaction = _convertTransactionFromDb(typedNewRecord)
                 const [enrichedTransaction] = await _enrichTransactionsWithProjectNames(accountId, [updatedTransaction])
                 if (enrichedTransaction) {
                   const hasExisting = nextTransactions.some(t => t.transactionId === enrichedTransaction.transactionId)
