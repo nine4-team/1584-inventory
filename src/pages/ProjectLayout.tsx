@@ -2,6 +2,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Outlet,
   useLocation,
+  useNavigate,
   useOutletContext,
   useParams,
   useSearchParams,
@@ -88,6 +89,7 @@ export default function ProjectLayout() {
   const stackedNavigate = useStackedNavigate()
   const stackedNavigateRef = useRef(stackedNavigate)
   const location = useLocation()
+  const navigate = useNavigate()
   const { currentAccountId } = useAccount()
   const [searchParams, setSearchParams] = useSearchParams()
   const budgetTabParam = searchParams.get('budgetTab')
@@ -232,7 +234,7 @@ export default function ProjectLayout() {
     if (projectId) {
       storeProjectSection(projectId, section)
     }
-    stackedNavigate(sectionPaths[section])
+    navigate(sectionPaths[section], { replace: true })
   }
 
   const backDestination = getBackDestination(projectsRoot())
