@@ -1457,18 +1457,18 @@ export default function TransactionDetail() {
               </div>
             )}
 
-            {transaction.receiptEmailed && (
-              <div>
-                <dt className="text-sm font-medium text-gray-500">
-                  Receipt Emailed
-                </dt>
-                <dd className="mt-1">
-                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                    Yes
-                  </span>
-                </dd>
-              </div>
-            )}
+            <div>
+              <dt className="text-sm font-medium text-gray-500">
+                Receipt Emailed
+              </dt>
+              <dd className="mt-1">
+                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                  transaction.receiptEmailed ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                }`}>
+                  {transaction.receiptEmailed ? 'Yes' : 'No'}
+                </span>
+              </dd>
+            </div>
 
             {transaction.notes && (
               <div className="sm:col-span-2">

@@ -1,4 +1,4 @@
-import { Plus, Search, Filter, FileUp, ArrowUpDown } from 'lucide-react'
+import { Plus, Search, Filter, FileUp, ArrowUpDown, Check } from 'lucide-react'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
@@ -53,6 +53,7 @@ interface TransactionsListProps {
 }
 
 const TRANSACTION_FILTER_MODES = ['all', 'we-owe', 'client-owes'] as const
+const RECEIPT_FILTER_MODES = ['all', 'no-email'] as const
 const TRANSACTION_SORT_MODES = [
   'date-desc',
   'date-asc',
@@ -63,6 +64,7 @@ const TRANSACTION_SORT_MODES = [
 ] as const
 const DEFAULT_FILTER_MODE = 'all'
 const DEFAULT_SOURCE_FILTER = 'all'
+const DEFAULT_RECEIPT_FILTER = 'all'
 const DEFAULT_SORT_MODE = 'date-desc'
 
 const parseFilterMode = (value: string | null) =>
@@ -74,6 +76,11 @@ const parseSortMode = (value: string | null) =>
   TRANSACTION_SORT_MODES.includes(value as (typeof TRANSACTION_SORT_MODES)[number])
     ? (value as (typeof TRANSACTION_SORT_MODES)[number])
     : DEFAULT_SORT_MODE
+
+const parseReceiptFilter = (value: string | null) =>
+  RECEIPT_FILTER_MODES.includes(value as (typeof RECEIPT_FILTER_MODES)[number])
+    ? (value as (typeof RECEIPT_FILTER_MODES)[number])
+    : DEFAULT_RECEIPT_FILTER
 
 export default function TransactionsList({ projectId: propProjectId, transactions: propTransactions }: TransactionsListProps) {
   const { id, projectId: routeProjectId } = useParams<{ id?: string; projectId?: string }>()
@@ -98,6 +105,9 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     parseFilterMode(searchParams.get('txFilter'))
   )
   const [sourceFilter, setSourceFilter] = useState<string>(() => searchParams.get('txSource') ?? DEFAULT_SOURCE_FILTER)
+  const [receiptFilter, setReceiptFilter] = useState<'all' | 'no-email'>(() =>
+    parseReceiptFilter(searchParams.get('txReceipt'))
+  )
 
   // Sort state
   const [sortMode, setSortMode] = useState<
@@ -131,12 +141,14 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     const nextSearchQuery = searchParams.get('txSearch') ?? ''
     const nextFilterMode = parseFilterMode(searchParams.get('txFilter'))
     const nextSourceFilter = searchParams.get('txSource') ?? DEFAULT_SOURCE_FILTER
+    const nextReceiptFilter = parseReceiptFilter(searchParams.get('txReceipt'))
     const nextSortMode = parseSortMode(searchParams.get('txSort'))
 
     const hasChanges =
       searchQuery !== nextSearchQuery ||
       filterMode !== nextFilterMode ||
       sourceFilter !== nextSourceFilter ||
+      receiptFilter !== nextReceiptFilter ||
       sortMode !== nextSortMode
 
     if (!hasChanges) return
@@ -145,6 +157,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     if (searchQuery !== nextSearchQuery) setSearchQuery(nextSearchQuery)
     if (filterMode !== nextFilterMode) setFilterMode(nextFilterMode)
     if (sourceFilter !== nextSourceFilter) setSourceFilter(nextSourceFilter)
+    if (receiptFilter !== nextReceiptFilter) setReceiptFilter(nextReceiptFilter)
     if (sortMode !== nextSortMode) setSortMode(nextSortMode)
   }, [searchParams])
 
@@ -166,12 +179,13 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     setParam('txSearch', searchQuery, '')
     setParam('txFilter', filterMode, DEFAULT_FILTER_MODE)
     setParam('txSource', sourceFilter, DEFAULT_SOURCE_FILTER)
+    setParam('txReceipt', receiptFilter, DEFAULT_RECEIPT_FILTER)
     setParam('txSort', sortMode, DEFAULT_SORT_MODE)
 
     if (nextParams.toString() !== searchParams.toString()) {
       setSearchParams(nextParams, { replace: true, state: location.state })
     }
-  }, [filterMode, location.state, searchQuery, setSearchParams, sortMode, sourceFilter])
+  }, [filterMode, location.state, receiptFilter, searchQuery, setSearchParams, sortMode, sourceFilter])
 
   useEffect(() => {
     if (hasRestoredScrollRef.current || isLoading) return
@@ -343,6 +357,10 @@ export default function TransactionsList({ projectId: propProjectId, transaction
       filtered = filtered.filter(t => getCanonicalTransactionTitle(t) === sourceFilter)
     }
 
+    if (receiptFilter === 'no-email') {
+      filtered = filtered.filter(t => !t.receiptEmailed)
+    }
+
     // Apply search filter (source/title/type/notes/amount)
     if (searchQuery) {
       const query = searchQuery.toLowerCase().trim()
@@ -390,7 +408,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     })
 
     return sorted
-  }, [transactions, filterMode, sourceFilter, searchQuery, sortMode])
+  }, [transactions, filterMode, receiptFilter, sourceFilter, searchQuery, sortMode])
 
   const availableSources = useMemo(() => {
     const titles = transactions
@@ -569,7 +587,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                 if (next) setFilterMenuView('main')
               }}
               className={`filter-button inline-flex items-center justify-center px-3 py-2 border text-sm font-medium rounded-md transition-colors duration-200 ${
-                filterMode === 'all' && sourceFilter === 'all'
+                filterMode === 'all' && sourceFilter === 'all' && receiptFilter === 'all'
                   ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
                   : 'border-primary-500 text-primary-600 bg-primary-50 hover:bg-primary-100'
               }`}
@@ -587,35 +605,55 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                     <button
                       onClick={() => {
                         setFilterMode('all')
+                        setSourceFilter('all')
+                        setReceiptFilter('all')
                         setShowFilterMenu(false)
                       }}
-                      className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
                         filterMode === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
                       }`}
                     >
-                      All Transactions
+                      <span>All Transactions</span>
+                      {filterMode === 'all' ? <Check className="h-4 w-4" /> : null}
                     </button>
                     <button
                       onClick={() => {
                         setFilterMode('we-owe')
                         setShowFilterMenu(false)
                       }}
-                      className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
                         filterMode === 'we-owe' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
                       }`}
                     >
-                      We Owe
+                      <span>We Owe</span>
+                      {filterMode === 'we-owe' ? <Check className="h-4 w-4" /> : null}
                     </button>
                     <button
                       onClick={() => {
                         setFilterMode('client-owes')
                         setShowFilterMenu(false)
                       }}
-                      className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
                         filterMode === 'client-owes' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
                       }`}
                     >
-                      Client Owes
+                      <span>Client Owes</span>
+                      {filterMode === 'client-owes' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+
+                    <div className="my-1 border-t border-gray-100" />
+
+                    <button
+                      onClick={() => {
+                        setReceiptFilter(receiptFilter === 'no-email' ? 'all' : 'no-email')
+                        setShowFilterMenu(false)
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        receiptFilter === 'no-email' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>No Email Receipt</span>
+                      {receiptFilter === 'no-email' ? <Check className="h-4 w-4" /> : null}
                     </button>
 
                     <div className="my-1 border-t border-gray-100" />
@@ -652,11 +690,12 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                         setShowFilterMenu(false)
                         setFilterMenuView('main')
                       }}
-                      className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
                         sourceFilter === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
                       }`}
                     >
-                      All sources
+                      <span>All sources</span>
+                      {sourceFilter === 'all' ? <Check className="h-4 w-4" /> : null}
                     </button>
                     {availableSources.map(source => (
                       <button
@@ -666,11 +705,12 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                           setShowFilterMenu(false)
                           setFilterMenuView('main')
                         }}
-                        className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                        className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
                           sourceFilter === source ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
                         }`}
                       >
-                        {source}
+                        <span>{source}</span>
+                        {sourceFilter === source ? <Check className="h-4 w-4" /> : null}
                       </button>
                     ))}
                   </div>
@@ -703,7 +743,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
             No transactions found
           </h3>
           <p className="text-sm text-gray-500 mb-4">
-            {searchQuery || filterMode !== 'all' || sourceFilter !== 'all'
+            {searchQuery || filterMode !== 'all' || sourceFilter !== 'all' || receiptFilter !== 'all'
               ? 'Try adjusting your search or filter criteria.'
               : 'No transactions found.'
             }
