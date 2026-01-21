@@ -363,21 +363,43 @@ export default function BudgetProgress({ budget, designFee, budgetCategories, tr
                         <span className="text-sm text-gray-500">
                           ${Math.round(category.spent).toLocaleString('en-US')} {category.isDesignFee ? 'received' : 'spent'}
                         </span>
-                        <span className={`text-sm ${category.isDesignFee ? getDesignFeeRemainingColor(category.percentage) : getRemainingColor(category.percentage)}`}>
-                          <span className="font-bold">${Math.round((category.budget || 0) - category.spent).toLocaleString('en-US')}</span> remaining
-                        </span>
+                      <span className={`text-sm ${category.isDesignFee ? getDesignFeeRemainingColor(category.percentage) : getRemainingColor(category.percentage)}`}>
+                        {(() => {
+                          const remainingAmount = Math.round((category.budget || 0) - category.spent)
+                          if (category.isDesignFee || remainingAmount >= 0) {
+                            return (
+                              <>
+                                <span className="font-bold">${remainingAmount.toLocaleString('en-US')}</span> remaining
+                              </>
+                            )
+                          }
+                          return (
+                            <>
+                              <span className="font-bold">${Math.abs(remainingAmount).toLocaleString('en-US')}</span> over
+                            </>
+                          )
+                        })()}
+                      </span>
                       </div>
                     </div>
 
                     {/* Progress Bar */}
                     <div className="relative">
-                      <div className="w-full bg-gray-200 rounded-full h-2 mb-1">
+                      <div className="w-full bg-gray-200 rounded-full h-2 mb-1 relative">
                         <div
                           className={`h-2 rounded-full transition-all duration-300 ${
                             category.isDesignFee ? getDesignFeeProgressColor(category.percentage) : getProgressColor(category.percentage)
                           }`}
                           style={{ width: `${Math.min(category.percentage, 100)}%` }}
                         />
+                        {!category.isDesignFee && category.spent > (category.budget || 0) && category.budget > 0 && (
+                          <div
+                            className="absolute top-0 right-0 h-2 rounded-full bg-red-800"
+                            style={{
+                              width: `${Math.min(((category.spent - category.budget) / category.budget) * 100, 100)}%`
+                            }}
+                          />
+                        )}
                       </div>
 
                     </div>
@@ -419,20 +441,42 @@ export default function BudgetProgress({ budget, designFee, budgetCategories, tr
                         ${Math.round(category.spent).toLocaleString('en-US')} {category.isDesignFee ? 'received' : 'spent'}
                       </span>
                       <span className={`text-sm ${category.isDesignFee ? getDesignFeeRemainingColor(category.percentage) : getRemainingColor(category.percentage)}`}>
-                        <span className="font-bold">${Math.round((category.budget || 0) - category.spent).toLocaleString('en-US')}</span> remaining
+                        {(() => {
+                          const remainingAmount = Math.round((category.budget || 0) - category.spent)
+                          if (category.isDesignFee || remainingAmount >= 0) {
+                            return (
+                              <>
+                                <span className="font-bold">${remainingAmount.toLocaleString('en-US')}</span> remaining
+                              </>
+                            )
+                          }
+                          return (
+                            <>
+                              <span className="font-bold">${Math.abs(remainingAmount).toLocaleString('en-US')}</span> over
+                            </>
+                          )
+                        })()}
                       </span>
                     </div>
                   </div>
 
                   {/* Progress Bar */}
                   <div className="relative">
-                    <div className="w-full bg-gray-200 rounded-full h-2 mb-1">
+                    <div className="w-full bg-gray-200 rounded-full h-2 mb-1 relative">
                       <div
                         className={`h-2 rounded-full transition-all duration-300 ${
                           category.isDesignFee ? getDesignFeeProgressColor(category.percentage) : getProgressColor(category.percentage)
                         }`}
                         style={{ width: `${Math.min(category.percentage, 100)}%` }}
                       />
+                      {!category.isDesignFee && category.spent > (category.budget || 0) && category.budget > 0 && (
+                        <div
+                          className="absolute top-0 right-0 h-2 rounded-full bg-red-800"
+                          style={{
+                            width: `${Math.min(((category.spent - category.budget) / category.budget) * 100, 100)}%`
+                          }}
+                        />
+                      )}
                     </div>
 
                   </div>
