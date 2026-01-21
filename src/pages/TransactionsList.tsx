@@ -57,6 +57,8 @@ const RECEIPT_FILTER_MODES = ['all', 'no-email'] as const
 const TRANSACTION_SORT_MODES = [
   'date-desc',
   'date-asc',
+  'created-desc',
+  'created-asc',
   'source-asc',
   'source-desc',
   'amount-desc',
@@ -113,6 +115,8 @@ export default function TransactionsList({ projectId: propProjectId, transaction
   const [sortMode, setSortMode] = useState<
     'date-desc'
     | 'date-asc'
+    | 'created-desc'
+    | 'created-asc'
     | 'source-asc'
     | 'source-desc'
     | 'amount-desc'
@@ -393,6 +397,10 @@ export default function TransactionsList({ projectId: propProjectId, transaction
         const diff = parseDate(a.transactionDate) - parseDate(b.transactionDate)
         if (diff !== 0) return sortMode === 'date-asc' ? diff : -diff
       }
+      if (sortMode === 'created-desc' || sortMode === 'created-asc') {
+        const diff = parseDate(a.createdAt) - parseDate(b.createdAt)
+        if (diff !== 0) return sortMode === 'created-asc' ? diff : -diff
+      }
       if (sortMode === 'source-asc' || sortMode === 'source-desc') {
         const aTitle = getCanonicalTransactionTitle(a)
         const bTitle = getCanonicalTransactionTitle(b)
@@ -403,6 +411,8 @@ export default function TransactionsList({ projectId: propProjectId, transaction
         const diff = parseMoney(a.amount) - parseMoney(b.amount)
         if (diff !== 0) return sortMode === 'amount-asc' ? diff : -diff
       }
+      const createdDiff = parseDate(a.createdAt) - parseDate(b.createdAt)
+      if (createdDiff !== 0) return -createdDiff
       // Stable-ish tie-breaker to avoid jitter during realtime updates
       return a.transactionId.localeCompare(b.transactionId)
     })
@@ -516,7 +526,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                       sortMode === 'date-desc' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
                     }`}
                   >
-                    Date (newest)
+                    Purchase Date (newest)
                   </button>
                   <button
                     onClick={() => {
@@ -527,7 +537,29 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                       sortMode === 'date-asc' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
                     }`}
                   >
-                    Date (oldest)
+                    Purchase Date (oldest)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSortMode('created-desc')
+                      setShowSortMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      sortMode === 'created-desc' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    Created Date (newest)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSortMode('created-asc')
+                      setShowSortMenu(false)
+                    }}
+                    className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                      sortMode === 'created-asc' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    Created Date (oldest)
                   </button>
                   <button
                     onClick={() => {

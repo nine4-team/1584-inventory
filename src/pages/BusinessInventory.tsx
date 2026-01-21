@@ -41,11 +41,13 @@ const BUSINESS_ITEM_FILTER_MODES = [
 const BUSINESS_ITEM_SORT_MODES = ['alphabetical', 'creationDate'] as const
 const BUSINESS_TX_FILTER_MODES = ['all', 'pending', 'completed', 'canceled', 'inventory-only'] as const
 const BUSINESS_TX_RECEIPT_FILTER_MODES = ['all', 'no-email'] as const
+const BUSINESS_TX_SORT_MODES = ['date-desc', 'date-asc', 'created-desc', 'created-asc'] as const
 
 const DEFAULT_BUSINESS_ITEM_FILTER = 'all'
 const DEFAULT_BUSINESS_ITEM_SORT = 'creationDate'
 const DEFAULT_BUSINESS_TX_FILTER = 'all'
 const DEFAULT_BUSINESS_TX_RECEIPT_FILTER = 'all'
+const DEFAULT_BUSINESS_TX_SORT = 'date-desc'
 const DEFAULT_BUSINESS_TAB = 'inventory'
 
 const parseBusinessItemFilterMode = (value: string | null) =>
@@ -67,6 +69,11 @@ const parseBusinessTxReceiptFilterMode = (value: string | null) =>
   BUSINESS_TX_RECEIPT_FILTER_MODES.includes(value as (typeof BUSINESS_TX_RECEIPT_FILTER_MODES)[number])
     ? (value as (typeof BUSINESS_TX_RECEIPT_FILTER_MODES)[number])
     : DEFAULT_BUSINESS_TX_RECEIPT_FILTER
+
+const parseBusinessTxSortMode = (value: string | null) =>
+  BUSINESS_TX_SORT_MODES.includes(value as (typeof BUSINESS_TX_SORT_MODES)[number])
+    ? (value as (typeof BUSINESS_TX_SORT_MODES)[number])
+    : DEFAULT_BUSINESS_TX_SORT
 
 export default function BusinessInventory() {
   const { currentAccountId, loading: accountLoading } = useAccount()
@@ -124,6 +131,10 @@ export default function BusinessInventory() {
   const [transactionReceiptFilter, setTransactionReceiptFilter] = useState<'all' | 'no-email'>(() =>
     parseBusinessTxReceiptFilterMode(searchParams.get('bizTxReceipt'))
   )
+  const [transactionSortMode, setTransactionSortMode] = useState<'date-desc' | 'date-asc' | 'created-desc' | 'created-asc'>(() =>
+    parseBusinessTxSortMode(searchParams.get('bizTxSort'))
+  )
+  const [showTransactionSortMenu, setShowTransactionSortMenu] = useState(false)
 
   // Image upload state
   const [uploadingImages, setUploadingImages] = useState<Set<string>>(new Set())
@@ -162,6 +173,7 @@ export default function BusinessInventory() {
     const nextItemSort = parseBusinessItemSortMode(searchParams.get('bizItemSort'))
     const nextTxFilter = parseBusinessTxFilterMode(searchParams.get('bizTxFilter'))
     const nextTxReceiptFilter = parseBusinessTxReceiptFilterMode(searchParams.get('bizTxReceipt'))
+    const nextTxSort = parseBusinessTxSortMode(searchParams.get('bizTxSort'))
 
     const hasChanges =
       activeTab !== nextActiveTab ||
@@ -170,7 +182,8 @@ export default function BusinessInventory() {
       filterMode !== nextItemFilter ||
       sortMode !== nextItemSort ||
       transactionFilterMode !== nextTxFilter ||
-      transactionReceiptFilter !== nextTxReceiptFilter
+      transactionReceiptFilter !== nextTxReceiptFilter ||
+      transactionSortMode !== nextTxSort
 
     if (!hasChanges) return
 
@@ -182,6 +195,7 @@ export default function BusinessInventory() {
     if (sortMode !== nextItemSort) setSortMode(nextItemSort)
     if (transactionFilterMode !== nextTxFilter) setTransactionFilterMode(nextTxFilter)
     if (transactionReceiptFilter !== nextTxReceiptFilter) setTransactionReceiptFilter(nextTxReceiptFilter)
+    if (transactionSortMode !== nextTxSort) setTransactionSortMode(nextTxSort)
   }, [searchParams])
 
   useEffect(() => {
@@ -206,6 +220,7 @@ export default function BusinessInventory() {
     setParam('bizItemSort', sortMode, DEFAULT_BUSINESS_ITEM_SORT)
     setParam('bizTxFilter', transactionFilterMode, DEFAULT_BUSINESS_TX_FILTER)
     setParam('bizTxReceipt', transactionReceiptFilter, DEFAULT_BUSINESS_TX_RECEIPT_FILTER)
+    setParam('bizTxSort', transactionSortMode, DEFAULT_BUSINESS_TX_SORT)
 
     if (nextParams.toString() !== searchParams.toString()) {
       setSearchParams(nextParams, { replace: true, state: location.state })
@@ -221,6 +236,7 @@ export default function BusinessInventory() {
     transactionFilterMode,
     transactionReceiptFilter,
     transactionSearchQuery,
+    transactionSortMode,
   ])
 
   // Batch allocation state
@@ -239,10 +255,11 @@ export default function BusinessInventory() {
       if ((showFilterMenu || showTransactionFilterMenu || showSortMenu) && !event.target) return
 
       const target = event.target as Element
-      if (!target.closest('.filter-menu') && !target.closest('.filter-button') && !target.closest('.transaction-filter-menu') && !target.closest('.transaction-filter-button') && !target.closest('.sort-menu') && !target.closest('.sort-button')) {
+      if (!target.closest('.filter-menu') && !target.closest('.filter-button') && !target.closest('.transaction-filter-menu') && !target.closest('.transaction-filter-button') && !target.closest('.sort-menu') && !target.closest('.sort-button') && !target.closest('.transaction-sort-menu') && !target.closest('.transaction-sort-button')) {
         setShowFilterMenu(false)
         setShowTransactionFilterMenu(false)
         setShowSortMenu(false)
+        setShowTransactionSortMenu(false)
       }
     }
 
@@ -250,7 +267,7 @@ export default function BusinessInventory() {
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [showFilterMenu, showTransactionFilterMenu, showSortMenu])
+  }, [showFilterMenu, showTransactionFilterMenu, showSortMenu, showTransactionSortMenu])
 
   // Close disposition menu when clicking outside
   useEffect(() => {
@@ -398,6 +415,12 @@ export default function BusinessInventory() {
 
   // Compute filtered transactions
   const filteredTransactions = useMemo(() => {
+    const parseDate = (value?: string | null): number => {
+      if (!value) return 0
+      const ms = Date.parse(value)
+      return Number.isFinite(ms) ? ms : 0
+    }
+
     let filtered = transactions
 
     // Apply status filter based on filter mode
@@ -426,8 +449,22 @@ export default function BusinessInventory() {
       )
     }
 
-    return filtered
-  }, [transactions, transactionFilterMode, transactionReceiptFilter, transactionSearchQuery])
+    const sorted = [...filtered].sort((a, b) => {
+      if (transactionSortMode === 'date-desc' || transactionSortMode === 'date-asc') {
+        const dateDiff = parseDate(a.transactionDate) - parseDate(b.transactionDate)
+        if (dateDiff !== 0) return transactionSortMode === 'date-asc' ? dateDiff : -dateDiff
+      }
+      if (transactionSortMode === 'created-desc' || transactionSortMode === 'created-asc') {
+        const createdDiff = parseDate(a.createdAt) - parseDate(b.createdAt)
+        if (createdDiff !== 0) return transactionSortMode === 'created-asc' ? createdDiff : -createdDiff
+      }
+      const createdDiff = parseDate(a.createdAt) - parseDate(b.createdAt)
+      if (createdDiff !== 0) return -createdDiff
+      return a.transactionId.localeCompare(b.transactionId)
+    })
+
+    return sorted
+  }, [transactions, transactionFilterMode, transactionReceiptFilter, transactionSearchQuery, transactionSortMode])
 
   const inventoryValue = useMemo(() => {
     return items.reduce((sum, item) => {
@@ -1420,6 +1457,77 @@ export default function BusinessInventory() {
 
                   {/* Filter Controls */}
                   <div className="flex items-center justify-end gap-4 p-3 rounded-lg">
+                    {/* Sort Button */}
+                    <div className="relative">
+                      <button
+                        onClick={() => setShowTransactionSortMenu(!showTransactionSortMenu)}
+                        className={`transaction-sort-button inline-flex items-center justify-center px-3 py-2 border text-sm font-medium rounded-md transition-colors duration-200 ${
+                          transactionSortMode === 'date-desc'
+                            ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
+                            : 'border-primary-500 text-primary-600 bg-primary-50 hover:bg-primary-100'
+                        }`}
+                        title="Sort transactions"
+                      >
+                        <ArrowUpDown className="h-4 w-4 mr-2" />
+                        Sort
+                      </button>
+
+                      {showTransactionSortMenu && (
+                        <div className="transaction-sort-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                          <div className="py-1">
+                            <button
+                              onClick={() => {
+                                setTransactionSortMode('date-desc')
+                                setShowTransactionSortMenu(false)
+                              }}
+                              className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                transactionSortMode === 'date-desc' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                              }`}
+                            >
+                              <span>Purchase Date (newest)</span>
+                              {transactionSortMode === 'date-desc' ? <Check className="h-4 w-4" /> : null}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setTransactionSortMode('date-asc')
+                                setShowTransactionSortMenu(false)
+                              }}
+                              className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                transactionSortMode === 'date-asc' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                              }`}
+                            >
+                              <span>Purchase Date (oldest)</span>
+                              {transactionSortMode === 'date-asc' ? <Check className="h-4 w-4" /> : null}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setTransactionSortMode('created-desc')
+                                setShowTransactionSortMenu(false)
+                              }}
+                              className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                transactionSortMode === 'created-desc' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                              }`}
+                            >
+                              <span>Created Date (newest)</span>
+                              {transactionSortMode === 'created-desc' ? <Check className="h-4 w-4" /> : null}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setTransactionSortMode('created-asc')
+                                setShowTransactionSortMenu(false)
+                              }}
+                              className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                transactionSortMode === 'created-asc' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                              }`}
+                            >
+                              <span>Created Date (oldest)</span>
+                              {transactionSortMode === 'created-asc' ? <Check className="h-4 w-4" /> : null}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
                     {/* Filter Button */}
                     <div className="relative">
                       <button
