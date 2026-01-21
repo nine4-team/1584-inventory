@@ -9,7 +9,12 @@ export default function ContextLink(props: LinkProps) {
 
   const handleClick = (e: React.MouseEvent) => {
     try {
-      navigationStack.push(location.pathname + location.search)
+      const scrollY = typeof window !== 'undefined' ? window.scrollY : undefined
+      if (Number.isFinite(scrollY)) {
+        navigationStack.push({ path: location.pathname + location.search, scrollY })
+      } else {
+        navigationStack.push(location.pathname + location.search)
+      }
     } catch {
       // noop if stack not available
     }

@@ -15,7 +15,7 @@ export function useStackedNavigate() {
   }, [location])
 
   const stackedNavigate = useCallback(
-    (to: To, options?: NavigateOptions) => {
+    (to: To, options?: NavigateOptions, meta?: { scrollY?: number }) => {
       try {
         // Don't record a navigation entry when performing a history jump (e.g. navigate(-1))
         // because that would push the current location onto the stack right before going back,
@@ -27,7 +27,12 @@ export function useStackedNavigate() {
           currentLocation &&
           (typeof to !== 'number' || to > 0)
         ) {
-          navigationStack.push(currentLocation.pathname + currentLocation.search)
+          const path = currentLocation.pathname + currentLocation.search
+          if (Number.isFinite(meta?.scrollY)) {
+            navigationStack.push({ path, scrollY: meta?.scrollY })
+          } else {
+            navigationStack.push(path)
+          }
         }
       } catch {
         // ignore if stack not available
