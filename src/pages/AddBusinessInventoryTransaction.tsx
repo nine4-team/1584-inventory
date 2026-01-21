@@ -212,8 +212,8 @@ export default function AddBusinessInventoryTransaction() {
         projectId: projectId,
         projectName: projectName,
         createdBy: user.id,
-        taxRatePreset: taxRatePreset,
-        subtotal: taxRatePreset === 'Other' ? subtotal : ''
+        taxRatePreset: taxRatePreset ?? null,
+        subtotal: taxRatePreset === 'Other' ? subtotal : null
       }
       await transactionService.createTransaction(currentAccountId, projectId, newTransaction, [])
       try {
@@ -503,6 +503,23 @@ export default function AddBusinessInventoryTransaction() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-3">Tax Rate Preset</label>
             <div className="space-y-2">
+              <div className="flex items-center">
+                <input
+                  type="radio"
+                  id="tax_preset_none"
+                  name="taxRatePreset"
+                  value=""
+                  checked={!taxRatePreset}
+                  onChange={() => {
+                    setTaxRatePreset(undefined)
+                    setSubtotal('')
+                  }}
+                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
+                />
+                <label htmlFor="tax_preset_none" className="ml-2 block text-sm text-gray-900">
+                  None
+                </label>
+              </div>
               {taxPresets.map((preset) => (
                 <div key={preset.id} className="flex items-center">
                   <input

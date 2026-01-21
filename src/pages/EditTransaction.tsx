@@ -613,8 +613,10 @@ export default function EditTransaction() {
         ...formDataWithoutImages,
         otherImages: otherImages,
         receiptImages: receiptImages,
-        // Include tax fields only when a tax rate preset is explicitly selected.
-        ...(taxRatePreset ? { taxRatePreset: taxRatePreset, subtotal: taxRatePreset === 'Other' ? subtotal : '' } : { subtotal: '' })
+        // Allow explicit clearing via "None" (persist NULLs).
+        ...(taxRatePreset
+          ? { taxRatePreset: taxRatePreset, subtotal: taxRatePreset === 'Other' ? subtotal : null }
+          : { taxRatePreset: null, subtotal: null })
       }
 
       await transactionService.updateTransaction(currentAccountId, projectId, transactionId, updateData)
@@ -1045,6 +1047,23 @@ export default function EditTransaction() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-3">Tax Rate Preset</label>
             <div className="space-y-2">
+              <div className="flex items-center">
+                <input
+                  type="radio"
+                  id="tax_preset_none"
+                  name="tax_rate_preset"
+                  value=""
+                  checked={!taxRatePreset}
+                  onChange={() => {
+                    setTaxRatePreset(undefined)
+                    setSubtotal('')
+                  }}
+                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
+                />
+                <label htmlFor="tax_preset_none" className="ml-2 block text-sm text-gray-900">
+                  None
+                </label>
+              </div>
               {taxPresets.map((preset) => (
                 <div key={preset.id} className="flex items-center">
                   <input
