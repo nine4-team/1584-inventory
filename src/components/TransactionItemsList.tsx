@@ -1009,7 +1009,7 @@ export default function TransactionItemsList({
 
               {/* Sort Dropdown Menu */}
               {showSortMenu && (
-                <div className="sort-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                <div className="sort-menu absolute top-full left-0 mt-1 w-[min(10rem,calc(100vw-2rem))] bg-white border border-gray-200 rounded-md shadow-lg z-10 max-h-[70vh] overflow-y-auto sm:left-auto sm:right-0 sm:w-40">
                   <div className="py-1">
                     <button
                       onClick={() => {
@@ -1055,7 +1055,7 @@ export default function TransactionItemsList({
 
               {/* Filter Dropdown Menu */}
               {showFilterMenu && (
-                <div className="filter-menu absolute top-full right-0 mt-1 w-56 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                <div className="filter-menu absolute top-full left-0 mt-1 w-[min(14rem,calc(100vw-2rem))] bg-white border border-gray-200 rounded-md shadow-lg z-10 max-h-[70vh] overflow-y-auto sm:left-auto sm:right-0 sm:w-56">
                   <div className="py-1">
                     <button
                       onClick={() => {

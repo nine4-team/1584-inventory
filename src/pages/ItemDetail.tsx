@@ -3,10 +3,10 @@ import { ArrowLeft, Bookmark, QrCode, Trash2, Edit, FileText, ImagePlus, Chevron
 import { useParams, useSearchParams } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import ContextBackLink from '@/components/ContextBackLink'
-import { Item, ItemImage, ItemDisposition, Transaction } from '@/types'
+import { Item, ItemImage, ItemDisposition, Transaction, Project } from '@/types'
 import { normalizeDisposition, dispositionsEqual, displayDispositionLabel, DISPOSITION_OPTIONS } from '@/utils/dispositionUtils'
 import { formatDate, formatCurrency } from '@/utils/dateUtils'
-import { unifiedItemsService, projectService, integrationService, transactionService } from '@/services/inventoryService'
+import { unifiedItemsService, projectService, integrationService, transactionService, isCanonicalTransactionId } from '@/services/inventoryService'
 import { ImageUploadService } from '@/services/imageService'
 import { OfflineAwareImageService } from '@/services/offlineAwareImageService'
 import { offlineMediaService } from '@/services/offlineMediaService'
@@ -22,7 +22,7 @@ import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
 import { useNetworkState } from '@/hooks/useNetworkState'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
-import { projectItemEdit, projectItems, projectTransactionDetail } from '@/utils/routes'
+import { projectItemDetail, projectItemEdit, projectItems, projectTransactionDetail } from '@/utils/routes'
 import { Combobox } from '@/components/ui/Combobox'
 import { supabase } from '@/services/supabase'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
@@ -49,6 +49,10 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
   const [loadingTransactions, setLoadingTransactions] = useState(false)
   const [selectedTransactionId, setSelectedTransactionId] = useState('')
   const [isUpdatingTransaction, setIsUpdatingTransaction] = useState(false)
+  const [projects, setProjects] = useState<Project[]>([])
+  const [loadingProjects, setLoadingProjects] = useState(false)
+  const [selectedProjectId, setSelectedProjectId] = useState('')
+  const [isUpdatingProject, setIsUpdatingProject] = useState(false)
   const { showError, showSuccess } = useToast()
   const { buildContextUrl, getBackDestination } = useNavigationContext()
   const { isOnline } = useNetworkState()
@@ -209,6 +213,39 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
   useEffect(() => {
     fetchItem()
   }, [fetchItem])
+
+  useEffect(() => {
+    if (!item) return
+    const nextProjectId = item.projectId || projectId || ''
+    setSelectedProjectId(nextProjectId)
+  }, [item, projectId])
+
+  useEffect(() => {
+    if (!currentAccountId || isBusinessInventoryItem) return
+    let isMounted = true
+
+    const fetchProjects = async () => {
+      setLoadingProjects(true)
+      try {
+        const fetchedProjects = await projectService.getProjects(currentAccountId)
+        if (isMounted) {
+          setProjects(fetchedProjects)
+        }
+      } catch (error) {
+        console.error('Failed to load projects:', error)
+      } finally {
+        if (isMounted) {
+          setLoadingProjects(false)
+        }
+      }
+    }
+
+    fetchProjects()
+
+    return () => {
+      isMounted = false
+    }
+  }, [currentAccountId, isBusinessInventoryItem])
 
   // Set up real-time listener for item updates
   const subscriptionProjectId = useMemo(() => {
@@ -432,6 +469,37 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
       setIsUpdatingTransaction(false)
     }
   }
+
+  const handleAssociateProject = useCallback(async (nextProjectId: string) => {
+    if (!item || !currentAccountId) return
+    if (!nextProjectId || nextProjectId === item.projectId) return
+    if (item.transactionId) {
+      showError('This item is tied to a transaction. Move the transaction to another project instead.')
+      setSelectedProjectId(item.projectId || '')
+      return
+    }
+
+    setIsUpdatingProject(true)
+    setSelectedProjectId(nextProjectId)
+    try {
+      await unifiedItemsService.updateItem(currentAccountId, item.itemId, { projectId: nextProjectId })
+      setItem(prev => prev ? { ...prev, projectId: nextProjectId } : prev)
+
+      const nextProject = projects.find(project => project.id === nextProjectId)
+      if (nextProject) {
+        setProjectName(nextProject.name)
+      }
+
+      showSuccess('Project association updated.')
+      navigate(buildContextUrl(projectItemDetail(nextProjectId, item.itemId)))
+    } catch (error) {
+      console.error('Failed to associate project:', error)
+      setSelectedProjectId(item.projectId || '')
+      showError('Failed to associate project. Please try again.')
+    } finally {
+      setIsUpdatingProject(false)
+    }
+  }, [item, currentAccountId, showError, showSuccess, navigate, buildContextUrl, projects])
 
   const toggleBookmark = async () => {
     if (!item || !currentAccountId) return
@@ -818,6 +886,20 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
     }
   }
 
+  const projectOptions = useMemo(
+    () => projects.map(project => ({ id: project.id, label: project.name })),
+    [projects]
+  )
+  const selectedProjectValue = selectedProjectId && projectOptions.some(option => option.id === selectedProjectId)
+    ? selectedProjectId
+    : ''
+  const associateDisabledReason = item?.transactionId
+    ? (isCanonicalTransactionId(item.transactionId)
+      ? 'This item is tied to a Company Inventory transaction. Use inventory allocation/deallocation instead.'
+      : 'This item is tied to a transaction. Move the transaction to another project instead.')
+    : null
+  const associateDisabled = Boolean(associateDisabledReason) || loadingProjects || isUpdatingProject || isBusinessInventoryItem
+
   if (isLoadingItem) {
     return (
       <div className="space-y-6">
@@ -1024,6 +1106,23 @@ export default function ItemDetail({ itemId: propItemId, projectId: propProjectI
                 <dt className="text-xs font-medium text-gray-500 uppercase tracking-wide">Project</dt>
                 <dd className="mt-1 text-sm text-gray-900">{projectName}</dd>
               </div>
+              {!isBusinessInventoryItem && (
+                <div className="sm:col-span-3">
+                  <Combobox
+                    label="Associate with project"
+                    value={selectedProjectValue}
+                    onChange={handleAssociateProject}
+                    helperText="If you accidentally added this item to the wrong project."
+                    disabled={associateDisabled}
+                    loading={loadingProjects || isUpdatingProject}
+                    placeholder={loadingProjects ? 'Loading projects...' : 'Select a project'}
+                    options={projectOptions}
+                  />
+                  {associateDisabledReason && (
+                    <p className="mt-1 text-xs text-amber-600">{associateDisabledReason}</p>
+                  )}
+                </div>
+              )}
               <div>
                 <dt className="text-xs font-medium text-gray-500 uppercase tracking-wide">Created</dt>
                 <dd className="mt-1 text-sm text-gray-900">{formatDate(item.dateCreated)}</dd>

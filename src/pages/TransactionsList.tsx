@@ -1,8 +1,8 @@
 import { Plus, Search, Filter, FileUp, ArrowUpDown } from 'lucide-react'
-import { useParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Transaction, TransactionCompleteness, BudgetCategory } from '@/types'
 import { transactionService } from '@/services/inventoryService'
 import type { Transaction as TransactionType } from '@/types'
@@ -51,8 +51,32 @@ interface TransactionsListProps {
   transactions?: Transaction[]
 }
 
+const TRANSACTION_FILTER_MODES = ['all', 'we-owe', 'client-owes'] as const
+const TRANSACTION_SORT_MODES = [
+  'date-desc',
+  'date-asc',
+  'source-asc',
+  'source-desc',
+  'amount-desc',
+  'amount-asc',
+] as const
+const DEFAULT_FILTER_MODE = 'all'
+const DEFAULT_SOURCE_FILTER = 'all'
+const DEFAULT_SORT_MODE = 'date-desc'
+
+const parseFilterMode = (value: string | null) =>
+  TRANSACTION_FILTER_MODES.includes(value as (typeof TRANSACTION_FILTER_MODES)[number])
+    ? (value as (typeof TRANSACTION_FILTER_MODES)[number])
+    : DEFAULT_FILTER_MODE
+
+const parseSortMode = (value: string | null) =>
+  TRANSACTION_SORT_MODES.includes(value as (typeof TRANSACTION_SORT_MODES)[number])
+    ? (value as (typeof TRANSACTION_SORT_MODES)[number])
+    : DEFAULT_SORT_MODE
+
 export default function TransactionsList({ projectId: propProjectId, transactions: propTransactions }: TransactionsListProps) {
   const { id, projectId: routeProjectId } = useParams<{ id?: string; projectId?: string }>()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { currentAccountId } = useAccount()
   // Use prop if provided, otherwise fall back to route param
   const projectId = propProjectId || routeProjectId || id
@@ -63,11 +87,13 @@ export default function TransactionsList({ projectId: propProjectId, transaction
   const [budgetCategories, setBudgetCategories] = useState<BudgetCategory[]>([])
 
   // Search and filter state
-  const [searchQuery, setSearchQuery] = useState<string>('')
+  const [searchQuery, setSearchQuery] = useState<string>(() => searchParams.get('txSearch') ?? '')
   const [showFilterMenu, setShowFilterMenu] = useState(false)
   const [filterMenuView, setFilterMenuView] = useState<'main' | 'source'>('main')
-  const [filterMode, setFilterMode] = useState<'all' | 'we-owe' | 'client-owes'>('all')
-  const [sourceFilter, setSourceFilter] = useState<string>('all')
+  const [filterMode, setFilterMode] = useState<'all' | 'we-owe' | 'client-owes'>(() =>
+    parseFilterMode(searchParams.get('txFilter'))
+  )
+  const [sourceFilter, setSourceFilter] = useState<string>(() => searchParams.get('txSource') ?? DEFAULT_SOURCE_FILTER)
 
   // Sort state
   const [sortMode, setSortMode] = useState<
@@ -77,8 +103,55 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     | 'source-desc'
     | 'amount-desc'
     | 'amount-asc'
-  >('date-desc')
+  >(() => parseSortMode(searchParams.get('txSort')))
   const [showSortMenu, setShowSortMenu] = useState(false)
+  const isSyncingFromUrlRef = useRef(false)
+
+  useEffect(() => {
+    const nextSearchQuery = searchParams.get('txSearch') ?? ''
+    const nextFilterMode = parseFilterMode(searchParams.get('txFilter'))
+    const nextSourceFilter = searchParams.get('txSource') ?? DEFAULT_SOURCE_FILTER
+    const nextSortMode = parseSortMode(searchParams.get('txSort'))
+
+    const hasChanges =
+      searchQuery !== nextSearchQuery ||
+      filterMode !== nextFilterMode ||
+      sourceFilter !== nextSourceFilter ||
+      sortMode !== nextSortMode
+
+    if (!hasChanges) return
+
+    isSyncingFromUrlRef.current = true
+    if (searchQuery !== nextSearchQuery) setSearchQuery(nextSearchQuery)
+    if (filterMode !== nextFilterMode) setFilterMode(nextFilterMode)
+    if (sourceFilter !== nextSourceFilter) setSourceFilter(nextSourceFilter)
+    if (sortMode !== nextSortMode) setSortMode(nextSortMode)
+  }, [searchParams])
+
+  useEffect(() => {
+    if (isSyncingFromUrlRef.current) {
+      isSyncingFromUrlRef.current = false
+      return
+    }
+
+    const nextParams = new URLSearchParams(searchParams)
+    const setParam = (key: string, value: string, defaultValue: string) => {
+      if (!value || value === defaultValue) {
+        nextParams.delete(key)
+      } else {
+        nextParams.set(key, value)
+      }
+    }
+
+    setParam('txSearch', searchQuery, '')
+    setParam('txFilter', filterMode, DEFAULT_FILTER_MODE)
+    setParam('txSource', sourceFilter, DEFAULT_SOURCE_FILTER)
+    setParam('txSort', sortMode, DEFAULT_SORT_MODE)
+
+    if (nextParams.toString() !== searchParams.toString()) {
+      setSearchParams(nextParams, { replace: true })
+    }
+  }, [filterMode, searchQuery, setSearchParams, sortMode, sourceFilter])
 
   // Load budget categories for display
   useEffect(() => {
@@ -380,7 +453,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
             </button>
 
             {showSortMenu && (
-              <div className="sort-menu absolute top-full right-0 mt-1 w-52 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+              <div className="sort-menu absolute top-full left-0 mt-1 w-[min(13rem,calc(100vw-2rem))] bg-white border border-gray-200 rounded-md shadow-lg z-10 max-h-[70vh] overflow-y-auto sm:left-auto sm:right-0 sm:w-52">
                 <div className="py-1">
                   <button
                     onClick={() => {
@@ -474,7 +547,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
 
             {/* Filter Dropdown Menu */}
             {showFilterMenu && (
-              <div className="filter-menu absolute top-full right-0 mt-1 w-56 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+              <div className="filter-menu absolute top-full left-0 mt-1 w-[min(14rem,calc(100vw-2rem))] bg-white border border-gray-200 rounded-md shadow-lg z-10 max-h-[70vh] overflow-y-auto sm:left-auto sm:right-0 sm:w-56">
                 {filterMenuView === 'main' ? (
                   <div className="py-1">
                     <button
