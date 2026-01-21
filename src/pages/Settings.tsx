@@ -281,7 +281,7 @@ export default function Settings() {
                 <div className="bg-white overflow-hidden shadow rounded-lg">
                   <div className="p-6">
                     {/* Section header removed — manager renders its own title/description */}
-                    <TaxPresetsManager />
+                    <BudgetCategoriesManager />
                   </div>
                 </div>
 
@@ -295,7 +295,7 @@ export default function Settings() {
                 <div className="bg-white overflow-hidden shadow rounded-lg">
                   <div className="p-6">
                     {/* Section header removed — manager renders its own title/description */}
-                    <BudgetCategoriesManager />
+                    <TaxPresetsManager />
                   </div>
                 </div>
               </>
