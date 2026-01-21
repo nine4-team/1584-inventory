@@ -79,6 +79,20 @@ describe('TransactionsList sorting and filtering', () => {
     expect(screen.queryByRole('heading', { name: 'Home Depot' })).not.toBeInTheDocument()
   })
 
+  it('filters by missing email receipt', async () => {
+    const user = userEvent.setup()
+    renderList([
+      makeTxn({ transactionId: 't1', source: 'Emailed', receiptEmailed: true }),
+      makeTxn({ transactionId: 't2', source: 'No Email', receiptEmailed: false }),
+    ])
+
+    await user.click(screen.getByRole('button', { name: 'Filter' }))
+    await user.click(screen.getByRole('button', { name: 'No Email Receipt' }))
+
+    expect(screen.queryByRole('heading', { name: 'Emailed' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'No Email' })).toBeInTheDocument()
+  })
+
   it('searches by amount', async () => {
     const user = userEvent.setup()
     renderList([
