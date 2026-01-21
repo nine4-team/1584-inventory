@@ -17,6 +17,7 @@ import ContextLink from './ContextLink'
 import type { ItemDisposition } from '@/types'
 import ItemPreviewCard, { type ItemPreviewData } from './items/ItemPreviewCard'
 import BulkItemControls from '@/components/ui/BulkItemControls'
+import BlockingConfirmDialog from '@/components/ui/BlockingConfirmDialog'
 
 interface TransactionItemsListProps {
   items: TransactionItemFormData[]
@@ -31,6 +32,7 @@ interface TransactionItemsListProps {
   showSelectionControls?: boolean // Whether to show select/merge buttons and checkboxes
   onDeleteItem?: (itemId: string, item: TransactionItemFormData) => Promise<boolean | void> | boolean | void
   onDeleteItems?: (itemIds: string[], items: TransactionItemFormData[]) => Promise<boolean | void> | boolean | void
+  onRemoveFromTransaction?: (itemId: string, item: TransactionItemFormData) => Promise<void> | void
   enablePersistedItemFeatures?: boolean // Whether to enable bookmark/disposition features that require persisted items
   containerId?: string // ID of the container element to track for sticky behavior
 }
@@ -48,6 +50,7 @@ export default function TransactionItemsList({
   showSelectionControls = true,
   onDeleteItem,
   onDeleteItems,
+  onRemoveFromTransaction,
   enablePersistedItemFeatures = true,
   containerId
 }: TransactionItemsListProps) {
@@ -78,6 +81,9 @@ export default function TransactionItemsList({
   const [showSortMenu, setShowSortMenu] = useState(false)
   const [shouldStick, setShouldStick] = useState(true)
   const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null)
+  const [removeTargetItemId, setRemoveTargetItemId] = useState<string | null>(null)
+  const [isRemoveConfirmOpen, setIsRemoveConfirmOpen] = useState(false)
+  const [isRemoving, setIsRemoving] = useState(false)
   const [bulkControlsWidth, setBulkControlsWidth] = useState<number | undefined>(undefined)
   const { currentAccountId } = useAccount()
   const { buildContextUrl } = useNavigationContext()
@@ -516,6 +522,44 @@ export default function TransactionItemsList({
     })
   }
 
+  const requestRemoveFromTransaction = (itemId: string) => {
+    setRemoveTargetItemId(itemId)
+    setIsRemoveConfirmOpen(true)
+  }
+
+  const confirmRemoveFromTransaction = async () => {
+    if (!removeTargetItemId) return
+    const item = items.find(i => i.id === removeTargetItemId)
+    if (!item) {
+      setIsRemoveConfirmOpen(false)
+      setRemoveTargetItemId(null)
+      return
+    }
+
+    setIsRemoving(true)
+    try {
+      if (onRemoveFromTransaction) {
+        await onRemoveFromTransaction(removeTargetItemId, item)
+      } else {
+        // Fallback: if parent didn't provide a persistence handler, remove from local list.
+        const updatedItems = items.filter(i => i.id !== removeTargetItemId)
+        onItemsChange(updatedItems)
+        setSelectedItemIds(prev => {
+          if (!prev.has(removeTargetItemId)) return prev
+          const next = new Set(prev)
+          next.delete(removeTargetItemId)
+          return next
+        })
+      }
+    } catch (e) {
+      console.error('TransactionItemsList: failed to remove item from transaction', e)
+    } finally {
+      setIsRemoving(false)
+      setIsRemoveConfirmOpen(false)
+      setRemoveTargetItemId(null)
+    }
+  }
+
   const handleDuplicateItem = (itemId: string, quantity = 1) => {
     const itemToDuplicate = items.find(item => item.id === itemId)
     if (!itemToDuplicate) return
@@ -769,6 +813,7 @@ export default function TransactionItemsList({
         onEdit={(href) => handleEditItem(item.id)}
         onClick={isPersisted ? () => setViewingItemId(item.id) : undefined}
         onDispositionUpdate={enablePersistedControls ? updateDisposition : undefined}
+        onRemoveFromTransaction={requestRemoveFromTransaction}
         uploadingImages={new Set()}
         openDispositionMenu={openDispositionMenu}
         setOpenDispositionMenu={setOpenDispositionMenu}
@@ -968,6 +1013,26 @@ export default function TransactionItemsList({
 
   return (
     <div className="relative space-y-4">
+      <BlockingConfirmDialog
+        open={isRemoveConfirmOpen}
+        title="Remove item from transaction?"
+        description={
+          <div className="text-sm text-gray-700 space-y-2">
+            <p>This will remove the item from this transaction.</p>
+            <p className="text-gray-600">The item will not be deleted.</p>
+          </div>
+        }
+        confirmLabel="Remove"
+        cancelLabel="Cancel"
+        confirmVariant="danger"
+        isConfirming={isRemoving}
+        onCancel={() => {
+          if (isRemoving) return
+          setIsRemoveConfirmOpen(false)
+          setRemoveTargetItemId(null)
+        }}
+        onConfirm={confirmRemoveFromTransaction}
+      />
       {items.length > 0 && showSelectionControls && (
         <div className={`z-10 bg-white border-b border-gray-200 py-3 mb-4 ${shouldStick ? 'sticky top-0' : ''}`}>
           <div className="flex flex-wrap items-center gap-3">

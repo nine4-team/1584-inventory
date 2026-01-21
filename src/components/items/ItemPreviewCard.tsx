@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Camera, ChevronDown, Receipt, Bookmark, Edit, Copy, X } from 'lucide-react'
+import { Camera, ChevronDown, Receipt, Bookmark, Edit, Copy, X, Link2Off } from 'lucide-react'
 import DuplicateQuantityMenu from '@/components/ui/DuplicateQuantityMenu'
 import ContextLink from '@/components/ContextLink'
 import { normalizeDisposition, displayDispositionLabel, DISPOSITION_OPTIONS, dispositionsEqual } from '@/utils/dispositionUtils'
@@ -39,6 +39,7 @@ interface ItemPreviewCardProps {
   onDuplicate?: (itemId: string, quantity?: number) => void | Promise<void>
   onEdit?: (href: string) => void
   onDelete?: (itemId: string) => void
+  onRemoveFromTransaction?: (itemId: string) => void
   onDispositionUpdate?: (itemId: string, disposition: ItemDisposition) => void
   onAddImage?: (itemId: string) => void
   // State
@@ -71,6 +72,7 @@ export default function ItemPreviewCard({
   onDuplicate,
   onEdit,
   onDelete,
+  onRemoveFromTransaction,
   onDispositionUpdate,
   onAddImage,
   uploadingImages = new Set(),
@@ -149,6 +151,7 @@ export default function ItemPreviewCard({
   const showDuplicate = (context === 'project' || context === 'businessInventory' || context === 'transaction') && !!onDuplicate
   const showEdit = !!onEdit
   const showDelete = false // Never show delete in canonical layout (use selection + bulk actions)
+  const showRemoveFromTransaction = context === 'transaction' && !!onRemoveFromTransaction
   const showDisposition = !!onDispositionUpdate
   const showLocation = true // Always show location if available
   const showNotes = context === 'transaction' // Show notes in transaction context
@@ -268,7 +271,7 @@ export default function ItemPreviewCard({
   const priceLabel = primaryPrice ? formatCurrency(primaryPrice) : null
   const locationValue = context === 'project' ? item.space : item.businessInventoryLocation
 
-  const hasActions = showBookmark || showEdit || showDuplicate || showDelete || showDisposition
+  const hasActions = showBookmark || showEdit || showDuplicate || showDelete || showDisposition || showRemoveFromTransaction
 
   const cardContent = (
     <>
@@ -338,6 +341,21 @@ export default function ItemPreviewCard({
                   buttonTitle="Duplicate item"
                   buttonContent={<Copy className="h-4 w-4" />}
                 />
+              )}
+              {showRemoveFromTransaction && onRemoveFromTransaction && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    onRemoveFromTransaction(itemId)
+                  }}
+                  className="inline-flex items-center justify-center p-1 text-sm font-medium text-gray-500 hover:text-gray-900 bg-transparent focus:outline-none transition-colors"
+                  title="Remove from transaction"
+                  aria-label="Remove from transaction"
+                >
+                  <Link2Off className="h-4 w-4" />
+                </button>
               )}
               {showDelete && onDelete && (
                 <button

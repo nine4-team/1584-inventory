@@ -23,6 +23,7 @@ import { getUserFriendlyErrorMessage, getErrorAction } from '@/utils/imageUtils'
 import { useToast } from '@/components/ui/ToastContext'
 import { useNetworkState } from '@/hooks/useNetworkState'
 import UploadActivityIndicator from '@/components/ui/UploadActivityIndicator'
+import BlockingConfirmDialog from '@/components/ui/BlockingConfirmDialog'
 
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, COMPANY_NAME } from '@/constants/company'
 import { projectItemDetail, projectItems } from '@/utils/routes'
@@ -119,6 +120,9 @@ export default function EditItem() {
   const [uploadProgress, setUploadProgress] = useState<number>(0)
   const [projectName, setProjectName] = useState<string>('')
   const offlineMediaIdsRef = useRef<Set<string>>(new Set())
+  const initialFormDataRef = useRef<typeof formData | null>(null)
+  const initialProjectIdRef = useRef<string | null>(null)
+  const [showRemoveFromTransactionConfirm, setShowRemoveFromTransactionConfirm] = useState(false)
 
   // Track if user has manually edited project_price
   const projectPriceEditedRef = useRef(false)
@@ -205,6 +209,19 @@ export default function EditItem() {
               selectedTransactionId: String(fetchedItem.transactionId || '')
             })
             setSelectedProjectId(fetchedItem.projectId || projectId || '')
+            initialFormDataRef.current = {
+              description: String(fetchedItem.description || ''),
+              source: String(fetchedItem.source || ''),
+              sku: String(fetchedItem.sku || ''),
+              purchasePrice: String(fetchedItem.purchasePrice || ''),
+              projectPrice: String(fetchedItem.projectPrice || ''),
+              marketValue: String(fetchedItem.marketValue || ''),
+              paymentMethod: String(fetchedItem.paymentMethod || ''),
+              space: String(fetchedItem.space || ''),
+              notes: String(fetchedItem.notes || ''),
+              selectedTransactionId: String(fetchedItem.transactionId || '')
+            }
+            initialProjectIdRef.current = fetchedItem.projectId || projectId || ''
             console.log('Form data set:', {
               description: String(fetchedItem.description || ''),
               source: String(fetchedItem.source || ''),
@@ -241,6 +258,26 @@ export default function EditItem() {
 
     fetchProjectName()
   }, [activeProjectId, currentAccountId])
+
+  const hasUnsavedNonTransactionChanges = useMemo(() => {
+    const initial = initialFormDataRef.current
+    if (!initial) return false
+
+    // Compare all fields except selectedTransactionId.
+    if (String(formData.description ?? '') !== String(initial.description ?? '')) return true
+    if (String(formData.source ?? '') !== String(initial.source ?? '')) return true
+    if (String(formData.sku ?? '') !== String(initial.sku ?? '')) return true
+    if (String(formData.purchasePrice ?? '') !== String(initial.purchasePrice ?? '')) return true
+    if (String(formData.projectPrice ?? '') !== String(initial.projectPrice ?? '')) return true
+    if (String(formData.marketValue ?? '') !== String(initial.marketValue ?? '')) return true
+    if (String(formData.paymentMethod ?? '') !== String(initial.paymentMethod ?? '')) return true
+    if (String(formData.space ?? '') !== String(initial.space ?? '')) return true
+    if (String(formData.notes ?? '') !== String(initial.notes ?? '')) return true
+
+    const initialProject = initialProjectIdRef.current ?? ''
+    const currentProject = selectedProjectId || projectId || ''
+    return initialProject !== currentProject
+  }, [formData, projectId, selectedProjectId])
 
   // Hydrate and fetch transactions when component mounts
   useEffect(() => {
@@ -758,6 +795,24 @@ export default function EditItem() {
                   ]
                 }
               />
+              {formData.selectedTransactionId && (
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowRemoveFromTransactionConfirm(true)}
+                    disabled={saving || hasUnsavedNonTransactionChanges}
+                    className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title={
+                      hasUnsavedNonTransactionChanges
+                        ? 'Save or cancel other changes before removing from transaction'
+                        : 'Remove from transaction'
+                    }
+                  >
+                    Remove from transaction
+                  </button>
+                  <span className="text-xs text-gray-500">Does not delete the item</span>
+                </div>
+              )}
               {!loadingTransactions && transactions.length === 0 && (
                 <p className="mt-1 text-sm text-gray-500">No transactions available for this project</p>
               )}
@@ -1042,6 +1097,28 @@ export default function EditItem() {
 
       {/* Add bottom padding to account for sticky bar on mobile */}
       <div className="sm:hidden h-20"></div>
+
+      <BlockingConfirmDialog
+        open={showRemoveFromTransactionConfirm}
+        title="Remove item from transaction?"
+        description={
+          <div className="text-sm text-gray-700 space-y-2">
+            <p>This will remove the item from this transaction.</p>
+            <p className="text-gray-600">The item will not be deleted.</p>
+          </div>
+        }
+        confirmLabel="Remove"
+        cancelLabel="Cancel"
+        confirmVariant="danger"
+        isConfirming={false}
+        onCancel={() => setShowRemoveFromTransactionConfirm(false)}
+        onConfirm={() => {
+          if (hasUnsavedNonTransactionChanges) return
+          setFormData(prev => ({ ...prev, selectedTransactionId: '' }))
+          setErrors(prev => ({ ...prev, selectedTransactionId: '' }))
+          setShowRemoveFromTransactionConfirm(false)
+        }}
+      />
     </div>
   )
 }

@@ -71,6 +71,8 @@ export interface UpdateTransactionOperation extends BaseOperation {
     updates: Partial<{
       amount: string
       categoryId: string
+      taxRatePct: number | null
+      subtotal: string | null
       taxRatePreset: string
       status: string
       receiptImages: any[]

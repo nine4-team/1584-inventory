@@ -613,10 +613,10 @@ export default function EditTransaction() {
         ...formDataWithoutImages,
         otherImages: otherImages,
         receiptImages: receiptImages,
-        // Allow explicit clearing via "None" (persist NULLs).
+        // Allow explicit clearing via "No tax" (persist 0%).
         ...(taxRatePreset
           ? { taxRatePreset: taxRatePreset, subtotal: taxRatePreset === 'Other' ? subtotal : null }
-          : { taxRatePreset: null, subtotal: null })
+          : { taxRatePreset: null, taxRatePct: 0, subtotal: null })
       }
 
       await transactionService.updateTransaction(currentAccountId, projectId, transactionId, updateData)
@@ -1061,7 +1061,7 @@ export default function EditTransaction() {
                   className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
                 />
                 <label htmlFor="tax_preset_none" className="ml-2 block text-sm text-gray-900">
-                  None
+                  No tax (0%)
                 </label>
               </div>
               {taxPresets.map((preset) => (
@@ -1181,6 +1181,18 @@ export default function EditTransaction() {
               }}
               projectId={projectId}
               projectName={projectName}
+              onRemoveFromTransaction={async (itemId, item) => {
+                const isDraft = itemId.toString().startsWith('item-')
+                if (isDraft) {
+                  setItems(prev => prev.filter(i => i.id !== itemId))
+                  return
+                }
+                if (!currentAccountId) return
+                await unifiedItemsService.unlinkItemFromTransaction(currentAccountId, transactionId, itemId, {
+                  itemCurrentTransactionId: transactionId
+                })
+                setItems(prev => prev.filter(i => i.id !== itemId))
+              }}
             />
             {errors.items && (
               <p className="mt-1 text-sm text-red-600">{errors.items}</p>
