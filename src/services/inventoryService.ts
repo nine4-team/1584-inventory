@@ -2,6 +2,7 @@ import { supabase, getCurrentUser } from './supabase'
 import { convertTimestamps, ensureAuthenticatedForDatabase } from './databaseService'
 import { toDateOnlyString } from '@/utils/dateUtils'
 import { getTaxPresetById } from './taxPresetsService'
+import { getDefaultCategory } from './accountPresetsService'
 import { CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { lineageService } from './lineageService'
 import { offlineStore, type DBItem, type DBTransaction, type DBProject, mapItemToDBItem, mapProjectToDBProject } from './offlineStore'
@@ -58,6 +59,15 @@ export const isCanonicalTransactionId = (transactionId: string | null | undefine
 const isCanonicalAmountTransactionId = (transactionId: string | null | undefined): boolean => {
   if (!transactionId) return false
   return transactionId.startsWith('INV_PURCHASE_') || transactionId.startsWith('INV_SALE_')
+}
+
+const getCanonicalBudgetCategoryId = async (accountId: string): Promise<string | null> => {
+  try {
+    return await getDefaultCategory(accountId)
+  } catch (error) {
+    console.warn('⚠️ Failed to load default budget category for canonical transaction:', error)
+    return null
+  }
 }
 
 const isBusinessInventoryTransactionRecord = (record?: Record<string, any> | null): boolean => {
@@ -5365,7 +5375,13 @@ export const unifiedItemsService = {
         const existingItemIds = existingTransaction.item_ids || []
         const updatedItemIds = [...new Set([...existingItemIds, itemId])] // Avoid duplicates
         const shouldRecalculateAmount = isCanonicalTransactionId(transactionId)
-        type TransactionUpdatePayload = { item_ids: string[]; updated_at: string; amount?: string }
+        const canonicalCategoryId = shouldRecalculateAmount ? await getCanonicalBudgetCategoryId(accountId) : null
+        type TransactionUpdatePayload = {
+          item_ids: string[]
+          updated_at: string
+          amount?: string
+          category_id?: string | null
+        }
         const baseUpdateData: TransactionUpdatePayload = {
           item_ids: updatedItemIds,
           updated_at: new Date().toISOString()
@@ -5395,6 +5411,13 @@ export const unifiedItemsService = {
             transactionId,
             itemId
           })
+        }
+
+        if (canonicalCategoryId && !existingTransaction.category_id) {
+          updateData = {
+            ...updateData,
+            category_id: canonicalCategoryId
+          }
         }
 
         const { error: updateError } = await supabase
@@ -5455,6 +5478,9 @@ export const unifiedItemsService = {
         const projectName = project?.name || 'Other'
 
         const now = new Date()
+        const canonicalCategoryId = isCanonicalTransactionId(transactionId)
+          ? await getCanonicalBudgetCategoryId(accountId)
+          : null
         const transactionData = {
           account_id: accountId,
           transaction_id: transactionId,
@@ -5465,6 +5491,7 @@ export const unifiedItemsService = {
           payment_method: 'Pending',
           amount: amount,
           budget_category: 'Furnishings',
+          ...(canonicalCategoryId ? { category_id: canonicalCategoryId } : {}),
           notes: notes || `Transaction for items ${transactionType === 'Purchase' ? 'purchased from' : 'sold to'} ${transactionType === 'Purchase' ? 'inventory' : 'project'}`,
           status: 'pending' as const,
           reimbursement_type: transactionType === 'Purchase' ? CLIENT_OWES_COMPANY : COMPANY_OWES_CLIENT,
@@ -5810,11 +5837,13 @@ export const unifiedItemsService = {
         .reduce((sum: number, price: string) => sum + parseFloat(price || '0'), 0)
         .toFixed(2)
 
+      const canonicalCategoryId = await getCanonicalBudgetCategoryId(accountId)
       const updatedTransactionData = {
         item_ids: updatedItemIds,
         amount: totalAmount,
         notes: notes || 'Transaction for items purchased from project and moved to business inventory',
-        updated_at: now.toISOString()
+        updated_at: now.toISOString(),
+        ...(canonicalCategoryId && !existingTransaction.category_id ? { category_id: canonicalCategoryId } : {})
       }
 
       const { error: updateError } = await supabase
@@ -5828,6 +5857,7 @@ export const unifiedItemsService = {
       console.log('🔄 Updated INV_SALE transaction with', updatedItemIds.length, 'items, amount:', totalAmount)
     } else {
       // Transaction doesn't exist - create new one
+      const canonicalCategoryId = await getCanonicalBudgetCategoryId(accountId)
       const transactionData = {
         account_id: accountId,
         transaction_id: saleTransactionId,
@@ -5838,6 +5868,7 @@ export const unifiedItemsService = {
         payment_method: 'Pending',
         amount: finalAmount,
         budget_category: 'Furnishings',
+        ...(canonicalCategoryId ? { category_id: canonicalCategoryId } : {}),
         notes: notes || 'Transaction for items purchased from project and moved to business inventory',
         status: 'pending' as const,
         reimbursement_type: COMPANY_OWES_CLIENT,  // We owe the client for this purchase
@@ -6507,11 +6538,13 @@ export const deallocationService = {
         .toFixed(2)
 
       const now = new Date()
+      const canonicalCategoryId = await getCanonicalBudgetCategoryId(accountId)
       const updatedTransactionData = {
         item_ids: updatedItemIds,
         amount: totalAmount,
         notes: additionalNotes || 'Transaction for items purchased from project and moved to business inventory',
-        updated_at: now.toISOString()
+        updated_at: now.toISOString(),
+        ...(canonicalCategoryId && !existingTransaction.category_id ? { category_id: canonicalCategoryId } : {})
       }
 
       const { error: updateError } = await supabase
@@ -6529,6 +6562,7 @@ export const deallocationService = {
 
       // New transaction - create Sale transaction (project moving item TO inventory)
       const now = new Date()
+      const canonicalCategoryId = await getCanonicalBudgetCategoryId(accountId)
       const transactionData = {
         account_id: accountId,
         transaction_id: canonicalTransactionId,
@@ -6539,6 +6573,7 @@ export const deallocationService = {
         payment_method: 'Pending',
         amount: parseFloat(calculatedAmount || '0').toFixed(2),
         budget_category: 'Furnishings',
+        ...(canonicalCategoryId ? { category_id: canonicalCategoryId } : {}),
         notes: additionalNotes || 'Transaction for items purchased from project and moved to business inventory',
         status: 'pending' as const,
         reimbursement_type: COMPANY_OWES_CLIENT,  // We owe the client for this purchase

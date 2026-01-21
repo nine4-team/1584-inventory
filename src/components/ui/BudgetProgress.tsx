@@ -32,10 +32,26 @@ export default function BudgetProgress({ budget, designFee, budgetCategories, tr
   accountCategories.forEach(cat => {
     categoryMap.set(cat.id, cat.name)
   })
+  const furnishingsCategoryId = accountCategories.find(cat =>
+    cat.name.toLowerCase().includes('furnish')
+  )?.id
 
   // Helper to check if a category is "Design Fee" by name (for backward compatibility)
   const isDesignFeeCategory = (categoryName: string): boolean => {
     return categoryName.toLowerCase().includes('design') && categoryName.toLowerCase().includes('fee')
+  }
+
+  const isCanonicalSaleTransaction = (transaction: Transaction): boolean => {
+    return transaction.transactionId?.startsWith('INV_SALE_') ?? false
+  }
+
+  const getResolvedCategoryId = (transaction: Transaction): string | undefined => {
+    if (transaction.categoryId) return transaction.categoryId
+    if (!transaction.budgetCategory || !furnishingsCategoryId) return undefined
+    if (transaction.budgetCategory.toLowerCase().includes('furnish')) {
+      return furnishingsCategoryId
+    }
+    return undefined
   }
 
   // Calculate total spent for overall budget (exclude Design Fee transactions)
@@ -45,14 +61,15 @@ export default function BudgetProgress({ budget, designFee, budgetCategories, tr
 
     const activeTransactions = transactions.filter(t => {
       if ((t.status || '').toLowerCase() === 'canceled') return false
-      if (!t.categoryId) return true // Include uncategorized transactions in overall
-      const categoryName = categoryMap.get(t.categoryId)
+      const resolvedCategoryId = getResolvedCategoryId(t)
+      if (!resolvedCategoryId) return true // Include uncategorized transactions in overall
+      const categoryName = categoryMap.get(resolvedCategoryId)
       return categoryName && !isDesignFeeCategory(categoryName)
     })
 
     for (const transaction of activeTransactions) {
       const transactionAmount = parseFloat(transaction.amount || '0')
-      const multiplier = transaction.transactionType === 'Return' ? -1 : 1
+      const multiplier = transaction.transactionType === 'Return' || isCanonicalSaleTransaction(transaction) ? -1 : 1
       const finalAmount = transactionAmount * multiplier
       totalAmount += finalAmount
     }
@@ -68,12 +85,13 @@ export default function BudgetProgress({ budget, designFee, budgetCategories, tr
     const transactionsByCategoryId = new Map<string, Transaction[]>()
     transactions.forEach(transaction => {
       if ((transaction.status || '').toLowerCase() === 'canceled') return
-      if (!transaction.categoryId) return // Skip uncategorized transactions for category breakdown
-      
-      if (!transactionsByCategoryId.has(transaction.categoryId)) {
-        transactionsByCategoryId.set(transaction.categoryId, [])
+      const resolvedCategoryId = getResolvedCategoryId(transaction)
+      if (!resolvedCategoryId) return // Skip uncategorized transactions for category breakdown
+
+      if (!transactionsByCategoryId.has(resolvedCategoryId)) {
+        transactionsByCategoryId.set(resolvedCategoryId, [])
       }
-      transactionsByCategoryId.get(transaction.categoryId)!.push(transaction)
+      transactionsByCategoryId.get(resolvedCategoryId)!.push(transaction)
     })
 
     // Process each category that has transactions or a budget set
@@ -87,7 +105,7 @@ export default function BudgetProgress({ budget, designFee, budgetCategories, tr
       let categorySpent = 0
       for (const transaction of categoryTransactions) {
         const transactionAmount = parseFloat(transaction.amount || '0')
-        const multiplier = transaction.transactionType === 'Return' ? -1 : 1
+        const multiplier = transaction.transactionType === 'Return' || isCanonicalSaleTransaction(transaction) ? -1 : 1
         const finalAmount = transactionAmount * multiplier
         categorySpent += finalAmount
       }
