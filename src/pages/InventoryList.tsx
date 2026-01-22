@@ -907,10 +907,14 @@ export default function InventoryList({ projectId, projectName, items: propItems
   const filteredItems = items.filter(item => {
     // Apply search filter
     const query = searchQuery.toLowerCase().trim()
+    const normalizedQuery = query.replace(/[^a-z0-9]/g, '')
+
     const matchesSearch = !query ||
       (item.description || '').toLowerCase().includes(query) ||
       (item.source || '').toLowerCase().includes(query) ||
       (item.sku || '').toLowerCase().includes(query) ||
+      // Fuzzy match SKU (ignoring special chars) - helps with "3SEAT-001" vs "3SEAT001" or "3SEAT 001"
+      (normalizedQuery && (item.sku || '').toLowerCase().replace(/[^a-z0-9]/g, '').includes(normalizedQuery)) ||
       (item.paymentMethod || '').toLowerCase().includes(query) ||
       (item.space || '').toLowerCase().includes(query)
 
@@ -1018,7 +1022,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
             <div className="px-6 py-4 border-b border-gray-200">
               <h3 className="text-lg font-medium text-gray-900">
-                Add To Transaction
+                Associate With Transaction
               </h3>
             </div>
             <div className="px-6 py-4 space-y-4">
@@ -1046,7 +1050,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
                   className="text-sm text-gray-700 hover:text-gray-900"
                   disabled={isUpdatingTransaction}
                 >
-                  Remove from transaction
+                  Your selection will become the new transaction, but a record of the item will stay in the old transaction.
                 </button>
               )}
             </div>
@@ -1092,7 +1096,6 @@ export default function InventoryList({ projectId, projectName, items: propItems
                 placeholder={loadingProjects ? "Loading projects..." : "Select a project"}
                 options={projectOptions}
               />
-              <p className="text-xs text-gray-500">Current project is disabled.</p>
             </div>
             <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
               <button

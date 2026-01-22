@@ -1140,7 +1140,7 @@ export default function BusinessInventory() {
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
             <div className="px-6 py-4 border-b border-gray-200">
               <h3 className="text-lg font-medium text-gray-900">
-                Add To Transaction
+                Associate With Transaction
               </h3>
             </div>
             <div className="px-6 py-4 space-y-4">
@@ -1168,7 +1168,7 @@ export default function BusinessInventory() {
                   className="text-sm text-gray-700 hover:text-gray-900"
                   disabled={isUpdatingTransaction}
                 >
-                  Remove from transaction
+                  Your selection will become the new transaction, but a record of the item will stay in the old transaction.
                 </button>
               )}
             </div>

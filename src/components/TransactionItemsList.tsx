@@ -1093,7 +1093,7 @@ export default function TransactionItemsList({
                 }}
                 className="text-sm text-gray-700 hover:text-gray-900"
               >
-                Remove from transaction
+            Remove from transaction
               </button>
             </div>
             <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
