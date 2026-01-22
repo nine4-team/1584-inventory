@@ -1,9 +1,8 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { Transaction, Item, TransactionCompleteness } from '@/types'
-import { transactionService, unifiedItemsService } from '@/services/inventoryService'
+import { transactionService } from '@/services/inventoryService'
 import { formatCurrency } from '@/utils/dateUtils'
-import { ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, XCircle, Plus } from 'lucide-react'
-import { useToast } from './ToastContext'
+import { AlertTriangle, CheckCircle2, XCircle } from 'lucide-react'
 import { useAccount } from '@/contexts/AccountContext'
 import { projectItemEdit } from '@/utils/routes'
 
@@ -11,42 +10,16 @@ interface TransactionAuditProps {
   transaction: Transaction
   projectId: string
   transactionItems: Item[]
-  onItemsUpdated: () => void
 }
 
 export default function TransactionAudit({
   transaction,
   projectId,
-  transactionItems,
-  onItemsUpdated
+  transactionItems
 }: TransactionAuditProps) {
   const { currentAccountId } = useAccount()
-  const { showError, showSuccess } = useToast()
   const [completeness, setCompleteness] = useState<TransactionCompleteness | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [showSuggested, setShowSuggested] = useState(true)
-  const [suggestedItems, setSuggestedItems] = useState<Item[]>([])
-  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false)
-  const [suggestedSearch, setSuggestedSearch] = useState('')
-  const transactionItemIds = useMemo(() => {
-    const ids = new Set<string>()
-
-    const canonicalIds = Array.isArray(transaction.itemIds) ? transaction.itemIds : []
-    for (const id of canonicalIds) {
-      if (typeof id === 'string' && id.length > 0) {
-        ids.add(id)
-      }
-    }
-
-    for (const item of transactionItems) {
-      const id = item.itemId
-      if (typeof id === 'string' && id.length > 0) {
-        ids.add(id)
-      }
-    }
-
-    return ids
-  }, [transaction.itemIds, transactionItems])
 
   // Filter out transaction types that don't require item attribution
   const shouldShowAudit = transaction.transactionType !== 'Return' &&
@@ -88,109 +61,6 @@ export default function TransactionAudit({
 
     loadCompleteness()
   }, [currentAccountId, projectId, transaction.transactionId, transactionItems, transaction.amount, transaction.taxRatePct, transaction.subtotal])
-
-  // Load suggested items when status is yellow or red
-  useEffect(() => {
-    const loadSuggestions = async () => {
-      if (!currentAccountId || !completeness) return
-      if (completeness.completenessStatus === 'complete') {
-        setSuggestedItems([])
-        return
-      }
-
-      setIsLoadingSuggestions(true)
-      try {
-        const items = await transactionService.getSuggestedItemsForTransaction(
-          currentAccountId,
-          transaction.source,
-          5
-        )
-        const dedupedItems = (items || []).filter(it => !it.itemId || !transactionItemIds.has(it.itemId))
-        // Filter out items whose purchasePrice exceeds remaining amount (subtotal - items total)
-        let filteredItems = dedupedItems
-        if (completeness) {
-          const remaining = completeness.transactionSubtotal - completeness.itemsNetTotal
-          filteredItems = dedupedItems.filter(it => {
-            const price = parseFloat((it.purchasePrice as any) || '0')
-            // If price is NaN treat as 0 (include). Exclude only when price > remaining.
-            if (isNaN(price)) return true
-            return price <= remaining
-          })
-        }
-        setSuggestedItems(filteredItems)
-      } catch (error) {
-        console.error('Error loading suggested items:', error)
-      } finally {
-        setIsLoadingSuggestions(false)
-      }
-    }
-
-    loadSuggestions()
-  }, [currentAccountId, transaction.source, completeness?.completenessStatus, transactionItemIds])
-
-  useEffect(() => {
-    setSuggestedItems(prev => prev.filter(item => !item.itemId || !transactionItemIds.has(item.itemId)))
-  }, [transactionItemIds])
-
-  const handleAddItemToTransaction = async (item: Item) => {
-    if (!currentAccountId || !transaction.transactionId) return
-
-    try {
-      await unifiedItemsService.addItemToTransaction(
-        currentAccountId,
-        item.itemId,
-        transaction.transactionId,
-        item.purchasePrice || '0',
-        transaction.transactionType as 'Purchase' | 'Sale' | 'To Inventory',
-        'Manual',
-        'Added via transaction audit'
-      )
-      showSuccess('Item added to transaction')
-      // Optimistically remove the item from the suggested list so UI updates immediately
-      setSuggestedItems(prev => prev.filter(si => si.itemId !== item.itemId))
-      onItemsUpdated()
-
-      // Refresh suggestions from server to ensure consistency (server filters on transaction_id = null)
-      try {
-        setIsLoadingSuggestions(true)
-        const freshItems = await transactionService.getSuggestedItemsForTransaction(
-          currentAccountId,
-          transaction.source,
-          5
-        )
-        const dedupedFreshItems = (freshItems || []).filter(it => !it.itemId || !transactionItemIds.has(it.itemId))
-        // Apply the same remaining-price filter used by loadSuggestions
-        let filteredItems = dedupedFreshItems
-        if (completeness) {
-          const remaining = completeness.transactionSubtotal - completeness.itemsNetTotal
-          filteredItems = dedupedFreshItems.filter(it => {
-            const price = parseFloat((it.purchasePrice as any) || '0')
-            if (isNaN(price)) return true
-            return price <= remaining
-          })
-        }
-        setSuggestedItems(filteredItems)
-      } catch (refreshError) {
-        console.error('Error refreshing suggested items after add:', refreshError)
-      } finally {
-        setIsLoadingSuggestions(false)
-      }
-    } catch (error) {
-      console.error('Error adding item to transaction:', error)
-      showError('Failed to add item to transaction')
-    }
-  }
-
-  const filteredSuggestedItems = useMemo(() => {
-    const query = suggestedSearch.trim().toLowerCase()
-    if (!query) return suggestedItems
-    return suggestedItems.filter(item => {
-      const description = item.description?.toLowerCase() ?? ''
-      const sku = item.sku?.toLowerCase() ?? ''
-      const price = item.purchasePrice?.toString().toLowerCase() ?? ''
-      return description.includes(query) || sku.includes(query) || price.includes(query)
-    })
-  }, [suggestedItems, suggestedSearch])
 
   if (!shouldShowAudit) {
     return null
@@ -372,75 +242,6 @@ export default function TransactionAudit({
           </div>
         )}
 
-        {/* Suggested Items toggle and list (moved out of details) */}
-        {(completeness.completenessStatus === 'near' || completeness.completenessStatus === 'incomplete') && (
-          <div className="mt-4 border-t border-gray-200 pt-4">
-            <button
-              onClick={() => setShowSuggested(!showSuggested)}
-              className="inline-flex items-center text-sm font-medium text-primary-600 hover:text-primary-800"
-            >
-              {showSuggested ? (
-                <>
-                  <ChevronUp className="h-4 w-4 mr-1" />
-                  Hide suggested items
-                </>
-              ) : (
-                <>
-                  <ChevronDown className="h-4 w-4 mr-1" />
-                  Show suggested items to add
-                </>
-              )}
-            </button>
-
-            {showSuggested && (
-              isLoadingSuggestions ? (
-                <div className="text-sm text-gray-500 mt-3">Loading suggestions...</div>
-              ) : suggestedItems.length > 0 ? (
-                <div className="space-y-2 mt-3">
-                  <div>
-                    <input
-                      type="search"
-                      value={suggestedSearch}
-                      onChange={event => setSuggestedSearch(event.target.value)}
-                      placeholder="Search suggested items"
-                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
-                    />
-                    <p className="mt-1 text-xs text-gray-500">
-                      Search matches name, SKU, or price. Items without a source or price still appear.
-                    </p>
-                  </div>
-                  {filteredSuggestedItems.length > 0 ? (
-                    filteredSuggestedItems.map((item) => (
-                    <div
-                      key={item.itemId}
-                      className="flex items-center justify-between p-2 bg-gray-50 rounded-md"
-                    >
-                      <div className="flex-1">
-                        <div className="text-sm font-medium text-gray-900">{item.description}</div>
-                        <div className="text-xs text-gray-500">
-                          {item.sku && `SKU: ${item.sku}`}
-                          {item.purchasePrice && ` • ${formatCurrency(item.purchasePrice)}`}
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => handleAddItemToTransaction(item)}
-                        className="ml-4 inline-flex items-center px-2 py-1 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50"
-                      >
-                        <Plus className="h-3 w-3 mr-1" />
-                        Add
-                      </button>
-                    </div>
-                  ))
-                  ) : (
-                    <div className="text-sm text-gray-500">No suggested items match your search.</div>
-                  )}
-                </div>
-              ) : (
-                <div className="text-sm text-gray-500 mt-3">No unassociated items found for this vendor.</div>
-              )
-            )}
-          </div>
-        )}
       </div>
     </div>
   )

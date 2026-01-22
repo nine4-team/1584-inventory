@@ -42,6 +42,7 @@ import { splitItemsByMovement, type DisplayTransactionItem } from '@/utils/trans
 import { ConflictResolutionView } from '@/components/ConflictResolutionView'
 import TransactionActionsMenu from '@/components/transactions/TransactionActionsMenu'
 import { Combobox } from '@/components/ui/Combobox'
+import TransactionItemPicker from '@/components/transactions/TransactionItemPicker'
 
 
 // Get canonical transaction title for display
@@ -1775,7 +1776,28 @@ export default function TransactionDetail() {
               <Package className="h-5 w-5 mr-2" />
               Transaction Items
             </h3>
+            <button
+              type="button"
+              onClick={() => setIsAddingItem(true)}
+              className="inline-flex items-center px-3 py-2 border text-xs font-medium rounded border-gray-300 text-gray-700 bg-white hover:bg-gray-50"
+            >
+              <Package className="h-3 w-3 mr-1" />
+              Create Item
+            </button>
           </div>
+
+          {transaction && (
+            <TransactionItemPicker
+              transaction={transaction}
+              projectId={projectId}
+              transactionItemIds={itemsInTransaction.map(item => item.id)}
+              containerId="transaction-items-container"
+              onItemsAdded={async () => {
+                await refreshTransactionItems()
+                await refreshRealtimeAfterWrite()
+              }}
+            />
+          )}
 
           {isLoadingItems ? (
             <div className="flex justify-center items-center h-16">
@@ -1825,20 +1847,7 @@ export default function TransactionDetail() {
                 </div>
               )}
             </div>
-          ) : !isAddingItem ? (
-            <div className="text-center py-8">
-              <Package className="mx-auto h-8 w-8 text-gray-400" />
-              <h3 className="mt-2 text-sm font-medium text-gray-900">No items added</h3>
-              <button
-                onClick={() => setIsAddingItem(true)}
-                className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 mt-3"
-                title="Add new item"
-              >
-                <Package className="h-3 w-3 mr-1" />
-                Add Item
-              </button>
-            </div>
-          ) : (
+          ) : !isAddingItem ? null : (
             <TransactionItemForm
               onSave={handleCreateItem}
               onCancel={handleCancelAddItem}
@@ -1858,7 +1867,6 @@ export default function TransactionDetail() {
               transaction={transaction}
               projectId={projectId || transaction.projectId || ''}
               transactionItems={auditItems}
-              onItemsUpdated={refreshTransactionItems}
             />
           </div>
         )}

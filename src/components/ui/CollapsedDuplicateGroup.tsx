@@ -93,14 +93,16 @@ export default function CollapsedDuplicateGroup({
 
             {/* View all control - treated like control section in ungrouped cards */}
             <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
-              {count > 1 && !isExpanded && (
+              {count > 1 && (
                 <>
                   <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
                     ×{count}
                   </span>
-                  <span className="text-xs text-gray-500 italic">
-                    {microcopy}
-                  </span>
+                  {!isExpanded && (
+                    <span className="text-xs text-gray-500 italic">
+                      {microcopy}
+                    </span>
+                  )}
                 </>
               )}
               <div className="text-gray-400">

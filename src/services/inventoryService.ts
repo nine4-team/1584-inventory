@@ -3979,6 +3979,52 @@ export const unifiedItemsService = {
     }
   },
 
+  async _searchItemsOutsideProjectOffline(
+    accountId: string,
+    options: {
+      excludeProjectId?: string | null
+      includeBusinessInventory?: boolean
+      searchQuery?: string
+    },
+    pagination?: PaginationOptions
+  ): Promise<Item[]> {
+    try {
+      await offlineStore.init()
+      const cached = await offlineStore.getAllItems()
+      const includeBusinessInventory = options.includeBusinessInventory !== false
+      const normalizedExcludeProjectId = options.excludeProjectId || null
+
+      let items = cached
+        .filter(item => !item.accountId || item.accountId === accountId)
+        .map(item => this._convertOfflineItem(item))
+
+      if (normalizedExcludeProjectId) {
+        items = items.filter(item => (item.projectId ?? null) !== normalizedExcludeProjectId)
+      }
+
+      if (!includeBusinessInventory) {
+        items = items.filter(item => Boolean(item.projectId))
+      }
+
+      if (options.searchQuery) {
+        const query = options.searchQuery.toLowerCase()
+        items = items.filter(item => (
+          (item.description || '').toLowerCase().includes(query) ||
+          (item.source || '').toLowerCase().includes(query) ||
+          (item.sku || '').toLowerCase().includes(query) ||
+          (item.paymentMethod || '').toLowerCase().includes(query) ||
+          (item.businessInventoryLocation || '').toLowerCase().includes(query)
+        ))
+      }
+
+      const sorted = sortItemsOffline(items)
+      return applyPagination(sorted, pagination)
+    } catch (error) {
+      console.warn('Failed to read offline outside items:', error)
+      return []
+    }
+  },
+
   async _getBusinessInventoryOffline(
     accountId: string,
     filters?: { status?: string; searchQuery?: string },
@@ -4160,6 +4206,77 @@ export const unifiedItemsService = {
     }
 
     return await this._getProjectItemsOffline(accountId, projectId, filters, pagination)
+  },
+
+  async searchItemsOutsideProject(
+    accountId: string,
+    options: {
+      excludeProjectId?: string | null
+      includeBusinessInventory?: boolean
+      searchQuery?: string
+      pagination?: PaginationOptions
+    }
+  ): Promise<Item[]> {
+    const online = isNetworkOnline()
+    const includeBusinessInventory = options.includeBusinessInventory !== false
+    const normalizedExcludeProjectId = options.excludeProjectId || null
+
+    if (online) {
+      try {
+        await ensureAuthenticatedForDatabase()
+
+        let query = supabase
+          .from('items')
+          .select('*')
+          .eq('account_id', accountId)
+
+        if (normalizedExcludeProjectId) {
+          if (includeBusinessInventory) {
+            query = query.or(`project_id.is.null,project_id.neq.${normalizedExcludeProjectId}`)
+          } else {
+            query = query.neq('project_id', normalizedExcludeProjectId).not('project_id', 'is', null)
+          }
+        } else if (!includeBusinessInventory) {
+          query = query.not('project_id', 'is', null)
+        }
+
+        if (options.searchQuery) {
+          query = query.or(
+            `description.ilike.%${options.searchQuery}%,source.ilike.%${options.searchQuery}%,sku.ilike.%${options.searchQuery}%,payment_method.ilike.%${options.searchQuery}%,business_inventory_location.ilike.%${options.searchQuery}%`
+          )
+        }
+
+        query = query
+          .order('created_at', { ascending: false, nullsFirst: false })
+          .order('date_created', { ascending: false, nullsFirst: false })
+
+        const pagination = options.pagination
+        if (pagination) {
+          const offset = pagination.page > 0 ? (pagination.page - 1) * pagination.limit : 0
+          query = query.range(offset, offset + pagination.limit - 1)
+        }
+
+        const { data, error } = await query
+        if (error) throw error
+
+        const supabaseRows = data || []
+        void cacheItemsOffline(supabaseRows)
+
+        return supabaseRows.map(item => this._convertItemFromDb(item))
+      } catch (error) {
+        console.warn('Failed to fetch outside items from network, falling back to offline cache:', error)
+      }
+    }
+
+    return await this._searchItemsOutsideProjectOffline(
+      accountId,
+      {
+        excludeProjectId: normalizedExcludeProjectId,
+        includeBusinessInventory,
+        searchQuery: options.searchQuery
+      },
+      options.pagination
+    )
   },
 
   // Subscribe to items for a project with real-time updates

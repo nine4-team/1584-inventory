@@ -63,6 +63,8 @@ interface ItemPreviewCardProps {
   transactionDisplayInfo?: { title: string; amount: string } | null
   transactionRoute?: { path: string; projectId: string | null } | null
   isLoadingTransaction?: boolean
+  headerAction?: React.ReactNode
+  footer?: React.ReactNode
 }
 
 export default function ItemPreviewCard({
@@ -92,7 +94,9 @@ export default function ItemPreviewCard({
   itemNumber,
   transactionDisplayInfo: providedTransactionDisplayInfo,
   transactionRoute: providedTransactionRoute,
-  isLoadingTransaction: providedIsLoadingTransaction
+  isLoadingTransaction: providedIsLoadingTransaction,
+  headerAction,
+  footer
 }: ItemPreviewCardProps) {
   const [resolvedUrls, setResolvedUrls] = useState<Record<string, string>>({})
   const resolvedUrlsRef = useRef<Record<string, string>>({})
@@ -242,11 +246,12 @@ export default function ItemPreviewCard({
   const locationValue = context === 'project' ? item.space : item.businessInventoryLocation
 
   const hasActions = showBookmark || showDuplicate || onEdit || onAddToTransaction || onSellToBusiness || onSellToProject || onMoveToBusiness || onMoveToProject || onChangeStatus || onDelete
+  const hasHeaderAction = Boolean(headerAction)
 
   const cardContent = (
     <>
       {/* Top row: checkbox, price, controls */}
-      {(showCheckbox || duplicateCount || priceLabel || hasActions) && (
+      {(showCheckbox || duplicateCount || priceLabel || hasActions || hasHeaderAction) && (
         <div className="flex items-center gap-4 mb-3">
           {/* Checkbox */}
           {showCheckbox && onSelect && (
@@ -271,14 +276,15 @@ export default function ItemPreviewCard({
           )}
 
           {/* Action buttons on the right */}
-          {hasActions && (
+          {(hasActions || hasHeaderAction) && (
             <div className="flex items-center space-x-2 ml-auto">
               {duplicateCount && duplicateCount > 1 && duplicateIndex ? (
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
                   {duplicateIndex}/{duplicateCount}
                 </span>
               ) : null}
-              {item.disposition ? (
+              {headerAction}
+              {hasActions && item.disposition ? (
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800 whitespace-nowrap">
                   {displayDispositionLabel(item.disposition)}
                 </span>
@@ -426,6 +432,11 @@ export default function ItemPreviewCard({
           />
         </div>
       </div>
+      {footer && (
+        <div className="mt-3 flex justify-end">
+          {footer}
+        </div>
+      )}
     </>
   )
 
