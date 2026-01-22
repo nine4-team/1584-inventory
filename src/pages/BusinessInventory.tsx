@@ -5,7 +5,7 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import ContextLink from '@/components/ContextLink'
 import { Item, Transaction, ItemImage, Project, ItemDisposition } from '@/types'
 import type { Transaction as TransactionType } from '@/types'
-import { unifiedItemsService, projectService, integrationService } from '@/services/inventoryService'
+import { unifiedItemsService, projectService, integrationService, transactionService } from '@/services/inventoryService'
 import { useToast } from '@/components/ui/ToastContext'
 import { lineageService } from '@/services/lineageService'
 import { ImageUploadService } from '@/services/imageService'
@@ -14,6 +14,7 @@ import { useNetworkState } from '@/hooks/useNetworkState'
 import { useBusinessInventoryRealtime } from '@/contexts/BusinessInventoryRealtimeContext'
 import { formatCurrency, formatDate } from '@/utils/dateUtils'
 import { COMPANY_INVENTORY, COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE } from '@/constants/company'
+import { supabase } from '@/services/supabase'
 import { useBookmark } from '@/hooks/useBookmark'
 import { useDuplication } from '@/hooks/useDuplication'
 import { useAccount } from '@/contexts/AccountContext'
@@ -172,6 +173,12 @@ export default function BusinessInventory() {
   const [projectTargetItemId, setProjectTargetItemId] = useState<string | null>(null)
   const [loadingProjects, setLoadingProjects] = useState(false)
   const [isUpdatingProject, setIsUpdatingProject] = useState(false)
+  const [showTransactionDialog, setShowTransactionDialog] = useState(false)
+  const [transactionsForDialog, setTransactionsForDialog] = useState<Transaction[]>([])
+  const [loadingTransactions, setLoadingTransactions] = useState(false)
+  const [selectedTransactionId, setSelectedTransactionId] = useState('')
+  const [transactionTargetItemId, setTransactionTargetItemId] = useState<string | null>(null)
+  const [isUpdatingTransaction, setIsUpdatingTransaction] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleteTargetItemId, setDeleteTargetItemId] = useState<string | null>(null)
   const [isDeletingItem, setIsDeletingItem] = useState(false)
@@ -348,10 +355,38 @@ export default function BusinessInventory() {
     setShowProjectDialog(true)
   }
 
+  const openTransactionDialog = (itemId: string) => {
+    const targetItem = items.find(entry => entry.itemId === itemId)
+    setTransactionTargetItemId(itemId)
+    setSelectedTransactionId(targetItem?.transactionId ?? '')
+    setShowTransactionDialog(true)
+  }
+
+  const loadTransactions = async () => {
+    if (!currentAccountId) return
+    setLoadingTransactions(true)
+    try {
+      const txs = await transactionService.getBusinessInventoryTransactions(currentAccountId)
+      setTransactionsForDialog(txs)
+    } catch (error) {
+      console.error('Failed to load transactions:', error)
+      showError && showError('Failed to load transactions. Please try again.')
+    } finally {
+      setLoadingTransactions(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!showTransactionDialog) return
+    if (transactionsForDialog.length > 0) return
+    loadTransactions()
+  }, [showTransactionDialog, transactionsForDialog.length])
+
   const handleMoveToProject = async () => {
     if (!currentAccountId || !projectTargetItemId || !selectedProjectId) return
     setIsUpdatingProject(true)
     try {
+      const wasOffline = !isOnline
       await unifiedItemsService.allocateItemToProject(
         currentAccountId,
         projectTargetItemId,
@@ -360,6 +395,12 @@ export default function BusinessInventory() {
         undefined,
         undefined
       )
+      if (wasOffline) {
+        showOfflineSaved(null)
+        setShowProjectDialog(false)
+        setProjectTargetItemId(null)
+        return
+      }
       await refreshRealtimeAfterWrite()
       setItems(prev => prev.filter(item => item.itemId !== projectTargetItemId))
       setShowProjectDialog(false)
@@ -369,6 +410,54 @@ export default function BusinessInventory() {
       showError && showError('Failed to move item to project. Please try again.')
     } finally {
       setIsUpdatingProject(false)
+    }
+  }
+
+  const handleChangeTransaction = async () => {
+    if (!currentAccountId || !transactionTargetItemId || !selectedTransactionId) return
+    const item = items.find(entry => entry.itemId === transactionTargetItemId)
+    if (!item) return
+    const previousTransactionId = item.transactionId
+
+    setIsUpdatingTransaction(true)
+    try {
+      await unifiedItemsService.assignItemToTransaction(currentAccountId, selectedTransactionId, transactionTargetItemId, {
+        itemPreviousTransactionId: previousTransactionId
+      })
+
+      await refreshRealtimeAfterWrite()
+      setShowTransactionDialog(false)
+      setTransactionTargetItemId(null)
+      setSelectedTransactionId('')
+      showSuccess && showSuccess('Transaction updated successfully')
+    } catch (error) {
+      console.error('Failed to update transaction:', error)
+      showError && showError('Failed to update transaction. Please try again.')
+    } finally {
+      setIsUpdatingTransaction(false)
+    }
+  }
+
+  const handleRemoveFromTransaction = async () => {
+    if (!currentAccountId || !transactionTargetItemId) return
+    const item = items.find(entry => entry.itemId === transactionTargetItemId)
+    if (!item?.transactionId) return
+
+    setIsUpdatingTransaction(true)
+    try {
+      await unifiedItemsService.unlinkItemFromTransaction(currentAccountId, item.transactionId, item.itemId, {
+        itemCurrentTransactionId: item.transactionId
+      })
+      await refreshRealtimeAfterWrite()
+      setShowTransactionDialog(false)
+      setTransactionTargetItemId(null)
+      setSelectedTransactionId('')
+      showSuccess && showSuccess('Removed from transaction')
+    } catch (error) {
+      console.error('Failed to remove item from transaction:', error)
+      showError && showError('Failed to remove item from transaction. Please try again.')
+    } finally {
+      setIsUpdatingTransaction(false)
     }
   }
 
@@ -1027,6 +1116,67 @@ export default function BusinessInventory() {
         }}
         onConfirm={handleDeleteItem}
       />
+      {showTransactionDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-medium text-gray-900">
+                Add To Transaction
+              </h3>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              <Combobox
+                label="Select Transaction"
+                value={selectedTransactionId}
+                onChange={setSelectedTransactionId}
+                disabled={loadingTransactions || isUpdatingTransaction}
+                loading={loadingTransactions}
+                placeholder={loadingTransactions ? "Loading transactions..." : "Select a transaction"}
+                options={
+                  loadingTransactions ? [] : [
+                    { id: '', label: 'Select a transaction' },
+                    ...transactionsForDialog.map((transaction) => ({
+                      id: transaction.transactionId,
+                      label: `${new Date(transaction.transactionDate).toLocaleDateString()} - ${getCanonicalTransactionTitle(transaction)} - $${transaction.amount}`
+                    }))
+                  ]
+                }
+              />
+              {transactionTargetItemId && items.find(item => item.itemId === transactionTargetItemId)?.transactionId && (
+                <button
+                  type="button"
+                  onClick={handleRemoveFromTransaction}
+                  className="text-sm text-gray-700 hover:text-gray-900"
+                  disabled={isUpdatingTransaction}
+                >
+                  Remove from transaction
+                </button>
+              )}
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  if (isUpdatingTransaction) return
+                  setShowTransactionDialog(false)
+                  setSelectedTransactionId('')
+                  setTransactionTargetItemId(null)
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                disabled={isUpdatingTransaction}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleChangeTransaction}
+                disabled={!selectedTransactionId || isUpdatingTransaction}
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isUpdatingTransaction ? 'Updating...' : 'Update'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {showProjectDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
@@ -1389,6 +1539,7 @@ export default function BusinessInventory() {
                             onBookmark={toggleBookmark}
                             onDuplicate={duplicateItem}
                             onEdit={handleNavigateToEdit}
+                            onAddToTransaction={openTransactionDialog}
                             onMoveToProject={openProjectDialog}
                             onChangeStatus={updateDisposition}
                             onDelete={(itemId) => {
@@ -1533,6 +1684,7 @@ export default function BusinessInventory() {
                                   onBookmark={toggleBookmark}
                                   onDuplicate={duplicateItem}
                                   onEdit={handleNavigateToEdit}
+                                  onAddToTransaction={openTransactionDialog}
                                   onMoveToProject={openProjectDialog}
                                   onChangeStatus={updateDisposition}
                                   onDelete={(itemId) => {

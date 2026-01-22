@@ -8,7 +8,10 @@ import {
   DeleteTransactionOperation,
   CreateProjectOperation,
   UpdateProjectOperation,
-  DeleteProjectOperation
+  DeleteProjectOperation,
+  DeallocateItemToBusinessInventoryOperation,
+  AllocateItemToProjectOperation,
+  SellItemToProjectOperation
 } from '../types/operations'
 import { offlineStore, type DBOperation, type DBItem, type DBTransaction, type DBProject } from './offlineStore'
 import { supabase, getCurrentUser } from './supabase'
@@ -542,7 +545,14 @@ class OperationQueue {
         let conflicts: ConflictItem[] = []
         
         // Detect conflicts based on operation type
-        if (operation.type.startsWith('CREATE_ITEM') || operation.type.startsWith('UPDATE_ITEM') || operation.type.startsWith('DELETE_ITEM')) {
+        if (
+          operation.type.startsWith('CREATE_ITEM') ||
+          operation.type.startsWith('UPDATE_ITEM') ||
+          operation.type.startsWith('DELETE_ITEM') ||
+          operation.type === 'DEALLOCATE_ITEM_TO_BUSINESS_INVENTORY' ||
+          operation.type === 'ALLOCATE_ITEM_TO_PROJECT' ||
+          operation.type === 'SELL_ITEM_TO_PROJECT'
+        ) {
           const projectId = await this.resolveProjectId(operation)
           if (projectId) {
             conflicts = await conflictDetector.detectConflicts(projectId)
@@ -599,6 +609,12 @@ class OperationQueue {
           return await this.executeUpdateProject(operation)
         case 'DELETE_PROJECT':
           return await this.executeDeleteProject(operation)
+        case 'DEALLOCATE_ITEM_TO_BUSINESS_INVENTORY':
+          return await this.executeDeallocateItemToBusinessInventory(operation)
+        case 'ALLOCATE_ITEM_TO_PROJECT':
+          return await this.executeAllocateItemToProject(operation)
+        case 'SELL_ITEM_TO_PROJECT':
+          return await this.executeSellItemToProject(operation)
         default:
           console.error('Unknown operation type:', operation.type)
           return false
@@ -616,6 +632,12 @@ class OperationQueue {
         return (operation as CreateItemOperation).data.projectId
       case 'CREATE_TRANSACTION':
         return (operation as CreateTransactionOperation).data.projectId ?? null
+      case 'DEALLOCATE_ITEM_TO_BUSINESS_INVENTORY':
+        return (operation as DeallocateItemToBusinessInventoryOperation).data.projectId
+      case 'ALLOCATE_ITEM_TO_PROJECT':
+        return (operation as AllocateItemToProjectOperation).data.projectId
+      case 'SELL_ITEM_TO_PROJECT':
+        return (operation as SellItemToProjectOperation).data.targetProjectId
       case 'UPDATE_TRANSACTION':
       case 'DELETE_TRANSACTION':
         // Try to get from local transaction
@@ -778,6 +800,12 @@ class OperationQueue {
       case 'UPDATE_ITEM':
       case 'DELETE_ITEM':
         return operation.data.id
+      case 'DEALLOCATE_ITEM_TO_BUSINESS_INVENTORY':
+        return (operation as DeallocateItemToBusinessInventoryOperation).data.itemId
+      case 'ALLOCATE_ITEM_TO_PROJECT':
+        return (operation as AllocateItemToProjectOperation).data.itemId
+      case 'SELL_ITEM_TO_PROJECT':
+        return (operation as SellItemToProjectOperation).data.itemId
       default:
         return null
     }
@@ -795,6 +823,12 @@ class OperationQueue {
       case 'UPDATE_PROJECT':
       case 'DELETE_PROJECT':
         return operation.data.id
+      case 'DEALLOCATE_ITEM_TO_BUSINESS_INVENTORY':
+        return (operation as DeallocateItemToBusinessInventoryOperation).data.itemId
+      case 'ALLOCATE_ITEM_TO_PROJECT':
+        return (operation as AllocateItemToProjectOperation).data.itemId
+      case 'SELL_ITEM_TO_PROJECT':
+        return (operation as SellItemToProjectOperation).data.itemId
       default:
         return null
     }
@@ -839,7 +873,14 @@ class OperationQueue {
     // 2. Conflict detection flags this as a conflict
     // 3. UPDATE operation is blocked by the conflict
     // 4. UPDATE can't execute to resolve the conflict → infinite loop
-    if (operation.type === 'UPDATE_ITEM' || operation.type === 'UPDATE_TRANSACTION' || operation.type === 'UPDATE_PROJECT') {
+    if (
+      operation.type === 'UPDATE_ITEM' ||
+      operation.type === 'UPDATE_TRANSACTION' ||
+      operation.type === 'UPDATE_PROJECT' ||
+      operation.type === 'DEALLOCATE_ITEM_TO_BUSINESS_INVENTORY' ||
+      operation.type === 'ALLOCATE_ITEM_TO_PROJECT' ||
+      operation.type === 'SELL_ITEM_TO_PROJECT'
+    ) {
       return false
     }
 
@@ -1613,6 +1654,181 @@ class OperationQueue {
     }
   }
 
+  private async executeDeallocateItemToBusinessInventory(
+    operation: DeallocateItemToBusinessInventoryOperation
+  ): Promise<boolean> {
+    const { accountId } = operation
+    const { itemId, projectId, disposition } = operation.data
+
+    try {
+      const { deallocationService } = await import('./inventoryService')
+      await deallocationService.handleInventoryDesignation(accountId, itemId, projectId, disposition)
+      await this.verifyCanonicalInvariants(operation)
+      return true
+    } catch (error) {
+      console.error('Failed to deallocate item to business inventory:', error)
+      return false
+    }
+  }
+
+  private async executeAllocateItemToProject(
+    operation: AllocateItemToProjectOperation
+  ): Promise<boolean> {
+    const { accountId } = operation
+    const { itemId, projectId, amount, notes, space } = operation.data
+
+    try {
+      const { unifiedItemsService } = await import('./inventoryService')
+      await unifiedItemsService.allocateItemToProject(
+        accountId,
+        itemId,
+        projectId,
+        amount,
+        notes,
+        space,
+        { queueIfOffline: false }
+      )
+      await this.verifyCanonicalInvariants(operation)
+      return true
+    } catch (error) {
+      console.error('Failed to allocate item to project:', error)
+      return false
+    }
+  }
+
+  private async executeSellItemToProject(
+    operation: SellItemToProjectOperation
+  ): Promise<boolean> {
+    const { accountId } = operation
+    const { itemId, sourceProjectId, targetProjectId, amount, notes, space } = operation.data
+
+    try {
+      const { unifiedItemsService } = await import('./inventoryService')
+      await unifiedItemsService.sellItemToProject(
+        accountId,
+        itemId,
+        sourceProjectId,
+        targetProjectId,
+        { amount, notes, space },
+        { queueIfOffline: false }
+      )
+      await this.verifyCanonicalInvariants(operation)
+      return true
+    } catch (error) {
+      console.error('Failed to sell item to project:', error)
+      return false
+    }
+  }
+
+  private async verifyCanonicalInvariants(operation: Operation): Promise<void> {
+    if (
+      operation.type !== 'DEALLOCATE_ITEM_TO_BUSINESS_INVENTORY' &&
+      operation.type !== 'ALLOCATE_ITEM_TO_PROJECT' &&
+      operation.type !== 'SELL_ITEM_TO_PROJECT'
+    ) {
+      return
+    }
+
+    const accountId = operation.accountId
+    const itemId = this.getOperationTargetItemId(operation)
+    if (!itemId) {
+      return
+    }
+
+    try {
+      const { unifiedItemsService, isCanonicalTransactionId } = await import('./inventoryService')
+      const { lineageService } = await import('./lineageService')
+      const item = await unifiedItemsService.getItemById(accountId, itemId)
+
+      if (!item) {
+        console.warn('Canonical invariant check failed: item not found after sync', {
+          operationId: operation.id,
+          operationType: operation.type,
+          itemId
+        })
+        return
+      }
+
+      let expectedProjectId: string | null | undefined
+      let expectedTransactionId: string | null | undefined
+      let allowNullTransaction = false
+
+      if (operation.type === 'DEALLOCATE_ITEM_TO_BUSINESS_INVENTORY') {
+        const { projectId } = operation.data
+        expectedProjectId = null
+        expectedTransactionId = `INV_SALE_${projectId}`
+        allowNullTransaction = true
+      } else if (operation.type === 'ALLOCATE_ITEM_TO_PROJECT') {
+        const { projectId } = operation.data
+        expectedProjectId = projectId
+        expectedTransactionId = `INV_PURCHASE_${projectId}`
+      } else if (operation.type === 'SELL_ITEM_TO_PROJECT') {
+        const { targetProjectId } = operation.data
+        expectedProjectId = targetProjectId
+        expectedTransactionId = `INV_PURCHASE_${targetProjectId}`
+      }
+
+      if (expectedProjectId !== undefined && item.projectId !== expectedProjectId) {
+        console.warn('Canonical invariant mismatch: projectId', {
+          operationId: operation.id,
+          operationType: operation.type,
+          itemId,
+          expectedProjectId,
+          actualProjectId: item.projectId ?? null
+        })
+      }
+
+      if (expectedTransactionId) {
+        const transactionId = item.transactionId ?? null
+        if (!transactionId && allowNullTransaction) {
+          console.info('Canonical invariant check: no transaction after deallocation (purchase reversion)', {
+            operationId: operation.id,
+            itemId
+          })
+          return
+        }
+
+        if (transactionId !== expectedTransactionId) {
+          console.warn('Canonical invariant mismatch: transactionId', {
+            operationId: operation.id,
+            operationType: operation.type,
+            itemId,
+            expectedTransactionId,
+            actualTransactionId: transactionId
+          })
+        }
+
+        if (transactionId && !isCanonicalTransactionId(transactionId)) {
+          console.warn('Canonical invariant mismatch: non-canonical transaction', {
+            operationId: operation.id,
+            operationType: operation.type,
+            itemId,
+            actualTransactionId: transactionId
+          })
+        }
+
+        if (transactionId && item.latestTransactionId !== transactionId) {
+          try {
+            await lineageService.updateItemLineagePointers(accountId, itemId, transactionId)
+          } catch (lineageError) {
+            console.warn('Failed to refresh lineage pointers after canonical sync', {
+              operationId: operation.id,
+              itemId,
+              lineageError
+            })
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('Canonical invariant check failed (non-fatal):', {
+        operationId: operation.id,
+        operationType: operation.type,
+        itemId,
+        error
+      })
+    }
+  }
+
   private async persistQueue(): Promise<void> {
     const activeAccountId = this.getActiveAccountId()
     if (!activeAccountId) {
@@ -1836,7 +2052,13 @@ class OperationQueue {
   private getWriteOperationTypes(entityType: 'item' | 'transaction' | 'project'): Operation['type'][] {
     switch (entityType) {
       case 'item':
-        return ['UPDATE_ITEM', 'DELETE_ITEM']
+        return [
+          'UPDATE_ITEM',
+          'DELETE_ITEM',
+          'DEALLOCATE_ITEM_TO_BUSINESS_INVENTORY',
+          'ALLOCATE_ITEM_TO_PROJECT',
+          'SELL_ITEM_TO_PROJECT'
+        ]
       case 'transaction':
         return ['UPDATE_TRANSACTION', 'DELETE_TRANSACTION']
       case 'project':

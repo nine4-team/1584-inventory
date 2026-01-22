@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Plus, Search, RotateCcw, Camera, Trash2, QrCode, Filter, ArrowUpDown, Receipt } from 'lucide-react'
 import ContextLink from '@/components/ContextLink'
-import { unifiedItemsService, integrationService, transactionService, projectService } from '@/services/inventoryService'
+import { unifiedItemsService, integrationService, transactionService, projectService, SellItemToProjectError } from '@/services/inventoryService'
 import { supabase } from '@/services/supabase'
 import { lineageService } from '@/services/lineageService'
 import { ImageUploadService } from '@/services/imageService'
@@ -13,6 +13,8 @@ import { useToast } from '@/components/ui/ToastContext'
 import { useBookmark } from '@/hooks/useBookmark'
 import { useDuplication } from '@/hooks/useDuplication'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
+import { useNetworkState } from '@/hooks/useNetworkState'
+import { getOfflineSaveMessage } from '@/utils/offlineUxFeedback'
 import { useAccount } from '@/contexts/AccountContext'
 import { projectItemNew } from '@/utils/routes'
 import { getInventoryListGroupKey } from '@/utils/itemGrouping'
@@ -70,6 +72,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
   const [error, setError] = useState<string | null>(null)
   const itemListContainerRef = useRef<HTMLDivElement>(null)
   const [itemListContainerWidth, setItemListContainerWidth] = useState<number | undefined>(undefined)
+  const { isOnline } = useNetworkState()
   
   // Show loading spinner only if account is loading - items come from props (parent handles that loading)
   const isLoading = accountLoading
@@ -81,6 +84,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
   const [transactionTargetItemId, setTransactionTargetItemId] = useState<string | null>(null)
   const [isUpdatingTransaction, setIsUpdatingTransaction] = useState(false)
   const [showProjectDialog, setShowProjectDialog] = useState(false)
+  const [projectDialogMode, setProjectDialogMode] = useState<'move' | 'sell'>('move')
   const [projects, setProjects] = useState<Project[]>([])
   const [loadingProjects, setLoadingProjects] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState('')
@@ -370,6 +374,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
         console.error('❌ Item not found for disposition update:', itemId)
         return
       }
+      const wasOffline = !isOnline
 
       console.log('📝 Updating disposition from', item.disposition, 'to', newDisposition)
 
@@ -389,6 +394,9 @@ export default function InventoryList({ projectId, projectName, items: propItems
             newDisposition
           )
           console.log('✅ Deallocation completed successfully')
+          if (wasOffline) {
+            showSuccess(getOfflineSaveMessage())
+          }
         } catch (deallocationError) {
           console.error('❌ Failed to handle deallocation:', deallocationError)
           // Revert the disposition change if deallocation fails
@@ -447,69 +455,9 @@ export default function InventoryList({ projectId, projectName, items: propItems
 
     setIsUpdatingTransaction(true)
     try {
-      await unifiedItemsService.updateItem(currentAccountId, transactionTargetItemId, {
-        transactionId: selectedTransactionId
+      await unifiedItemsService.assignItemToTransaction(currentAccountId, selectedTransactionId, transactionTargetItemId, {
+        itemPreviousTransactionId: previousTransactionId
       })
-
-      try {
-        await lineageService.updateItemLineagePointers(currentAccountId, transactionTargetItemId, selectedTransactionId)
-      } catch (lineageError) {
-        console.warn('Failed to update lineage pointers for item:', transactionTargetItemId, lineageError)
-      }
-
-      if (previousTransactionId) {
-        try {
-          const { data: oldTxData, error: fetchOldError } = await supabase
-            .from('transactions')
-            .select('item_ids')
-            .eq('account_id', currentAccountId)
-            .eq('transaction_id', previousTransactionId)
-            .single()
-
-          if (!fetchOldError && oldTxData) {
-            const currentItemIds: string[] = Array.isArray(oldTxData.item_ids) ? oldTxData.item_ids : []
-            const updatedItemIds = currentItemIds.filter(id => id !== transactionTargetItemId)
-
-            await supabase
-              .from('transactions')
-              .update({
-                item_ids: updatedItemIds,
-                updated_at: new Date().toISOString()
-              })
-              .eq('account_id', currentAccountId)
-              .eq('transaction_id', previousTransactionId)
-          }
-        } catch (oldTxError) {
-          console.warn('Failed to update old transaction item_ids:', oldTxError)
-        }
-      }
-
-      try {
-        const { data: newTxData, error: fetchNewError } = await supabase
-          .from('transactions')
-          .select('item_ids')
-          .eq('account_id', currentAccountId)
-          .eq('transaction_id', selectedTransactionId)
-          .single()
-
-        if (!fetchNewError && newTxData) {
-          const currentItemIds: string[] = Array.isArray(newTxData.item_ids) ? newTxData.item_ids : []
-          if (!currentItemIds.includes(transactionTargetItemId)) {
-            const updatedItemIds = [...currentItemIds, transactionTargetItemId]
-
-            await supabase
-              .from('transactions')
-              .update({
-                item_ids: updatedItemIds,
-                updated_at: new Date().toISOString()
-              })
-              .eq('account_id', currentAccountId)
-              .eq('transaction_id', selectedTransactionId)
-          }
-        }
-      } catch (newTxError) {
-        console.warn('Failed to update new transaction item_ids:', newTxError)
-      }
 
       await refreshRealtimeAfterWrite()
       setShowTransactionDialog(false)
@@ -543,9 +491,10 @@ export default function InventoryList({ projectId, projectName, items: propItems
     }
   }
 
-  const openProjectDialog = async (itemId: string) => {
+  const openProjectDialog = async (itemId: string, mode: 'move' | 'sell' = 'move') => {
     setProjectTargetItemId(itemId)
     setSelectedProjectId('')
+    setProjectDialogMode(mode)
     setShowProjectDialog(true)
     if (projects.length === 0 && currentAccountId) {
       setLoadingProjects(true)
@@ -584,13 +533,91 @@ export default function InventoryList({ projectId, projectName, items: propItems
     }
   }
 
-  const handleMoveToBusinessInventory = async (itemId: string) => {
+  const handleSellToProject = async () => {
+    if (!currentAccountId || !projectTargetItemId || !selectedProjectId) return
+    const item = items.find(entry => entry.itemId === projectTargetItemId)
+    if (!item?.projectId) return
+    if (selectedProjectId === item.projectId) {
+      setShowProjectDialog(false)
+      return
+    }
+
+    setIsUpdatingProject(true)
+    try {
+      const wasOffline = !isOnline
+      await integrationService.sellItemToProject(currentAccountId, item.itemId, item.projectId, selectedProjectId)
+      if (wasOffline) {
+        showSuccess(getOfflineSaveMessage())
+        return
+      }
+      await refreshRealtimeAfterWrite()
+      setItems(prev => prev.filter(entry => entry.itemId !== projectTargetItemId))
+      showSuccess('Sold to project.')
+    } catch (error) {
+      if (error instanceof SellItemToProjectError) {
+        switch (error.code) {
+          case 'ITEM_NOT_FOUND':
+            showError('Item not found. Refresh and try again.')
+            break
+          case 'SOURCE_PROJECT_MISMATCH':
+          case 'CONFLICT':
+            showError('This item changed since you opened it. Refresh and try again.')
+            break
+          case 'NON_CANONICAL_TRANSACTION':
+            showError('This item is tied to a transaction. Move the transaction instead.')
+            break
+          case 'TARGET_SAME_AS_SOURCE':
+            showError('Select a different project to sell to.')
+            break
+          case 'PARTIAL_COMPLETION':
+            showError('Item was moved to business inventory. Allocate it to the target project from there.')
+            await refreshRealtimeAfterWrite()
+            break
+          default:
+            showError('Failed to sell item to project. Please try again.')
+        }
+      } else {
+        console.error('Failed to sell item to project:', error)
+        showError('Failed to sell item to project. Please try again.')
+      }
+    } finally {
+      setIsUpdatingProject(false)
+      setShowProjectDialog(false)
+      setProjectTargetItemId(null)
+      setSelectedProjectId('')
+    }
+  }
+
+  const handleSellToBusinessInventory = async (itemId: string) => {
     if (!currentAccountId) return
     const item = items.find(entry => entry.itemId === itemId)
     if (!item?.projectId) return
     try {
+      const wasOffline = !isOnline
       await integrationService.handleItemDeallocation(currentAccountId, itemId, item.projectId, 'inventory')
+      if (wasOffline) {
+        showSuccess(getOfflineSaveMessage())
+        return
+      }
       await refreshRealtimeAfterWrite()
+    } catch (error) {
+      console.error('Failed to move item to business inventory:', error)
+      setError('Failed to move item to business inventory. Please try again.')
+    }
+  }
+
+  const handleMoveToBusinessInventory = async (itemId: string) => {
+    if (!currentAccountId) return
+    const item = items.find(entry => entry.itemId === itemId)
+    if (!item?.projectId) return
+    if (item.transactionId) {
+      showError('This item is tied to a transaction. Move the transaction instead.')
+      return
+    }
+    try {
+      await integrationService.moveItemToBusinessInventory(currentAccountId, itemId, item.projectId)
+      await refreshRealtimeAfterWrite()
+      showSuccess('Moved to business inventory.')
     } catch (error) {
       console.error('Failed to move item to business inventory:', error)
       setError('Failed to move item to business inventory. Please try again.')
@@ -688,54 +715,23 @@ export default function InventoryList({ projectId, projectName, items: propItems
     if (itemIds.length === 0) return
 
     try {
-      // Update each item's transactionId and update transaction's item_ids
-      const updatePromises = itemIds.map(async (itemId) => {
-        // Update the item's transactionId
-        await unifiedItemsService.updateItem(currentAccountId, itemId, {
-          transactionId: transactionId
-        })
-
-        // Update lineage pointers
-        try {
-          await lineageService.updateItemLineagePointers(currentAccountId, itemId, transactionId)
-        } catch (lineageError) {
-          console.warn('Failed to update lineage pointers for item:', itemId, lineageError)
-        }
+      // Group by previous transaction ID to handle removals correctly
+      const itemsByPrevTx = new Map<string | null, string[]>()
+      itemIds.forEach(id => {
+          const item = items.find(i => i.itemId === id)
+          const prevTx = item?.transactionId || null
+          if (!itemsByPrevTx.has(prevTx)) {
+              itemsByPrevTx.set(prevTx, [])
+          }
+          itemsByPrevTx.get(prevTx)!.push(id)
       })
 
-      await Promise.all(updatePromises)
-
-      // Update transaction's item_ids array using the service method
-      // We'll update the transaction's item_ids by fetching, adding, and updating
-      try {
-        const { data: transactionData, error: fetchError } = await supabase
-          .from('transactions')
-          .select('item_ids')
-          .eq('account_id', currentAccountId)
-          .eq('transaction_id', transactionId)
-          .single()
-
-        if (!fetchError && transactionData) {
-          const currentItemIds: string[] = Array.isArray(transactionData.item_ids) ? transactionData.item_ids : []
-          const updatedItemIds = [...new Set([...currentItemIds, ...itemIds])] // Avoid duplicates
-
-          const { error: updateError } = await supabase
-            .from('transactions')
-            .update({
-              item_ids: updatedItemIds,
-              updated_at: new Date().toISOString()
-            })
-            .eq('account_id', currentAccountId)
-            .eq('transaction_id', transactionId)
-
-          if (updateError) {
-            console.warn('Failed to update transaction item_ids:', updateError)
-          }
-        }
-      } catch (txError) {
-        console.warn('Failed to update transaction item_ids:', txError)
-        // Don't fail the whole operation if this fails
-      }
+      // Execute assignments in parallel groups
+      await Promise.all(Array.from(itemsByPrevTx.entries()).map(([prevTx, ids]) => 
+          unifiedItemsService.assignItemsToTransaction(currentAccountId, transactionId, ids, {
+              itemPreviousTransactionId: prevTx
+          })
+      ))
 
       showSuccess(`Assigned ${itemIds.length} item${itemIds.length !== 1 ? 's' : ''} to transaction`)
     } catch (error) {
@@ -1065,7 +1061,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
             <div className="px-6 py-4 border-b border-gray-200">
               <h3 className="text-lg font-medium text-gray-900">
-                Move To Project
+                {projectDialogMode === 'sell' ? 'Sell To Project' : 'Move To Project'}
               </h3>
             </div>
             <div className="px-6 py-4 space-y-4">
@@ -1094,11 +1090,17 @@ export default function InventoryList({ projectId, projectName, items: propItems
                 Cancel
               </button>
               <button
-                onClick={handleMoveToProject}
+                onClick={projectDialogMode === 'sell' ? handleSellToProject : handleMoveToProject}
                 disabled={!selectedProjectId || isUpdatingProject}
                 className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isUpdatingProject ? 'Moving...' : 'Move'}
+                {isUpdatingProject
+                  ? projectDialogMode === 'sell'
+                    ? 'Selling...'
+                    : 'Moving...'
+                  : projectDialogMode === 'sell'
+                    ? 'Sell'
+                    : 'Move'}
               </button>
             </div>
           </div>
@@ -1409,9 +1411,10 @@ export default function InventoryList({ projectId, projectName, items: propItems
                       onDuplicate={duplicateItem}
                       onEdit={handleNavigateToEdit}
                       onAddToTransaction={openTransactionDialog}
-                      onSellToBusiness={handleMoveToBusinessInventory}
+                      onSellToBusiness={handleSellToBusinessInventory}
+                      onSellToProject={(itemId) => openProjectDialog(itemId, 'sell')}
                       onMoveToBusiness={handleMoveToBusinessInventory}
-                      onMoveToProject={openProjectDialog}
+                      onMoveToProject={(itemId) => openProjectDialog(itemId, 'move')}
                       onChangeStatus={updateDisposition}
                       onDelete={(itemId) => {
                         setDeleteTargetItemId(itemId)
@@ -1552,9 +1555,10 @@ export default function InventoryList({ projectId, projectName, items: propItems
                             onDuplicate={duplicateItem}
                             onEdit={handleNavigateToEdit}
                             onAddToTransaction={openTransactionDialog}
-                            onSellToBusiness={handleMoveToBusinessInventory}
+                            onSellToBusiness={handleSellToBusinessInventory}
+                                  onSellToProject={(itemId) => openProjectDialog(itemId, 'sell')}
                             onMoveToBusiness={handleMoveToBusinessInventory}
-                            onMoveToProject={openProjectDialog}
+                                  onMoveToProject={(itemId) => openProjectDialog(itemId, 'move')}
                             onChangeStatus={updateDisposition}
                             onDelete={(itemId) => {
                               setDeleteTargetItemId(itemId)
@@ -1585,6 +1589,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
         selectedItemIds={selectedItems}
         projectId={projectId}
         onAssignToTransaction={handleBulkAssignToTransaction}
+        enableAssignToTransaction={isOnline}
         onSetLocation={handleBulkSetLocation}
         onSetDisposition={handleBulkSetDisposition}
         onSetSku={handleBulkSetSku}

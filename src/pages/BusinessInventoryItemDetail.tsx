@@ -4,8 +4,8 @@ import ContextBackLink from '@/components/ContextBackLink'
 import ContextLink from '@/components/ContextLink'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { ArrowLeft, Package, ImagePlus, FileText, RefreshCw, Bookmark } from 'lucide-react'
-import { Item, Project, ItemDisposition } from '@/types'
-import { unifiedItemsService, projectService } from '@/services/inventoryService'
+import { Item, Project, ItemDisposition, Transaction } from '@/types'
+import { unifiedItemsService, projectService, transactionService } from '@/services/inventoryService'
 import { formatDate } from '@/utils/dateUtils'
 import ImagePreview from '@/components/ui/ImagePreview'
 import UploadActivityIndicator from '@/components/ui/UploadActivityIndicator'
@@ -16,11 +16,14 @@ import { useBusinessInventoryRealtime } from '@/contexts/BusinessInventoryRealti
 import ItemLineageBreadcrumb from '@/components/ui/ItemLineageBreadcrumb'
 import { lineageService } from '@/services/lineageService'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
+import { useNetworkState } from '@/hooks/useNetworkState'
+import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
 import { projectItemDetail, projectItems, projectTransactionDetail } from '@/utils/routes'
 import ItemActionsMenu from '@/components/items/ItemActionsMenu'
 import BlockingConfirmDialog from '@/components/ui/BlockingConfirmDialog'
 import { Combobox } from '@/components/ui/Combobox'
 import { displayDispositionLabel } from '@/utils/dispositionUtils'
+import { supabase } from '@/services/supabase'
 
 export default function BusinessInventoryItemDetail() {
   const { id } = useParams<{ id: string }>()
@@ -28,6 +31,8 @@ export default function BusinessInventoryItemDetail() {
   const { currentAccountId } = useAccount()
   const { items: snapshotItems, isLoading: realtimeLoading, refreshCollections } = useBusinessInventoryRealtime()
   const { buildContextUrl } = useNavigationContext()
+  const { isOnline } = useNetworkState()
+  const { showOfflineSaved } = useOfflineFeedback()
   const snapshotItem = useMemo(() => {
     if (!id) return null
     return snapshotItems.find(item => item.itemId === id) ?? null
@@ -41,6 +46,13 @@ export default function BusinessInventoryItemDetail() {
     projectId: '',
     space: ''
   })
+  const [showTransactionDialog, setShowTransactionDialog] = useState(false)
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [loadingTransactions, setLoadingTransactions] = useState(false)
+  const [selectedTransactionId, setSelectedTransactionId] = useState('')
+  const [isUpdatingTransaction, setIsUpdatingTransaction] = useState(false)
+  const [showRemoveFromTransactionConfirm, setShowRemoveFromTransactionConfirm] = useState(false)
+  const [isRemovingFromTransaction, setIsRemovingFromTransaction] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isDeletingItem, setIsDeletingItem] = useState(false)
 
@@ -108,6 +120,35 @@ export default function BusinessInventoryItemDetail() {
     } catch (error) {
       console.error('Error loading projects:', error)
     }
+  }
+
+  const loadTransactions = async () => {
+    if (!currentAccountId) return
+    setLoadingTransactions(true)
+    try {
+      const txs = await transactionService.getBusinessInventoryTransactions(currentAccountId)
+      setTransactions(txs)
+    } catch (error) {
+      console.error('Failed to load transactions:', error)
+      alert('Failed to load transactions. Please try again.')
+    } finally {
+      setLoadingTransactions(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!showTransactionDialog || !currentAccountId) return
+    loadTransactions()
+  }, [showTransactionDialog, currentAccountId])
+
+  const getCanonicalTransactionTitle = (transaction: Transaction): string => {
+    if (transaction.transactionId?.startsWith('INV_SALE_')) {
+      return 'Company Inventory Sale'
+    }
+    if (transaction.transactionId?.startsWith('INV_PURCHASE_')) {
+      return 'Company Inventory Purchase'
+    }
+    return transaction.source
   }
 
   const projectOptions = useMemo(
@@ -183,6 +224,128 @@ export default function BusinessInventoryItemDetail() {
     }
   }
 
+  const openTransactionDialog = () => {
+    setSelectedTransactionId(item?.transactionId ?? '')
+    setShowTransactionDialog(true)
+  }
+
+  const handleChangeTransaction = async () => {
+    if (!item || !currentAccountId || !selectedTransactionId) return
+
+    setIsUpdatingTransaction(true)
+    const previousTransactionId = item.transactionId
+    let didUpdateItem = false
+
+    try {
+      await unifiedItemsService.updateItem(currentAccountId, item.itemId, {
+        transactionId: selectedTransactionId
+      })
+      didUpdateItem = true
+
+      try {
+        await lineageService.updateItemLineagePointers(currentAccountId, item.itemId, selectedTransactionId)
+      } catch (lineageError) {
+        console.warn('Failed to update lineage pointers for item:', item.itemId, lineageError)
+      }
+
+      if (previousTransactionId) {
+        const { data: oldTxData, error: fetchOldError } = await supabase
+          .from('transactions')
+          .select('item_ids')
+          .eq('account_id', currentAccountId)
+          .eq('transaction_id', previousTransactionId)
+          .single()
+
+        if (fetchOldError) {
+          throw fetchOldError
+        }
+
+        if (oldTxData) {
+          const currentItemIds: string[] = Array.isArray(oldTxData.item_ids) ? oldTxData.item_ids : []
+          const updatedItemIds = currentItemIds.filter(id => id !== item.itemId)
+
+          const { error: updateOldError } = await supabase
+            .from('transactions')
+            .update({
+              item_ids: updatedItemIds,
+              updated_at: new Date().toISOString()
+            })
+            .eq('account_id', currentAccountId)
+            .eq('transaction_id', previousTransactionId)
+
+          if (updateOldError) {
+            throw updateOldError
+          }
+        }
+      }
+
+      const { data: newTxData, error: fetchNewError } = await supabase
+        .from('transactions')
+        .select('item_ids')
+        .eq('account_id', currentAccountId)
+        .eq('transaction_id', selectedTransactionId)
+        .single()
+
+      if (fetchNewError) {
+        throw fetchNewError
+      }
+
+      if (newTxData) {
+        const currentItemIds: string[] = Array.isArray(newTxData.item_ids) ? newTxData.item_ids : []
+        if (!currentItemIds.includes(item.itemId)) {
+          const updatedItemIds = [...currentItemIds, item.itemId]
+
+          const { error: updateNewError } = await supabase
+            .from('transactions')
+            .update({
+              item_ids: updatedItemIds,
+              updated_at: new Date().toISOString()
+            })
+            .eq('account_id', currentAccountId)
+            .eq('transaction_id', selectedTransactionId)
+
+          if (updateNewError) {
+            throw updateNewError
+          }
+        }
+      }
+
+      await refreshRealtimeAfterWrite()
+      await handleRefreshItem()
+      setShowTransactionDialog(false)
+      setSelectedTransactionId('')
+    } catch (error) {
+      console.error('Failed to update transaction:', error)
+      const message = didUpdateItem
+        ? 'Item updated, but transaction links could not be updated. Refresh and verify the transaction.'
+        : 'Failed to update transaction. Please try again.'
+      alert(message)
+    } finally {
+      setIsUpdatingTransaction(false)
+    }
+  }
+
+  const handleRemoveFromTransaction = async () => {
+    if (!item || !currentAccountId) return
+    if (!item.transactionId) return
+
+    setIsRemovingFromTransaction(true)
+    try {
+      await unifiedItemsService.unlinkItemFromTransaction(currentAccountId, item.transactionId, item.itemId, {
+        itemCurrentTransactionId: item.transactionId
+      })
+      await refreshRealtimeAfterWrite()
+      await handleRefreshItem()
+      setShowRemoveFromTransactionConfirm(false)
+    } catch (error) {
+      console.error('Failed to remove item from transaction:', error)
+      alert('Failed to remove item from transaction. Please try again.')
+    } finally {
+      setIsRemovingFromTransaction(false)
+      setShowRemoveFromTransactionConfirm(false)
+    }
+  }
+
 
   const handleDeleteItem = () => {
     setShowDeleteConfirm(true)
@@ -223,6 +386,7 @@ export default function BusinessInventoryItemDetail() {
 
     setIsUpdating(true)
     try {
+      const wasOffline = !isOnline
       await unifiedItemsService.allocateItemToProject(
         currentAccountId,
         id!,
@@ -231,6 +395,11 @@ export default function BusinessInventoryItemDetail() {
         undefined,
         allocationForm.space
       )
+      if (wasOffline) {
+        showOfflineSaved(null)
+        closeAllocationModal()
+        return
+      }
       await refreshRealtimeAfterWrite()
       closeAllocationModal()
 
@@ -443,6 +612,7 @@ export default function BusinessInventoryItemDetail() {
                 navigate(buildContextUrl(`/business-inventory/${id}/edit`))
               }}
               onDuplicate={(quantity) => duplicateItem(item.itemId, quantity)}
+              onAddToTransaction={openTransactionDialog}
               onMoveToProject={openAllocationModal}
               onChangeStatus={updateDisposition}
               onDelete={handleDeleteItem}
@@ -647,6 +817,93 @@ export default function BusinessInventoryItemDetail() {
         </div>
       </div>
 
+
+      {/* Transaction Change Dialog */}
+      {showTransactionDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-medium text-gray-900">
+                {item?.transactionId ? 'Change Transaction' : 'Assign To Transaction'}
+              </h3>
+            </div>
+            <div className="px-6 py-4">
+              <Combobox
+                label="Select Transaction"
+                value={selectedTransactionId}
+                onChange={setSelectedTransactionId}
+                disabled={loadingTransactions || isUpdatingTransaction}
+                loading={loadingTransactions}
+                placeholder={loadingTransactions ? "Loading transactions..." : "Select a transaction"}
+                options={
+                  loadingTransactions ? [] : [
+                    { id: '', label: 'Select a transaction' },
+                    ...transactions.map((transaction) => ({
+                      id: transaction.transactionId,
+                      label: `${new Date(transaction.transactionDate).toLocaleDateString()} - ${getCanonicalTransactionTitle(transaction)} - $${transaction.amount}`
+                    }))
+                  ]
+                }
+              />
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex flex-wrap justify-between gap-3">
+              {item?.transactionId ? (
+                <button
+                  onClick={() => {
+                    setShowTransactionDialog(false)
+                    setShowRemoveFromTransactionConfirm(true)
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 disabled:opacity-50"
+                  disabled={isUpdatingTransaction}
+                >
+                  Remove
+                </button>
+              ) : (
+                <span />
+              )}
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => {
+                    setShowTransactionDialog(false)
+                    setSelectedTransactionId('')
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                  disabled={isUpdatingTransaction}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleChangeTransaction}
+                  disabled={!selectedTransactionId || isUpdatingTransaction}
+                  className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isUpdatingTransaction ? 'Updating...' : 'Update'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <BlockingConfirmDialog
+        open={showRemoveFromTransactionConfirm}
+        title="Remove item from transaction?"
+        description={
+          <div className="text-sm text-gray-700 space-y-2">
+            <p>This will remove the item from this transaction.</p>
+            <p className="text-gray-600">The item will not be deleted.</p>
+          </div>
+        }
+        confirmLabel="Remove"
+        cancelLabel="Cancel"
+        confirmVariant="danger"
+        isConfirming={isRemovingFromTransaction}
+        onCancel={() => {
+          if (isRemovingFromTransaction) return
+          setShowRemoveFromTransactionConfirm(false)
+        }}
+        onConfirm={handleRemoveFromTransaction}
+      />
 
       <BlockingConfirmDialog
         open={showDeleteConfirm}

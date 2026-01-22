@@ -78,6 +78,7 @@ export default function TransactionItemsList({
   >('all')
   const [showFilterMenu, setShowFilterMenu] = useState(false)
   const [sortMode, setSortMode] = useState<'alphabetical' | 'price'>('alphabetical')
+  const [transactionDialogError, setTransactionDialogError] = useState<string | null>(null)
   const [showSortMenu, setShowSortMenu] = useState(false)
   const [shouldStick, setShouldStick] = useState(true)
   const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null)
@@ -768,7 +769,7 @@ export default function TransactionItemsList({
         onEdit={(href) => handleEditItem(item.id)}
         onClick={isPersisted ? () => setViewingItemId(item.id) : undefined}
         onChangeStatus={enablePersistedControls ? updateDisposition : undefined}
-        onAddToTransaction={() => openTransactionDialog(item.id)}
+        onAddToTransaction={enablePersistedControls ? () => openTransactionDialog(item.id) : undefined}
         uploadingImages={new Set()}
         context="transaction"
         projectId={projectId}
@@ -942,6 +943,7 @@ export default function TransactionItemsList({
     setTransactionTargetItemId(itemId)
     const targetItem = items.find(i => i.id === itemId)
     setSelectedTransactionId(targetItem?.transactionId ?? '')
+    setTransactionDialogError(null)
     setShowTransactionDialog(true)
   }
 
@@ -981,71 +983,12 @@ export default function TransactionItemsList({
     }
 
     const previousTransactionId = item.transactionId
+    setTransactionDialogError(null)
     setIsUpdatingTransaction(true)
     try {
-      await unifiedItemsService.updateItem(currentAccountId, transactionTargetItemId, {
-        transactionId: selectedTransactionId
+      await unifiedItemsService.assignItemToTransaction(currentAccountId, selectedTransactionId, transactionTargetItemId, {
+        itemPreviousTransactionId: previousTransactionId
       })
-
-      try {
-        await lineageService.updateItemLineagePointers(currentAccountId, transactionTargetItemId, selectedTransactionId)
-      } catch (lineageError) {
-        console.warn('Failed to update lineage pointers for item:', transactionTargetItemId, lineageError)
-      }
-
-      if (previousTransactionId) {
-        try {
-          const { data: oldTxData, error: fetchOldError } = await supabase
-            .from('transactions')
-            .select('item_ids')
-            .eq('account_id', currentAccountId)
-            .eq('transaction_id', previousTransactionId)
-            .single()
-
-          if (!fetchOldError && oldTxData) {
-            const currentItemIds: string[] = Array.isArray(oldTxData.item_ids) ? oldTxData.item_ids : []
-            const updatedItemIds = currentItemIds.filter(id => id !== transactionTargetItemId)
-
-            await supabase
-              .from('transactions')
-              .update({
-                item_ids: updatedItemIds,
-                updated_at: new Date().toISOString()
-              })
-              .eq('account_id', currentAccountId)
-              .eq('transaction_id', previousTransactionId)
-          }
-        } catch (oldTxError) {
-          console.warn('Failed to update old transaction item_ids:', oldTxError)
-        }
-      }
-
-      try {
-        const { data: newTxData, error: fetchNewError } = await supabase
-          .from('transactions')
-          .select('item_ids')
-          .eq('account_id', currentAccountId)
-          .eq('transaction_id', selectedTransactionId)
-          .single()
-
-        if (!fetchNewError && newTxData) {
-          const currentItemIds: string[] = Array.isArray(newTxData.item_ids) ? newTxData.item_ids : []
-          if (!currentItemIds.includes(transactionTargetItemId)) {
-            const updatedItemIds = [...currentItemIds, transactionTargetItemId]
-
-            await supabase
-              .from('transactions')
-              .update({
-                item_ids: updatedItemIds,
-                updated_at: new Date().toISOString()
-              })
-              .eq('account_id', currentAccountId)
-              .eq('transaction_id', selectedTransactionId)
-          }
-        }
-      } catch (newTxError) {
-        console.warn('Failed to update new transaction item_ids:', newTxError)
-      }
 
       const updatedItems = items.map(existing =>
         existing.id === transactionTargetItemId ? { ...existing, transactionId: selectedTransactionId } : existing
@@ -1059,6 +1002,7 @@ export default function TransactionItemsList({
       setShowTransactionDialog(false)
     } catch (error) {
       console.error('TransactionItemsList: failed to update transaction', error)
+      setTransactionDialogError('Failed to update transaction. Please try again.')
     } finally {
       setIsUpdatingTransaction(false)
     }
@@ -1137,6 +1081,9 @@ export default function TransactionItemsList({
                   ]
                 }
               />
+              {transactionDialogError && (
+                <p className="text-sm text-red-600">{transactionDialogError}</p>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -1156,6 +1103,7 @@ export default function TransactionItemsList({
                   setShowTransactionDialog(false)
                   setSelectedTransactionId('')
                   setTransactionTargetItemId(null)
+                  setTransactionDialogError(null)
                 }}
                 className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
                 disabled={isUpdatingTransaction}
