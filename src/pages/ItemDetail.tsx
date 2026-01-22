@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { ArrowLeft, Bookmark, QrCode, Trash2, FileText, ImagePlus, X, RefreshCw, Link2Off } from 'lucide-react'
+import { ArrowLeft, Bookmark, QrCode, FileText, ImagePlus, X, RefreshCw } from 'lucide-react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import ContextBackLink from '@/components/ContextBackLink'
@@ -28,6 +28,7 @@ import { getGlobalQueryClient } from '@/utils/queryClient'
 import { hydrateItemCache, hydrateProjectCache } from '@/utils/hydrationHelpers'
 import BlockingConfirmDialog from '@/components/ui/BlockingConfirmDialog'
 import ItemActionsMenu from '@/components/items/ItemActionsMenu'
+import { displayDispositionLabel } from '@/utils/dispositionUtils'
 
 type ItemDetailProps = { itemId?: string; projectId?: string; onClose?: () => void }
 
@@ -57,7 +58,6 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
   const [selectedProjectId, setSelectedProjectId] = useState('')
   const [isUpdatingProject, setIsUpdatingProject] = useState(false)
   const [showProjectDialog, setShowProjectDialog] = useState(false)
-  const [isMovingToBusiness, setIsMovingToBusiness] = useState(false)
   const [showRemoveFromTransactionConfirm, setShowRemoveFromTransactionConfirm] = useState(false)
   const [isRemovingFromTransaction, setIsRemovingFromTransaction] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -230,7 +230,7 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
   }, [item, projectId])
 
   useEffect(() => {
-    if (!currentAccountId || isBusinessInventoryItem) return
+    if (!currentAccountId) return
     let isMounted = true
 
     const fetchProjects = async () => {
@@ -254,7 +254,7 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
     return () => {
       isMounted = false
     }
-  }, [currentAccountId, isBusinessInventoryItem])
+  }, [currentAccountId])
 
   // Set up real-time listener for item updates
   const subscriptionProjectId = useMemo(() => {
@@ -327,7 +327,7 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
 
   // Load transactions when dialog opens
   useEffect(() => {
-    if (showTransactionDialog && currentAccountId && (projectId || item?.projectId)) {
+    if (showTransactionDialog && currentAccountId) {
       loadTransactions()
     }
   }, [showTransactionDialog, currentAccountId, projectId, item?.projectId])
@@ -345,11 +345,13 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
   }, [])
 
   const loadTransactions = async () => {
+    if (!currentAccountId) return
     const effectiveProjectId = projectId || item?.projectId
-    if (!currentAccountId || !effectiveProjectId) return
     setLoadingTransactions(true)
     try {
-      const txs = await transactionService.getTransactions(currentAccountId, effectiveProjectId)
+      const txs = effectiveProjectId
+        ? await transactionService.getTransactions(currentAccountId, effectiveProjectId)
+        : await transactionService.getBusinessInventoryTransactions(currentAccountId)
       setTransactions(txs)
     } catch (error) {
       console.error('Failed to load transactions:', error)
@@ -374,7 +376,6 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
 
     setIsUpdatingTransaction(true)
     const previousTransactionId = item.transactionId
-    const effectiveProjectId = projectId || item.projectId
 
     try {
       // Update the item's transactionId
@@ -490,7 +491,7 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
       showError('Failed to associate project. Please try again.')
     } finally {
       setIsUpdatingProject(false)
-      setShowProjectMenu(false)
+      setShowProjectDialog(false)
     }
   }, [item, currentAccountId, showError, showSuccess, navigate, buildContextUrl, projects])
 
@@ -502,8 +503,8 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
   const handleMoveToBusinessInventory = async () => {
     if (!item || !currentAccountId) return
     if (!item.projectId) return
-    setIsMovingToBusiness(true)
     try {
+      // This deallocation path creates/updates the canonical inventory sale transaction.
       await integrationService.handleItemDeallocation(currentAccountId, item.itemId, item.projectId, 'inventory')
       await refreshRealtimeAfterWrite()
       await handleRefreshItem()
@@ -512,7 +513,6 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
       console.error('Failed to move item to business inventory:', error)
       showError('Failed to move item to business inventory. Please try again.')
     } finally {
-      setIsMovingToBusiness(false)
     }
   }
 
@@ -521,11 +521,8 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
     setShowTransactionDialog(true)
   }
 
-  const handleDuplicateItem = () => {
+  const handleDuplicateItem = (quantity: number) => {
     if (!item) return
-    const input = window.prompt('How many copies?', '1')
-    if (input === null) return
-    const quantity = Math.max(0, Math.floor(Number.parseInt(input, 10) || 0))
     if (quantity <= 0) return
     duplicateItem(item.itemId, quantity)
   }
@@ -891,9 +888,6 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
     })),
     [projects, item?.projectId]
   )
-  const selectedProjectValue = selectedProjectId && projectOptions.some(option => option.id === selectedProjectId)
-    ? selectedProjectId
-    : ''
   const associateDisabledReason = item?.transactionId
     ? (isCanonicalTransactionId(item.transactionId)
       ? 'This item is tied to a Company Inventory transaction. Use inventory allocation/deallocation instead.'
@@ -1131,41 +1125,9 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
                           ? 'INV_PURCHASE...'
                           : (item.transactionId.length > 12 ? `${item.transactionId.slice(0, 12)}...` : item.transactionId)}
                       </ContextLink>
-                      {(projectId || item.projectId) && !isBusinessInventoryItem && (
-                        <button
-                          onClick={() => {
-                            setSelectedTransactionId(item.transactionId || '')
-                            setShowTransactionDialog(true)
-                          }}
-                          className="text-xs px-2 py-1 text-primary-600 hover:text-primary-800 hover:bg-primary-50 rounded border border-primary-300 hover:border-primary-400 transition-colors"
-                          title="Change transaction"
-                        >
-                          Change
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => setShowRemoveFromTransactionConfirm(true)}
-                        className="text-xs px-2 py-1 text-gray-700 hover:text-gray-900 hover:bg-gray-50 rounded border border-gray-300 hover:border-gray-400 transition-colors inline-flex items-center gap-1"
-                        title="Remove from transaction"
-                      >
-                        <Link2Off className="h-3 w-3" />
-                        Remove
-                      </button>
                     </>
                   ) : (
-                    (projectId || item.projectId) && !isBusinessInventoryItem && (
-                      <button
-                        onClick={() => {
-                          setSelectedTransactionId('')
-                          setShowTransactionDialog(true)
-                        }}
-                        className="text-xs px-2 py-1 text-primary-600 hover:text-primary-800 hover:bg-primary-50 rounded border border-primary-300 hover:border-primary-400 transition-colors"
-                        title="Assign to transaction"
-                      >
-                        Assign
-                      </button>
-                    )
+                    <span className="text-gray-500">Not assigned</span>
                   )}
                 </dd>
               </div>
@@ -1177,16 +1139,6 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
             )}
             </dl>
 
-            {/* Delete button in lower right corner */}
-            <div className="absolute bottom-0 right-0">
-              <button
-                onClick={handleDeleteItem}
-                className="inline-flex items-center justify-center p-2 border border-red-300 text-sm font-medium rounded-md text-red-700 bg-red-50 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-                title="Delete Item"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </div>
           </div>
         </div>
       </div>
@@ -1219,24 +1171,40 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
                 }
               />
             </div>
-            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
-              <button
-                onClick={() => {
-                  setShowTransactionDialog(false)
-                  setSelectedTransactionId('')
-                }}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-                disabled={isUpdatingTransaction}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleChangeTransaction}
-                disabled={!selectedTransactionId || isUpdatingTransaction}
-                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isUpdatingTransaction ? 'Updating...' : 'Update'}
-              </button>
+            <div className="px-6 py-4 border-t border-gray-200 flex flex-wrap justify-between gap-3">
+              {item?.transactionId ? (
+                <button
+                  onClick={() => {
+                    setShowTransactionDialog(false)
+                    setShowRemoveFromTransactionConfirm(true)
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 disabled:opacity-50"
+                  disabled={isUpdatingTransaction}
+                >
+                  Remove
+                </button>
+              ) : (
+                <span />
+              )}
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => {
+                    setShowTransactionDialog(false)
+                    setSelectedTransactionId('')
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                  disabled={isUpdatingTransaction}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleChangeTransaction}
+                  disabled={!selectedTransactionId || isUpdatingTransaction}
+                  className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isUpdatingTransaction ? 'Updating...' : 'Update'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1333,61 +1301,66 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
         <div className="bg-white border border-gray-200 rounded-lg p-6">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-lg font-medium text-gray-900">Item</h3>
-            <div className="flex items-center gap-2">
-                  <button
-                    onClick={toggleBookmark}
-                    className={`inline-flex items-center justify-center p-2 border text-sm font-medium rounded-md ${
-                      item.bookmark
-                        ? 'border-red-300 text-red-700 bg-red-50 hover:bg-red-100'
-                        : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
-                    } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500`}
-                    title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
-                  >
-                    <Bookmark className="h-4 w-4" fill={item.bookmark ? 'currentColor' : 'none'} />
-                  </button>
+            <div className="flex items-center space-x-2">
+              {item.disposition ? (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
+                  {displayDispositionLabel(item.disposition)}
+                </span>
+              ) : null}
+              <button
+                onClick={toggleBookmark}
+                className={`inline-flex items-center justify-center p-2 text-sm font-medium transition-colors ${
+                  item.bookmark
+                    ? 'text-red-700 bg-transparent'
+                    : 'text-primary-600 bg-transparent'
+                } focus:outline-none`}
+                title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
+              >
+                <Bookmark className="h-5 w-5" fill={item.bookmark ? 'currentColor' : 'none'} />
+              </button>
 
-                  <ItemActionsMenu
-                    itemId={item.itemId}
-                    itemProjectId={item.projectId ?? null}
-                    itemTransactionId={item.transactionId ?? null}
-                    disposition={item.disposition}
-                    isPersisted={true}
-                    currentProjectId={projectId || item.projectId || null}
-                    onEdit={() => {
-                      navigate(editUrl)
-                    }}
-                    onDuplicate={handleDuplicateItem}
-                    onAddToTransaction={isBusinessInventoryItem ? undefined : openTransactionDialog}
-                    onSellToBusiness={handleMoveToBusinessInventory}
-                    onMoveToBusiness={handleMoveToBusinessInventory}
-                    onMoveToProject={openProjectDialog}
-                    onChangeStatus={updateDisposition}
-                    onDelete={handleDeleteItem}
-                  />
+              <ItemActionsMenu
+                itemId={item.itemId}
+                itemProjectId={item.projectId ?? null}
+                itemTransactionId={item.transactionId ?? null}
+                disposition={item.disposition}
+                isPersisted={true}
+                currentProjectId={projectId || item.projectId || null}
+                triggerSize="md"
+                onEdit={() => {
+                  navigate(editUrl)
+                }}
+                onDuplicate={handleDuplicateItem}
+                onAddToTransaction={openTransactionDialog}
+                onSellToBusiness={handleMoveToBusinessInventory}
+                onMoveToBusiness={handleMoveToBusinessInventory}
+                onMoveToProject={openProjectDialog}
+                onChangeStatus={updateDisposition}
+                onDelete={handleDeleteItem}
+              />
 
-                  {ENABLE_QR && (
-                    <button
-                      className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                      onClick={() => window.open(`/qr-image/${item.qrKey}`, '_blank')}
-                      title="View QR Code"
-                    >
-                      <QrCode className="h-4 w-4" />
-                    </button>
-                  )}
+              {ENABLE_QR && (
+                <button
+                  className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                  onClick={() => window.open(`/qr-image/${item.qrKey}`, '_blank')}
+                  title="View QR Code"
+                >
+                  <QrCode className="h-4 w-4" />
+                </button>
+              )}
 
-
-                  <button
-                    onClick={(e) => {
-                      e.preventDefault()
-                      ;(props.onClose as any)?.()
-                    }}
-                    className="text-gray-400 hover:text-gray-600"
-                    type="button"
-                    aria-label="Close item view"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
-              </div>
+              <button
+                onClick={(e) => {
+                  e.preventDefault()
+                  ;(props.onClose as any)?.()
+                }}
+                className="text-gray-400 hover:text-gray-600"
+                type="button"
+                aria-label="Close item view"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
             </div>
           {content}
         </div>
@@ -1431,49 +1404,53 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
                 </button>
               </div>
 
-              <div className="flex flex-wrap gap-2 sm:space-x-2">
+              <div className="flex flex-wrap items-center space-x-2">
+                {item.disposition ? (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
+                    {displayDispositionLabel(item.disposition)}
+                  </span>
+                ) : null}
+                <button
+                  onClick={toggleBookmark}
+                  className={`inline-flex items-center justify-center p-2 text-sm font-medium transition-colors ${
+                    item.bookmark
+                      ? 'text-red-700 bg-transparent'
+                      : 'text-primary-600 bg-transparent'
+                  } focus:outline-none`}
+                  title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
+                >
+                  <Bookmark className="h-5 w-5" fill={item.bookmark ? 'currentColor' : 'none'} />
+                </button>
+
+                <ItemActionsMenu
+                  itemId={item.itemId}
+                  itemProjectId={item.projectId ?? null}
+                  itemTransactionId={item.transactionId ?? null}
+                  disposition={item.disposition}
+                  isPersisted={true}
+                  currentProjectId={projectId || item.projectId || null}
+                  triggerSize="md"
+                  onEdit={() => {
+                    navigate(editUrl)
+                  }}
+                  onDuplicate={handleDuplicateItem}
+                  onAddToTransaction={openTransactionDialog}
+                  onSellToBusiness={handleMoveToBusinessInventory}
+                  onMoveToBusiness={handleMoveToBusinessInventory}
+                  onMoveToProject={openProjectDialog}
+                  onChangeStatus={updateDisposition}
+                  onDelete={handleDeleteItem}
+                />
+
+                {ENABLE_QR && (
                   <button
-                    onClick={toggleBookmark}
-                    className={`inline-flex items-center justify-center p-2 border text-sm font-medium rounded-md ${
-                      item.bookmark
-                        ? 'border-red-300 text-red-700 bg-red-50 hover:bg-red-100'
-                        : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
-                    } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500`}
-                    title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
+                    className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                    onClick={() => window.open(`/qr-image/${item.qrKey}`, '_blank')}
+                    title="View QR Code"
                   >
-                    <Bookmark className="h-4 w-4" fill={item.bookmark ? 'currentColor' : 'none'} />
+                    <QrCode className="h-4 w-4" />
                   </button>
-
-                  <ItemActionsMenu
-                    itemId={item.itemId}
-                    itemProjectId={item.projectId ?? null}
-                    itemTransactionId={item.transactionId ?? null}
-                    disposition={item.disposition}
-                    isPersisted={true}
-                    currentProjectId={projectId || item.projectId || null}
-                    onEdit={() => {
-                      navigate(editUrl)
-                    }}
-                    onDuplicate={handleDuplicateItem}
-                    onAddToTransaction={isBusinessInventoryItem ? undefined : openTransactionDialog}
-                    onSellToBusiness={handleMoveToBusinessInventory}
-                    onMoveToBusiness={handleMoveToBusinessInventory}
-                    onMoveToProject={openProjectDialog}
-                    onChangeStatus={updateDisposition}
-                    onDelete={handleDeleteItem}
-                  />
-
-                  {ENABLE_QR && (
-                    <button
-                      className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                      onClick={() => window.open(`/qr-image/${item.qrKey}`, '_blank')}
-                      title="View QR Code"
-                    >
-                      <QrCode className="h-4 w-4" />
-                    </button>
-                  )}
-
-
+                )}
               </div>
             </div>
           </div>

@@ -6807,7 +6807,8 @@ export const integrationService = {
     return await unifiedItemsService.completePendingTransaction(accountId, 'sale', projectId, paymentMethod)
   },
 
-  // Handle item deallocation (new method)
+  // Handle item deallocation (new method).
+  // This path is used for "sell to design business" and creates/updates the canonical INV_SALE transaction.
   async handleItemDeallocation(
     accountId: string,
     itemId: string,
