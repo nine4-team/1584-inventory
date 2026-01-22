@@ -1,18 +1,16 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { ArrowLeft, Bookmark, QrCode, Trash2, Edit, FileText, ImagePlus, ChevronDown, Copy, X, RefreshCw, Link2Off } from 'lucide-react'
+import { ArrowLeft, Bookmark, QrCode, FileText, ImagePlus, X, RefreshCw } from 'lucide-react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import ContextBackLink from '@/components/ContextBackLink'
 import { Item, ItemImage, ItemDisposition, Transaction, Project } from '@/types'
-import { normalizeDisposition, dispositionsEqual, displayDispositionLabel, DISPOSITION_OPTIONS } from '@/utils/dispositionUtils'
 import { formatDate, formatCurrency } from '@/utils/dateUtils'
-import { unifiedItemsService, projectService, integrationService, transactionService, isCanonicalTransactionId } from '@/services/inventoryService'
+import { unifiedItemsService, projectService, integrationService, transactionService, isCanonicalTransactionId, SellItemToProjectError } from '@/services/inventoryService'
 import { ImageUploadService } from '@/services/imageService'
 import { OfflineAwareImageService } from '@/services/offlineAwareImageService'
 import { offlineMediaService } from '@/services/offlineMediaService'
 import ImagePreview from '@/components/ui/ImagePreview'
 import ItemLineageBreadcrumb from '@/components/ui/ItemLineageBreadcrumb'
-import DuplicateQuantityMenu from '@/components/ui/DuplicateQuantityMenu'
 import { lineageService } from '@/services/lineageService'
 import { getUserFriendlyErrorMessage, getErrorAction } from '@/utils/imageUtils'
 import { useToast } from '@/components/ui/ToastContext'
@@ -21,6 +19,7 @@ import { useDuplication } from '@/hooks/useDuplication'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
 import { useNetworkState } from '@/hooks/useNetworkState'
+import { getOfflineSaveMessage } from '@/utils/offlineUxFeedback'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { projectItemDetail, projectItemEdit, projectItems, projectTransactionDetail } from '@/utils/routes'
 import { Combobox } from '@/components/ui/Combobox'
@@ -29,6 +28,8 @@ import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import { getGlobalQueryClient } from '@/utils/queryClient'
 import { hydrateItemCache, hydrateProjectCache } from '@/utils/hydrationHelpers'
 import BlockingConfirmDialog from '@/components/ui/BlockingConfirmDialog'
+import ItemActionsMenu from '@/components/items/ItemActionsMenu'
+import { displayDispositionLabel } from '@/utils/dispositionUtils'
 
 type ItemDetailProps = { itemId?: string; projectId?: string; onClose?: () => void }
 
@@ -47,7 +48,6 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
   const [uploadsInFlight, setUploadsInFlight] = useState(0)
   const isUploadingImage = uploadsInFlight > 0
   const [uploadProgress, setUploadProgress] = useState<number>(0)
-  const [openDispositionMenu, setOpenDispositionMenu] = useState(false)
   const [isSticky, setIsSticky] = useState(false)
   const [showTransactionDialog, setShowTransactionDialog] = useState(false)
   const [transactions, setTransactions] = useState<Transaction[]>([])
@@ -58,9 +58,12 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
   const [loadingProjects, setLoadingProjects] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState('')
   const [isUpdatingProject, setIsUpdatingProject] = useState(false)
-  const [showProjectMenu, setShowProjectMenu] = useState(false)
+  const [showProjectDialog, setShowProjectDialog] = useState(false)
+  const [projectDialogMode, setProjectDialogMode] = useState<'move' | 'sell'>('move')
   const [showRemoveFromTransactionConfirm, setShowRemoveFromTransactionConfirm] = useState(false)
   const [isRemovingFromTransaction, setIsRemovingFromTransaction] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [isDeletingItem, setIsDeletingItem] = useState(false)
   const { showError, showSuccess } = useToast()
   const { buildContextUrl, getBackDestination } = useNavigationContext()
   const { isOnline } = useNetworkState()
@@ -229,7 +232,7 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
   }, [item, projectId])
 
   useEffect(() => {
-    if (!currentAccountId || isBusinessInventoryItem) return
+    if (!currentAccountId) return
     let isMounted = true
 
     const fetchProjects = async () => {
@@ -253,7 +256,7 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
     return () => {
       isMounted = false
     }
-  }, [currentAccountId, isBusinessInventoryItem])
+  }, [currentAccountId])
 
   // Set up real-time listener for item updates
   const subscriptionProjectId = useMemo(() => {
@@ -306,23 +309,6 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
     }
   }, [actualItemId, currentAccountId])
 
-  // Close disposition menu when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (openDispositionMenu && !event.target) return
-
-      const target = event.target as Element
-      if (!target.closest('.disposition-menu') && !target.closest('.disposition-badge')) {
-        setOpenDispositionMenu(false)
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [openDispositionMenu])
-
   // Handle sticky header border
   useEffect(() => {
     const handleScroll = () => {
@@ -343,7 +329,7 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
 
   // Load transactions when dialog opens
   useEffect(() => {
-    if (showTransactionDialog && currentAccountId && (projectId || item?.projectId)) {
+    if (showTransactionDialog && currentAccountId) {
       loadTransactions()
     }
   }, [showTransactionDialog, currentAccountId, projectId, item?.projectId])
@@ -361,11 +347,13 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
   }, [])
 
   const loadTransactions = async () => {
+    if (!currentAccountId) return
     const effectiveProjectId = projectId || item?.projectId
-    if (!currentAccountId || !effectiveProjectId) return
     setLoadingTransactions(true)
     try {
-      const txs = await transactionService.getTransactions(currentAccountId, effectiveProjectId)
+      const txs = effectiveProjectId
+        ? await transactionService.getTransactions(currentAccountId, effectiveProjectId)
+        : await transactionService.getBusinessInventoryTransactions(currentAccountId)
       setTransactions(txs)
     } catch (error) {
       console.error('Failed to load transactions:', error)
@@ -390,76 +378,11 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
 
     setIsUpdatingTransaction(true)
     const previousTransactionId = item.transactionId
-    const effectiveProjectId = projectId || item.projectId
-
+    
     try {
-      // Update the item's transactionId
-      await unifiedItemsService.updateItem(currentAccountId, item.itemId, {
-        transactionId: selectedTransactionId
+      await unifiedItemsService.assignItemToTransaction(currentAccountId, selectedTransactionId, item.itemId, {
+        itemPreviousTransactionId: previousTransactionId
       })
-
-      // Update lineage pointers
-      try {
-        await lineageService.updateItemLineagePointers(currentAccountId, item.itemId, selectedTransactionId)
-      } catch (lineageError) {
-        console.warn('Failed to update lineage pointers for item:', item.itemId, lineageError)
-      }
-
-      // Remove item from old transaction's item_ids array
-      if (previousTransactionId) {
-        try {
-          const { data: oldTxData, error: fetchOldError } = await supabase
-            .from('transactions')
-            .select('item_ids')
-            .eq('account_id', currentAccountId)
-            .eq('transaction_id', previousTransactionId)
-            .single()
-
-          if (!fetchOldError && oldTxData) {
-            const currentItemIds: string[] = Array.isArray(oldTxData.item_ids) ? oldTxData.item_ids : []
-            const updatedItemIds = currentItemIds.filter(id => id !== item.itemId)
-
-            await supabase
-              .from('transactions')
-              .update({
-                item_ids: updatedItemIds,
-                updated_at: new Date().toISOString()
-              })
-              .eq('account_id', currentAccountId)
-              .eq('transaction_id', previousTransactionId)
-          }
-        } catch (oldTxError) {
-          console.warn('Failed to update old transaction item_ids:', oldTxError)
-        }
-      }
-
-      // Add item to new transaction's item_ids array
-      try {
-        const { data: newTxData, error: fetchNewError } = await supabase
-          .from('transactions')
-          .select('item_ids')
-          .eq('account_id', currentAccountId)
-          .eq('transaction_id', selectedTransactionId)
-          .single()
-
-        if (!fetchNewError && newTxData) {
-          const currentItemIds: string[] = Array.isArray(newTxData.item_ids) ? newTxData.item_ids : []
-          if (!currentItemIds.includes(item.itemId)) {
-            const updatedItemIds = [...currentItemIds, item.itemId]
-
-            await supabase
-              .from('transactions')
-              .update({
-                item_ids: updatedItemIds,
-                updated_at: new Date().toISOString()
-              })
-              .eq('account_id', currentAccountId)
-              .eq('transaction_id', selectedTransactionId)
-          }
-        }
-      } catch (newTxError) {
-        console.warn('Failed to update new transaction item_ids:', newTxError)
-      }
 
       // Refresh the item data
       const updatedItem = await unifiedItemsService.getItemById(currentAccountId, item.itemId)
@@ -506,9 +429,128 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
       showError('Failed to associate project. Please try again.')
     } finally {
       setIsUpdatingProject(false)
-      setShowProjectMenu(false)
+      setShowProjectDialog(false)
     }
   }, [item, currentAccountId, showError, showSuccess, navigate, buildContextUrl, projects])
+
+  const openProjectDialog = (mode: 'move' | 'sell' = 'move') => {
+    if (mode === 'move' && associateDisabled) return
+    setProjectDialogMode(mode)
+    setShowProjectDialog(true)
+  }
+
+  const handleSellToBusinessInventory = async () => {
+    if (!item || !currentAccountId) return
+    if (!item.projectId) return
+    try {
+      const wasOffline = !isOnline
+      // This deallocation path creates/updates the canonical inventory sale transaction.
+      await integrationService.handleItemDeallocation(currentAccountId, item.itemId, item.projectId, 'inventory')
+      if (wasOffline) {
+        showSuccess(getOfflineSaveMessage())
+        return
+      }
+      await refreshRealtimeAfterWrite()
+      await handleRefreshItem()
+      showSuccess('Moved to business inventory.')
+    } catch (error) {
+      console.error('Failed to move item to business inventory:', error)
+      showError('Failed to move item to business inventory. Please try again.')
+    } finally {
+    }
+  }
+
+  const handleMoveToBusinessInventory = async () => {
+    if (!item || !currentAccountId) return
+    if (!item.projectId) return
+    if (item.transactionId) {
+      showError('This item is tied to a transaction. Move the transaction instead.')
+      return
+    }
+    try {
+      await integrationService.moveItemToBusinessInventory(currentAccountId, item.itemId, item.projectId)
+      await refreshRealtimeAfterWrite()
+      await handleRefreshItem()
+      showSuccess('Moved to business inventory.')
+    } catch (error) {
+      console.error('Failed to move item to business inventory:', error)
+      showError('Failed to move item to business inventory. Please try again.')
+    }
+  }
+
+  const handleSellToProject = async () => {
+    if (!item || !currentAccountId) return
+    if (!item.projectId) return
+    if (!selectedProjectId || selectedProjectId === item.projectId) {
+      setShowProjectDialog(false)
+      return
+    }
+
+    setIsUpdatingProject(true)
+    try {
+      const wasOffline = !isOnline
+      await integrationService.sellItemToProject(
+        currentAccountId,
+        item.itemId,
+        item.projectId,
+        selectedProjectId
+      )
+      if (wasOffline) {
+        showSuccess(getOfflineSaveMessage())
+        return
+      }
+      await refreshRealtimeAfterWrite()
+      await handleRefreshItem()
+      showSuccess('Sold to project.')
+      const nextProject = projects.find(project => project.id === selectedProjectId)
+      if (nextProject) {
+        setProjectName(nextProject.name)
+        navigate(buildContextUrl(projectItemDetail(selectedProjectId, item.itemId)))
+      }
+    } catch (error) {
+      if (error instanceof SellItemToProjectError) {
+        switch (error.code) {
+          case 'ITEM_NOT_FOUND':
+            showError('Item not found. Refresh and try again.')
+            break
+          case 'SOURCE_PROJECT_MISMATCH':
+          case 'CONFLICT':
+            showError('This item changed since you opened it. Refresh and try again.')
+            break
+          case 'NON_CANONICAL_TRANSACTION':
+            showError('This item is tied to a transaction. Move the transaction instead.')
+            break
+          case 'TARGET_SAME_AS_SOURCE':
+            showError('Select a different project to sell to.')
+            break
+          case 'PARTIAL_COMPLETION':
+            showError('Item was moved to business inventory. Allocate it to the target project from there.')
+            await refreshRealtimeAfterWrite()
+            await handleRefreshItem()
+            break
+          default:
+            showError('Failed to sell item to project. Please try again.')
+        }
+      } else {
+        console.error('Failed to sell item to project:', error)
+        showError('Failed to sell item to project. Please try again.')
+      }
+    } finally {
+      setIsUpdatingProject(false)
+      setShowProjectDialog(false)
+    }
+  }
+
+  const openTransactionDialog = () => {
+    setSelectedTransactionId(item?.transactionId ?? '')
+    setShowTransactionDialog(true)
+  }
+
+  const handleDuplicateItem = (quantity: number) => {
+    if (!item) return
+    if (quantity <= 0) return
+    duplicateItem(item.itemId, quantity)
+  }
 
   const toggleBookmark = async () => {
     if (!item || !currentAccountId) return
@@ -524,85 +566,29 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
   }
 
   const updateDisposition = async (newDisposition: ItemDisposition) => {
-    console.log('🎯 updateDisposition called with:', newDisposition, 'Current item:', item?.itemId)
-
     if (!item || !currentAccountId) {
-      console.error('❌ No item available for disposition update')
       return
     }
 
-    console.log('📝 Updating disposition from', item.disposition, 'to', newDisposition)
-
     try {
-      // Update the disposition in the database first
       await unifiedItemsService.updateItem(currentAccountId, item.itemId, {
         disposition: newDisposition
       })
-      console.log('💾 Database updated successfully')
-
-      // Update local state
       setItem({ ...item, disposition: newDisposition })
-      setOpenDispositionMenu(false)
-
-      // If disposition is set to 'inventory', trigger deallocation process
-      if (newDisposition === 'inventory') {
-        console.log('🚀 Starting deallocation process for item:', item.itemId)
-        try {
-          await integrationService.handleItemDeallocation(
-            currentAccountId,
-            item.itemId,
-            item.projectId || '',
-            newDisposition
-          )
-          console.log('✅ Deallocation completed successfully')
-          // Refresh the item data after deallocation
-          const updatedItem = await unifiedItemsService.getItemById(currentAccountId, item.itemId)
-          if (updatedItem) {
-            setItem(updatedItem)
-          }
-        } catch (deallocationError) {
-          console.error('❌ Failed to handle deallocation:', deallocationError)
-          // Revert the disposition change if deallocation fails
-          await unifiedItemsService.updateItem(currentAccountId, item.itemId, {
-            disposition: item.disposition // Revert to previous disposition
-          })
-          setItem({ ...item, disposition: item.disposition })
-          showError('Failed to move item to inventory. Please try again.')
-        }
-      }
     } catch (error) {
       console.error('Failed to update disposition:', error)
       showError('Failed to update disposition. Please try again.')
     }
   }
 
-  const toggleDispositionMenu = () => {
-    console.log('🖱️ toggleDispositionMenu called, current state:', openDispositionMenu, 'item:', item?.itemId)
-    setOpenDispositionMenu(!openDispositionMenu)
-  }
-
-  const getDispositionBadgeClasses = (disposition?: string | null) => {
-    const baseClasses = 'inline-flex items-center px-3 py-2 rounded-full text-sm font-medium cursor-pointer transition-colors hover:opacity-80'
-    const d = normalizeDisposition(disposition)
-
-    switch (d) {
-      case 'to purchase':
-        return `${baseClasses} bg-amber-100 text-amber-800`
-      case 'purchased':
-        // Use the primary (brown) palette to match item preview cards
-        return `${baseClasses} bg-primary-100 text-primary-600`
-      case 'to return':
-        return `${baseClasses} bg-red-100 text-red-700`
-      case 'returned':
-        return `${baseClasses} bg-red-800 text-red-100`
-      case 'inventory':
-        return `${baseClasses} bg-primary-100 text-primary-600`
-      default:
-        return `${baseClasses} bg-gray-100 text-gray-800`
-    }
-  }
-
   const itemProjectId = item?.projectId ?? null
+  const editUrl = item
+    ? isBusinessInventoryItem
+      ? buildContextUrl(`/business-inventory/${item.itemId}/edit`)
+      : projectId
+        ? buildContextUrl(projectItemEdit(projectId, item.itemId), { project: projectId })
+        : buildContextUrl(`/business-inventory/${item.itemId}/edit`)
+    : ''
   const derivedRealtimeProjectId = useMemo(() => {
     if (projectId) return projectId
     return itemProjectId
@@ -634,13 +620,13 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
     }
   }, [fetchItem, isRefreshing, refreshRealtimeAfterWrite, showError])
 
-  const handleDeleteItem = async () => {
+  const handleDeleteItem = () => {
+    setShowDeleteConfirm(true)
+  }
+
+  const confirmDeleteItem = async () => {
     if (!item || !currentAccountId) return
-
-    if (!confirm('Are you sure you want to delete this item? This action cannot be undone.')) {
-      return
-    }
-
+    setIsDeletingItem(true)
     try {
       await unifiedItemsService.deleteItem(currentAccountId, item.itemId)
       await refreshRealtimeAfterWrite()
@@ -654,6 +640,9 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
     } catch (error) {
       console.error('Failed to delete item:', error)
       showError('Failed to delete item. Please try again.')
+    } finally {
+      setIsDeletingItem(false)
+      setShowDeleteConfirm(false)
     }
   }
 
@@ -917,18 +906,19 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
   }
 
   const projectOptions = useMemo(
-    () => projects.map(project => ({ id: project.id, label: project.name })),
-    [projects]
+    () => projects.map(project => ({
+      id: project.id,
+      label: project.name,
+      disabled: project.id === item?.projectId
+    })),
+    [projects, item?.projectId]
   )
-  const selectedProjectValue = selectedProjectId && projectOptions.some(option => option.id === selectedProjectId)
-    ? selectedProjectId
-    : ''
   const associateDisabledReason = item?.transactionId
     ? (isCanonicalTransactionId(item.transactionId)
       ? 'This item is tied to a Company Inventory transaction. Use inventory allocation/deallocation instead.'
       : 'This item is tied to a transaction. Move the transaction to another project instead.')
     : null
-  const associateDisabled = Boolean(associateDisabledReason) || loadingProjects || isUpdatingProject || isBusinessInventoryItem
+  const associateDisabled = Boolean(associateDisabledReason) || loadingProjects || isUpdatingProject
 
   if (isLoadingItem) {
     return (
@@ -1160,41 +1150,9 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
                           ? 'INV_PURCHASE...'
                           : (item.transactionId.length > 12 ? `${item.transactionId.slice(0, 12)}...` : item.transactionId)}
                       </ContextLink>
-                      {(projectId || item.projectId) && !isBusinessInventoryItem && (
-                        <button
-                          onClick={() => {
-                            setSelectedTransactionId(item.transactionId || '')
-                            setShowTransactionDialog(true)
-                          }}
-                          className="text-xs px-2 py-1 text-primary-600 hover:text-primary-800 hover:bg-primary-50 rounded border border-primary-300 hover:border-primary-400 transition-colors"
-                          title="Change transaction"
-                        >
-                          Change
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => setShowRemoveFromTransactionConfirm(true)}
-                        className="text-xs px-2 py-1 text-gray-700 hover:text-gray-900 hover:bg-gray-50 rounded border border-gray-300 hover:border-gray-400 transition-colors inline-flex items-center gap-1"
-                        title="Remove from transaction"
-                      >
-                        <Link2Off className="h-3 w-3" />
-                        Remove
-                      </button>
                     </>
                   ) : (
-                    (projectId || item.projectId) && !isBusinessInventoryItem && (
-                      <button
-                        onClick={() => {
-                          setSelectedTransactionId('')
-                          setShowTransactionDialog(true)
-                        }}
-                        className="text-xs px-2 py-1 text-primary-600 hover:text-primary-800 hover:bg-primary-50 rounded border border-primary-300 hover:border-primary-400 transition-colors"
-                        title="Assign to transaction"
-                      >
-                        Assign
-                      </button>
-                    )
+                    <span className="text-gray-500">Not assigned</span>
                   )}
                 </dd>
               </div>
@@ -1206,16 +1164,6 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
             )}
             </dl>
 
-            {/* Delete button in lower right corner */}
-            <div className="absolute bottom-0 right-0">
-              <button
-                onClick={handleDeleteItem}
-                className="inline-flex items-center justify-center p-2 border border-red-300 text-sm font-medium rounded-md text-red-700 bg-red-50 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-                title="Delete Item"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </div>
           </div>
         </div>
       </div>
@@ -1226,7 +1174,7 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
             <div className="px-6 py-4 border-b border-gray-200">
               <h3 className="text-lg font-medium text-gray-900">
-                Change Transaction
+                {item?.transactionId ? 'Change Transaction' : 'Assign To Transaction'}
               </h3>
             </div>
             <div className="px-6 py-4">
@@ -1248,24 +1196,40 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
                 }
               />
             </div>
-            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
-              <button
-                onClick={() => {
-                  setShowTransactionDialog(false)
-                  setSelectedTransactionId('')
-                }}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-                disabled={isUpdatingTransaction}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleChangeTransaction}
-                disabled={!selectedTransactionId || isUpdatingTransaction}
-                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isUpdatingTransaction ? 'Updating...' : 'Update'}
-              </button>
+            <div className="px-6 py-4 border-t border-gray-200 flex flex-wrap justify-between gap-3">
+              {item?.transactionId ? (
+                <button
+                  onClick={() => {
+                    setShowTransactionDialog(false)
+                    setShowRemoveFromTransactionConfirm(true)
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 disabled:opacity-50"
+                  disabled={isUpdatingTransaction}
+                >
+                  Remove
+                </button>
+              ) : (
+                <span />
+              )}
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => {
+                    setShowTransactionDialog(false)
+                    setSelectedTransactionId('')
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                  disabled={isUpdatingTransaction}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleChangeTransaction}
+                  disabled={!selectedTransactionId || isUpdatingTransaction}
+                  className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isUpdatingTransaction ? 'Updating...' : 'Update'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1290,6 +1254,79 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
         }}
         onConfirm={handleRemoveFromTransaction}
       />
+      <BlockingConfirmDialog
+        open={showDeleteConfirm}
+        title="Delete item?"
+        description={
+          <div className="text-sm text-gray-700 space-y-2">
+            <p>This will permanently delete the item.</p>
+            <p className="text-gray-600">This action cannot be undone.</p>
+          </div>
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        confirmVariant="danger"
+        isConfirming={isDeletingItem}
+        onCancel={() => {
+          if (isDeletingItem) return
+          setShowDeleteConfirm(false)
+        }}
+        onConfirm={confirmDeleteItem}
+      />
+      {showProjectDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-medium text-gray-900">
+                {projectDialogMode === 'sell' ? 'Sell To Project' : 'Move To Project'}
+              </h3>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              <Combobox
+                label="Select Project"
+                value={selectedProjectId}
+                onChange={setSelectedProjectId}
+                disabled={loadingProjects || isUpdatingProject}
+                loading={loadingProjects}
+                placeholder={loadingProjects ? "Loading projects..." : "Select a project"}
+                options={projectOptions}
+              />
+              {projectDialogMode === 'move' && associateDisabledReason && (
+                <p className="text-xs text-gray-500">{associateDisabledReason}</p>
+              )}
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  if (isUpdatingProject) return
+                  setShowProjectDialog(false)
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                disabled={isUpdatingProject}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={
+                  projectDialogMode === 'sell'
+                    ? handleSellToProject
+                    : () => handleAssociateProject(selectedProjectId)
+                }
+                disabled={!selectedProjectId || isUpdatingProject || (associateDisabled && projectDialogMode !== 'sell')}
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isUpdatingProject
+                  ? projectDialogMode === 'sell'
+                    ? 'Selling...'
+                    : 'Moving...'
+                  : projectDialogMode === 'sell'
+                    ? 'Sell'
+                    : 'Move'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 
@@ -1299,132 +1336,68 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
         <div className="bg-white border border-gray-200 rounded-lg p-6">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-lg font-medium text-gray-900">Item</h3>
-            <div className="flex items-center gap-2">
-                  <button
-                    onClick={toggleBookmark}
-                    className={`inline-flex items-center justify-center p-2 border text-sm font-medium rounded-md ${
-                      item.bookmark
-                        ? 'border-red-300 text-red-700 bg-red-50 hover:bg-red-100'
-                        : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
-                    } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500`}
-                    title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
-                  >
-                    <Bookmark className="h-4 w-4" fill={item.bookmark ? 'currentColor' : 'none'} />
-                  </button>
+            <div className="flex items-center space-x-2">
+              {item.disposition ? (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
+                  {displayDispositionLabel(item.disposition)}
+                </span>
+              ) : null}
+              <button
+                onClick={toggleBookmark}
+                className={`inline-flex items-center justify-center p-2 text-sm font-medium transition-colors ${
+                  item.bookmark
+                    ? 'text-red-700 bg-transparent'
+                    : 'text-primary-600 bg-transparent'
+                } focus:outline-none`}
+                title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
+              >
+                <Bookmark className="h-5 w-5" fill={item.bookmark ? 'currentColor' : 'none'} />
+              </button>
 
-                  <ContextLink
-                    to={isBusinessInventoryItem
-                      ? buildContextUrl(`/business-inventory/${item.itemId}/edit`)
-                    : projectId
-                      ? buildContextUrl(projectItemEdit(projectId, item.itemId), { project: projectId })
-                      : buildContextUrl(`/business-inventory/${item.itemId}/edit`)
-                    }
-                    className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                    title="Edit Item"
-                  >
-                    <Edit className="h-4 w-4" />
-                  </ContextLink>
+              <ItemActionsMenu
+                itemId={item.itemId}
+                itemProjectId={item.projectId ?? null}
+                itemTransactionId={item.transactionId ?? null}
+                disposition={item.disposition}
+                isPersisted={true}
+                currentProjectId={projectId || item.projectId || null}
+                triggerSize="md"
+                onEdit={() => {
+                  navigate(editUrl)
+                }}
+                onDuplicate={handleDuplicateItem}
+                onAddToTransaction={openTransactionDialog}
+                onSellToBusiness={handleSellToBusinessInventory}
+                onSellToProject={() => openProjectDialog('sell')}
+                onMoveToBusiness={handleMoveToBusinessInventory}
+                onMoveToProject={() => openProjectDialog('move')}
+                onChangeStatus={updateDisposition}
+                onDelete={handleDeleteItem}
+              />
 
-                  <DuplicateQuantityMenu
-                    onDuplicate={(quantity) => duplicateItem(item.itemId, quantity)}
-                    buttonClassName="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                    buttonTitle="Duplicate Item"
-                    buttonContent={<Copy className="h-4 w-4" />}
-                  />
-
-                  {ENABLE_QR && (
-                    <button
-                      className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                      onClick={() => window.open(`/qr-image/${item.qrKey}`, '_blank')}
-                      title="View QR Code"
-                    >
-                      <QrCode className="h-4 w-4" />
-                    </button>
-                  )}
-
-                  <div className="relative">
-                    <span
-                      onClick={toggleDispositionMenu}
-                      className={`disposition-badge ${getDispositionBadgeClasses(item.disposition)}`}
-                    >
-                      {displayDispositionLabel(item.disposition)}
-                      <ChevronDown className="h-3 w-3 ml-1" />
-                    </span>
-
-                    {/* Dropdown menu */}
-                    {openDispositionMenu && (
-                      <div className="disposition-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-20">
-                        <div className="py-2">
-                          {DISPOSITION_OPTIONS.map((disposition) => (
-                            <button
-                              key={disposition}
-                              onClick={() => updateDisposition(disposition)}
-                              className={`block w-full text-left px-4 py-3 text-sm hover:bg-gray-50 ${
-                                dispositionsEqual(item.disposition, disposition) ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
-                              }`}
-                            >
-                              {displayDispositionLabel(disposition)}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <button
-                    onClick={(e) => {
-                      e.preventDefault()
-                      ;(props.onClose as any)?.()
-                    }}
-                    className="text-gray-400 hover:text-gray-600"
-                    type="button"
-                    aria-label="Close item view"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
-              </div>
-            </div>
-          {!isBusinessInventoryItem && (
-            <div className="flex justify-end mb-4">
-              <div className="relative">
+              {ENABLE_QR && (
                 <button
-                  type="button"
-                  onClick={() => {
-                    if (!associateDisabled) {
-                      setShowProjectMenu(prev => !prev)
-                    }
-                  }}
-                  className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-900 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
-                  title={associateDisabledReason || 'Associate with project'}
-                  disabled={associateDisabled}
+                  className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                  onClick={() => window.open(`/qr-image/${item.qrKey}`, '_blank')}
+                  title="View QR Code"
                 >
-                  Associate with project
-                  <ChevronDown className="h-3 w-3 ml-1" />
+                  <QrCode className="h-4 w-4" />
                 </button>
-                {item.transactionId && associateDisabledReason && (
-                  <p className="mt-1 text-xs text-gray-500">{associateDisabledReason}</p>
-                )}
-                {showProjectMenu && !associateDisabled && (
-                  <div className="absolute right-0 mt-1 w-64 bg-white border border-gray-200 rounded-md shadow-lg z-20">
-                    <div className="py-1">
-                      {projectOptions.map((option) => (
-                        <button
-                          key={option.id}
-                          type="button"
-                          onClick={() => handleAssociateProject(option.id)}
-                          className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                            option.id === item.projectId ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
-                          }`}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+              )}
+
+              <button
+                onClick={(e) => {
+                  e.preventDefault()
+                  ;(props.onClose as any)?.()
+                }}
+                className="text-gray-400 hover:text-gray-600"
+                type="button"
+                aria-label="Close item view"
+              >
+                <X className="h-5 w-5" />
+              </button>
             </div>
-          )}
+            </div>
           {content}
         </div>
       ) : (
@@ -1467,121 +1440,56 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
                 </button>
               </div>
 
-              <div className="flex flex-wrap gap-2 sm:space-x-2">
+              <div className="flex flex-wrap items-center space-x-2">
+                {item.disposition ? (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
+                    {displayDispositionLabel(item.disposition)}
+                  </span>
+                ) : null}
+                <button
+                  onClick={toggleBookmark}
+                  className={`inline-flex items-center justify-center p-2 text-sm font-medium transition-colors ${
+                    item.bookmark
+                      ? 'text-red-700 bg-transparent'
+                      : 'text-primary-600 bg-transparent'
+                  } focus:outline-none`}
+                  title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
+                >
+                  <Bookmark className="h-5 w-5" fill={item.bookmark ? 'currentColor' : 'none'} />
+                </button>
+
+                <ItemActionsMenu
+                  itemId={item.itemId}
+                  itemProjectId={item.projectId ?? null}
+                  itemTransactionId={item.transactionId ?? null}
+                  disposition={item.disposition}
+                  isPersisted={true}
+                  currentProjectId={projectId || item.projectId || null}
+                  triggerSize="md"
+                  onEdit={() => {
+                    navigate(editUrl)
+                  }}
+                  onDuplicate={handleDuplicateItem}
+                  onAddToTransaction={openTransactionDialog}
+                  onSellToBusiness={handleSellToBusinessInventory}
+                  onSellToProject={() => openProjectDialog('sell')}
+                  onMoveToBusiness={handleMoveToBusinessInventory}
+                  onMoveToProject={() => openProjectDialog('move')}
+                  onChangeStatus={updateDisposition}
+                  onDelete={handleDeleteItem}
+                />
+
+                {ENABLE_QR && (
                   <button
-                    onClick={toggleBookmark}
-                    className={`inline-flex items-center justify-center p-2 border text-sm font-medium rounded-md ${
-                      item.bookmark
-                        ? 'border-red-300 text-red-700 bg-red-50 hover:bg-red-100'
-                        : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
-                    } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500`}
-                    title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
-                  >
-                    <Bookmark className="h-4 w-4" fill={item.bookmark ? 'currentColor' : 'none'} />
-                  </button>
-
-                  <ContextLink
-                    to={isBusinessInventoryItem
-                      ? buildContextUrl(`/business-inventory/${item.itemId}/edit`)
-                    : projectId
-                      ? buildContextUrl(projectItemEdit(projectId, item.itemId), { project: projectId })
-                      : buildContextUrl(`/business-inventory/${item.itemId}/edit`)
-                    }
                     className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                    title="Edit Item"
+                    onClick={() => window.open(`/qr-image/${item.qrKey}`, '_blank')}
+                    title="View QR Code"
                   >
-                    <Edit className="h-4 w-4" />
-                  </ContextLink>
-
-                  <DuplicateQuantityMenu
-                    onDuplicate={(quantity) => duplicateItem(item.itemId, quantity)}
-                    buttonClassName="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                    buttonTitle="Duplicate Item"
-                    buttonContent={<Copy className="h-4 w-4" />}
-                  />
-
-                  {ENABLE_QR && (
-                    <button
-                      className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                      onClick={() => window.open(`/qr-image/${item.qrKey}`, '_blank')}
-                      title="View QR Code"
-                    >
-                      <QrCode className="h-4 w-4" />
-                    </button>
-                  )}
-
-
-                  <div className="relative">
-                    <span
-                      onClick={toggleDispositionMenu}
-                      className={`disposition-badge ${getDispositionBadgeClasses(item.disposition)}`}
-                    >
-                      {displayDispositionLabel(item.disposition)}
-                      <ChevronDown className="h-3 w-3 ml-1" />
-                    </span>
-
-                    {/* Dropdown menu */}
-                    {openDispositionMenu && (
-                      <div className="disposition-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-20">
-                        <div className="py-2">
-                          {DISPOSITION_OPTIONS.map((disposition) => (
-                            <button
-                              key={disposition}
-                              onClick={() => updateDisposition(disposition)}
-                              className={`block w-full text-left px-4 py-3 text-sm hover:bg-gray-50 ${
-                                dispositionsEqual(item.disposition, disposition) ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
-                              }`}
-                            >
-                              {displayDispositionLabel(disposition)}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                    <QrCode className="h-4 w-4" />
+                  </button>
+                )}
               </div>
             </div>
-            {!isBusinessInventoryItem && (
-              <div className="mt-2 flex justify-end">
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!associateDisabled) {
-                        setShowProjectMenu(prev => !prev)
-                      }
-                    }}
-                    className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-900 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
-                    title={associateDisabledReason || 'Associate with project'}
-                    disabled={associateDisabled}
-                  >
-                    Associate with project
-                    <ChevronDown className="h-3 w-3 ml-1" />
-                  </button>
-                  {item.transactionId && associateDisabledReason && (
-                    <p className="mt-1 text-xs text-gray-500">{associateDisabledReason}</p>
-                  )}
-                  {showProjectMenu && !associateDisabled && (
-                    <div className="absolute right-0 mt-1 w-64 bg-white border border-gray-200 rounded-md shadow-lg z-20">
-                      <div className="py-1">
-                        {projectOptions.map((option) => (
-                          <button
-                            key={option.id}
-                            type="button"
-                            onClick={() => handleAssociateProject(option.id)}
-                            className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                              option.id === item.projectId ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
-                            }`}
-                          >
-                            {option.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
           {content}
         </>

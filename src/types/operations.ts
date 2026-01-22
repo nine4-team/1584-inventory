@@ -8,6 +8,9 @@ export type OperationType =
   | 'CREATE_PROJECT'
   | 'UPDATE_PROJECT'
   | 'DELETE_PROJECT'
+  | 'DEALLOCATE_ITEM_TO_BUSINESS_INVENTORY'
+  | 'ALLOCATE_ITEM_TO_PROJECT'
+  | 'SELL_ITEM_TO_PROJECT'
 
 export interface BaseOperation {
   id: string
@@ -73,7 +76,7 @@ export interface UpdateTransactionOperation extends BaseOperation {
       categoryId: string
       taxRatePct: number | null
       subtotal: string | null
-      taxRatePreset: string
+      taxRatePreset: string | null
       status: string
       receiptImages: any[]
       otherImages: any[]
@@ -129,6 +132,38 @@ export interface DeleteProjectOperation extends BaseOperation {
   }
 }
 
+export interface DeallocateItemToBusinessInventoryOperation extends BaseOperation {
+  type: 'DEALLOCATE_ITEM_TO_BUSINESS_INVENTORY'
+  data: {
+    itemId: string
+    projectId: string
+    disposition: string
+  }
+}
+
+export interface AllocateItemToProjectOperation extends BaseOperation {
+  type: 'ALLOCATE_ITEM_TO_PROJECT'
+  data: {
+    itemId: string
+    projectId: string
+    amount?: string
+    notes?: string
+    space?: string
+  }
+}
+
+export interface SellItemToProjectOperation extends BaseOperation {
+  type: 'SELL_ITEM_TO_PROJECT'
+  data: {
+    itemId: string
+    sourceProjectId: string
+    targetProjectId: string
+    amount?: string
+    notes?: string
+    space?: string
+  }
+}
+
 export type Operation =
   | CreateItemOperation
   | UpdateItemOperation
@@ -139,3 +174,6 @@ export type Operation =
   | CreateProjectOperation
   | UpdateProjectOperation
   | DeleteProjectOperation
+  | DeallocateItemToBusinessInventoryOperation
+  | AllocateItemToProjectOperation
+  | SellItemToProjectOperation

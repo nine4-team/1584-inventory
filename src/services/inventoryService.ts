@@ -49,6 +49,130 @@ type CreateItemOptions = {
   clientItemId?: string
 }
 
+export type SellItemToProjectErrorCode =
+  | 'OFFLINE'
+  | 'ITEM_NOT_FOUND'
+  | 'SOURCE_PROJECT_MISMATCH'
+  | 'TARGET_SAME_AS_SOURCE'
+  | 'NON_CANONICAL_TRANSACTION'
+  | 'PARTIAL_COMPLETION'
+  | 'CONFLICT'
+
+export class SellItemToProjectError extends Error {
+  code: SellItemToProjectErrorCode
+  details?: Record<string, unknown>
+  saleTransactionId?: string | null
+  purchaseTransactionId?: string | null
+
+  constructor(
+    code: SellItemToProjectErrorCode,
+    message: string,
+    options?: {
+      details?: Record<string, unknown>
+      saleTransactionId?: string | null
+      purchaseTransactionId?: string | null
+      cause?: unknown
+    }
+  ) {
+    super(message)
+    this.name = 'SellItemToProjectError'
+    this.code = code
+    this.details = options?.details
+    this.saleTransactionId = options?.saleTransactionId
+    this.purchaseTransactionId = options?.purchaseTransactionId
+    if (options?.cause) {
+      ;(this as any).cause = options.cause
+    }
+  }
+}
+
+type CanonicalQueueOptions = {
+  queueIfOffline?: boolean
+}
+
+const enqueueDeallocateItemToBusinessInventory = async (
+  accountId: string,
+  itemId: string,
+  projectId: string,
+  disposition: string
+): Promise<string> => {
+  return operationQueue.add(
+    {
+      type: 'DEALLOCATE_ITEM_TO_BUSINESS_INVENTORY',
+      data: {
+        itemId,
+        projectId,
+        disposition
+      }
+    },
+    { accountId }
+  )
+}
+
+const enqueueAllocateItemToProject = async (
+  accountId: string,
+  itemId: string,
+  projectId: string,
+  amount?: string,
+  notes?: string,
+  space?: string
+): Promise<string> => {
+  return operationQueue.add(
+    {
+      type: 'ALLOCATE_ITEM_TO_PROJECT',
+      data: {
+        itemId,
+        projectId,
+        amount,
+        notes,
+        space
+      }
+    },
+    { accountId }
+  )
+}
+
+const enqueueSellItemToProject = async (
+  accountId: string,
+  itemId: string,
+  sourceProjectId: string,
+  targetProjectId: string,
+  amount?: string,
+  notes?: string,
+  space?: string
+): Promise<string> => {
+  return operationQueue.add(
+    {
+      type: 'SELL_ITEM_TO_PROJECT',
+      data: {
+        itemId,
+        sourceProjectId,
+        targetProjectId,
+        amount,
+        notes,
+        space
+      }
+    },
+    { accountId }
+  )
+}
+
+export class MoveItemToBusinessInventoryError extends Error {
+  code: 'ITEM_NOT_FOUND' | 'SOURCE_PROJECT_MISMATCH' | 'TRANSACTION_ATTACHED'
+  details?: Record<string, unknown>
+
+  constructor(
+    code: MoveItemToBusinessInventoryError['code'],
+    message: string,
+    options?: { details?: Record<string, unknown> }
+  ) {
+    super(message)
+    this.name = 'MoveItemToBusinessInventoryError'
+    this.code = code
+    this.details = options?.details
+  }
+}
+
 const CANONICAL_TRANSACTION_PREFIXES = ['INV_PURCHASE_', 'INV_SALE_', 'INV_TRANSFER_'] as const
 const MISSING_BUDGET_CATEGORY_ERROR_REGEX = /Category ID .* does not exist in budget categories for account/i
 
@@ -1925,16 +2049,18 @@ export const transactionService = {
           .select('*')
           .eq('account_id', accountId)
           .eq('transaction_id', transactionId)
-          .single()
+          .limit(1)
 
-        if (error || !data) {
+        if (error || !data || data.length === 0) {
           return { transaction: null, projectId: null }
         }
 
-        void cacheTransactionsOffline([data])
+        const row = data[0]
 
-        const converted = convertTimestamps(data)
-        const transaction = _convertTransactionFromDb(data)
+        void cacheTransactionsOffline([row])
+
+        const converted = convertTimestamps(row)
+        const transaction = _convertTransactionFromDb(row)
         const enriched = await _enrichTransactionsWithProjectNames(accountId, [transaction])
 
         // Update React Query cache with fetched transaction
@@ -2755,10 +2881,10 @@ export const transactionService = {
       if (finalUpdates.taxRatePreset !== undefined) {
         const presetSelection = finalUpdates.taxRatePreset
 
-        // Treat null/empty-string as an explicit "No tax" selection (store 0%)
+        // Treat null/empty-string as "no selection" (clear preset, keep explicit rate if provided).
         if (presetSelection === null || presetSelection === '') {
           finalUpdates.taxRatePreset = null
-          finalUpdates.taxRatePct = 0
+          finalUpdates.taxRatePct = finalUpdates.taxRatePct ?? null
           finalUpdates.subtotal = null
         } else if (presetSelection === 'Other') {
           // Compute from provided subtotal and amount if present in updates or existing doc
@@ -3416,7 +3542,7 @@ export const transactionService = {
               return
             }
 
-            console.log('Business inventory transactions change received!', payload)
+            console.debug('Transaction change received', { eventType, table: payload.table })
 
             let nextTransactions = entry?.data ?? []
             const transactionId = (eventType === 'DELETE' ? typedOldRecord?.transaction_id : typedNewRecord?.transaction_id) ?? typedOldRecord?.transaction_id ?? null
@@ -4611,12 +4737,11 @@ export const unifiedItemsService = {
       console.warn('Failed to inherit tax_rate_pct when updating item:', e)
     }
 
-    // If transaction_id is being set and the item currently has a 'to return'
-    // disposition, and the target transaction is a Return, automatically mark
-    // the item as 'returned' so it reflects the transaction assignment.
+    // If transaction_id is being set and the target transaction is a Return,
+    // automatically mark the item as 'returned' so it reflects the assignment.
     try {
       const willSetTransaction = updates.transactionId !== undefined && updates.transactionId !== null
-      if (willSetTransaction && existingItem?.disposition === 'to return') {
+      if (willSetTransaction) {
         const txId = updates.transactionId as string
         if (txId) {
           const { data: txData } = await supabase
@@ -4811,6 +4936,108 @@ export const unifiedItemsService = {
     }
   },
 
+  // Assign item to transaction (account-scoped) - offline-aware orchestrator
+  async assignItemToTransaction(
+    accountId: string,
+    transactionId: string,
+    itemId: string,
+    opts?: { itemPreviousTransactionId?: string | null }
+  ): Promise<void> {
+    await this.assignItemsToTransaction(accountId, transactionId, [itemId], opts)
+  },
+
+  // Assign multiple items to transaction (account-scoped) - offline-aware orchestrator
+  async assignItemsToTransaction(
+    accountId: string,
+    transactionId: string,
+    itemIds: string[],
+    opts?: { itemPreviousTransactionId?: string | null }
+  ): Promise<void> {
+    const online = isNetworkOnline()
+    const itemPreviousTransactionId = opts?.itemPreviousTransactionId
+
+    if (!online) {
+      // Offline: queue item updates and mark transaction.item_ids mutation pending.
+      const { offlineItemService } = await import('./offlineItemService')
+      
+      // 1. Update items locally
+      await Promise.all(itemIds.map(itemId => 
+        offlineItemService.updateItem(accountId, itemId, {
+          transactionId: transactionId,
+          latestTransactionId: transactionId,
+        })
+      ))
+
+      // 2. Mark target transaction as pending 'add'
+      await markTransactionItemIdsPendingAction(accountId, transactionId, itemIds, 'add')
+
+      // 3. If they were in another transaction, mark that one as pending 'remove'
+      // Note: This assumes all items came from the SAME previous transaction if specified.
+      // If they came from different ones, the caller needs to handle that or we need a map.
+      // For now, assuming single previous transaction or none is safe for the current UI usage.
+      if (itemPreviousTransactionId && itemPreviousTransactionId !== transactionId) {
+        await markTransactionItemIdsPendingAction(accountId, itemPreviousTransactionId, itemIds, 'remove')
+      }
+      
+      return
+    }
+
+    await ensureAuthenticatedForDatabase()
+
+    // Online: Use updateItem + lineage edge preservation for moves
+    await Promise.all(itemIds.map(itemId =>
+      this.updateItem(accountId, itemId, {
+        transactionId: transactionId,
+        latestTransactionId: transactionId,
+      })
+    ))
+
+    if (itemPreviousTransactionId && itemPreviousTransactionId !== transactionId) {
+      await Promise.all(itemIds.map(async (itemId) => {
+        try {
+          await lineageService.appendItemLineageEdge(
+            accountId,
+            itemId,
+            itemPreviousTransactionId,
+            transactionId,
+            'Moved to transaction'
+          )
+          await lineageService.updateItemLineagePointers(accountId, itemId, transactionId)
+        } catch (lineageError) {
+          console.warn('assignItemsToTransaction - failed to append lineage edge:', lineageError)
+        }
+      }))
+    }
+
+    // Update target transaction
+    try {
+      await _updateTransactionItemIds(accountId, transactionId, itemIds, 'add')
+    } catch (e) {
+      console.warn('assignItemsToTransaction - failed to sync target transaction item_ids:', e)
+    }
+
+    // Update previous transaction if exists
+    if (itemPreviousTransactionId && itemPreviousTransactionId !== transactionId) {
+      try {
+        await _updateTransactionItemIds(accountId, itemPreviousTransactionId, itemIds, 'remove')
+      } catch (e) {
+        console.warn('assignItemsToTransaction - failed to sync previous transaction item_ids:', e)
+      }
+    }
+    
+    // Notify changes
+    try {
+        if (!transactionService._isBatchActive(accountId, transactionId)) {
+            transactionService.notifyTransactionChanged(accountId, transactionId, { flushImmediately: true }).catch(console.warn)
+        }
+        if (itemPreviousTransactionId && itemPreviousTransactionId !== transactionId && !transactionService._isBatchActive(accountId, itemPreviousTransactionId)) {
+            transactionService.notifyTransactionChanged(accountId, itemPreviousTransactionId, { flushImmediately: true }).catch(console.warn)
+        }
+    } catch (e) {
+        console.warn('assignItemsToTransaction - notifyTransactionChanged failed:', e)
+    }
+  },
+
   // Delete item (account-scoped) - offline-aware orchestrator
   async deleteItem(accountId: string, itemId: string): Promise<void> {
     // Check network state and hydrate from offlineStore first
@@ -4901,6 +5128,172 @@ export const unifiedItemsService = {
     return await this._getTransactionItemsOffline(accountId, transactionId)
   },
 
+  // Move item from a project to business inventory (non-sale correction)
+  async moveItemToBusinessInventory(
+    accountId: string,
+    itemId: string,
+    sourceProjectId: string,
+    options?: { note?: string; disposition?: ItemDisposition }
+  ): Promise<void> {
+    const item = await this.getItemById(accountId, itemId)
+    if (!item) {
+      throw new MoveItemToBusinessInventoryError('ITEM_NOT_FOUND', 'Item not found.', { details: { itemId } })
+    }
+
+    if (item.projectId !== sourceProjectId) {
+      throw new MoveItemToBusinessInventoryError(
+        'SOURCE_PROJECT_MISMATCH',
+        'Item is no longer in the source project.',
+        { details: { expectedProjectId: sourceProjectId, actualProjectId: item.projectId ?? null } }
+      )
+    }
+
+    if (item.transactionId) {
+      throw new MoveItemToBusinessInventoryError(
+        'TRANSACTION_ATTACHED',
+        'This item is tied to a transaction. Move the transaction instead.',
+        { details: { transactionId: item.transactionId } }
+      )
+    }
+
+    const nextDisposition = options?.disposition ?? item.disposition ?? 'inventory'
+    await this.updateItem(accountId, itemId, {
+      projectId: null,
+      transactionId: null,
+      inventoryStatus: 'available',
+      disposition: nextDisposition
+    })
+
+    try {
+      const fromTransactionId = item.latestTransactionId ?? null
+      const note = options?.note ?? 'Moved to business inventory'
+      await lineageService.appendItemLineageEdge(accountId, itemId, fromTransactionId, null, note)
+      await lineageService.updateItemLineagePointers(accountId, itemId, null)
+    } catch (lineageError) {
+      console.warn('⚠️ Failed to append lineage edge (non-critical):', lineageError)
+    }
+  },
+
+  // Sell item from one project into another (source sale → target purchase)
+  async sellItemToProject(
+    accountId: string,
+    itemId: string,
+    sourceProjectId: string,
+    targetProjectId: string,
+    options?: {
+      amount?: string
+      notes?: string
+      space?: string
+    },
+    queueOptions: CanonicalQueueOptions = {}
+  ): Promise<{ saleTransactionId: string | null; purchaseTransactionId: string }> {
+    if (!isNetworkOnline()) {
+      if (queueOptions.queueIfOffline === false) {
+        throw new SellItemToProjectError('OFFLINE', 'Sell to project is not available offline.')
+      }
+      await enqueueSellItemToProject(
+        accountId,
+        itemId,
+        sourceProjectId,
+        targetProjectId,
+        options?.amount,
+        options?.notes,
+        options?.space
+      )
+      return {
+        saleTransactionId: `INV_SALE_${sourceProjectId}`,
+        purchaseTransactionId: `INV_PURCHASE_${targetProjectId}`
+      }
+    }
+
+    await ensureAuthenticatedForDatabase()
+
+    const item = await this.getItemById(accountId, itemId)
+    if (!item) {
+      throw new SellItemToProjectError('ITEM_NOT_FOUND', 'Item not found.')
+    }
+
+    if (sourceProjectId === targetProjectId) {
+      throw new SellItemToProjectError('TARGET_SAME_AS_SOURCE', 'Source and target projects must be different.')
+    }
+
+    if (item.projectId !== sourceProjectId) {
+      throw new SellItemToProjectError(
+        'SOURCE_PROJECT_MISMATCH',
+        'Item is no longer in the source project. Refresh and try again.',
+        {
+          details: {
+            expectedProjectId: sourceProjectId,
+            actualProjectId: item.projectId ?? null
+          }
+        }
+      )
+    }
+
+    const purchaseTransactionIdExpected = `INV_PURCHASE_${targetProjectId}`
+
+    await deallocationService.handleInventoryDesignation(accountId, itemId, sourceProjectId, 'inventory')
+
+    let saleTransactionId: string | null = null
+    try {
+      const postSaleItem = await this.getItemById(accountId, itemId)
+      if (postSaleItem?.transactionId?.startsWith('INV_SALE_')) {
+        saleTransactionId = postSaleItem.transactionId
+      }
+    } catch (readError) {
+      console.warn('[sellItemToProject] Failed to verify sale transaction id:', readError)
+    }
+
+    try {
+      const purchaseTransactionId = await this.allocateItemToProject(
+        accountId,
+        itemId,
+        targetProjectId,
+        options?.amount,
+        options?.notes,
+        options?.space
+      )
+
+      return { saleTransactionId, purchaseTransactionId }
+    } catch (error) {
+      let latestItem: Item | null = null
+      try {
+        latestItem = await this.getItemById(accountId, itemId)
+      } catch (readError) {
+        console.warn('[sellItemToProject] Failed to refresh item after allocation error:', readError)
+      }
+
+      if (
+        latestItem?.projectId === targetProjectId &&
+        latestItem.transactionId === purchaseTransactionIdExpected
+      ) {
+        return { saleTransactionId, purchaseTransactionId: purchaseTransactionIdExpected }
+      }
+
+      if (!latestItem?.projectId && latestItem?.transactionId?.startsWith('INV_SALE_')) {
+        throw new SellItemToProjectError(
+          'PARTIAL_COMPLETION',
+          'Item was moved to business inventory, but allocation to target project failed.',
+          {
+            saleTransactionId: latestItem.transactionId,
+            details: { targetProjectId },
+            cause: error
+          }
+        )
+      }
+
+      throw new SellItemToProjectError(
+        'CONFLICT',
+        'Sell to project failed due to concurrent changes. Refresh and try again.',
+        {
+          saleTransactionId,
+          details: { targetProjectId },
+          cause: error
+        }
+      )
+    }
+  },
+
   // Allocate single item to project (follows ALLOCATION_TRANSACTION_LOGIC.md deterministic flows) (account-scoped)
   async allocateItemToProject(
     accountId: string,
@@ -4908,8 +5301,16 @@ export const unifiedItemsService = {
     projectId: string,
     amount?: string,
     notes?: string,
-    space?: string
+    space?: string,
+    queueOptions: CanonicalQueueOptions = {}
   ): Promise<string> {
+    if (!isNetworkOnline()) {
+      if (queueOptions.queueIfOffline === false) {
+        throw new Error('Allocate to project is not available offline.')
+      }
+      await enqueueAllocateItemToProject(accountId, itemId, projectId, amount, notes, space)
+      return `INV_PURCHASE_${projectId}`
+    }
     await ensureAuthenticatedForDatabase()
 
     // Get the item to determine current state and calculate amount
@@ -5130,7 +5531,9 @@ export const unifiedItemsService = {
     space?: string
   ): Promise<string> {
     // Remove item from existing Sale transaction
-    await this.removeItemFromTransaction(accountId, item.itemId, currentTransactionId, finalAmount)
+    await this.removeItemFromTransaction(accountId, item.itemId, currentTransactionId, finalAmount, {
+      preserveEmptyTransaction: true
+    })
 
     const { restoredTransactionId, restorationStatus } = await this._restoreItemAfterSaleRemoval(
       accountId,
@@ -5197,8 +5600,10 @@ export const unifiedItemsService = {
   ): Promise<string> {
     const purchaseTransactionId = `INV_PURCHASE_${newProjectId}`
 
-    // Remove item from existing Sale transaction
-    await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount)
+    // Remove item from existing Sale transaction but preserve the canonical sale record
+    await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount, {
+      preserveEmptyTransaction: true
+    })
 
     // Add item to Purchase transaction for new project (create if none)
     await this.addItemToTransaction(accountId, itemId, purchaseTransactionId, finalAmount, 'Purchase', 'Inventory allocation', notes)
@@ -5251,7 +5656,9 @@ export const unifiedItemsService = {
     space?: string
   ): Promise<string> {
     // Remove item from existing Purchase transaction
-    await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount)
+    await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount, {
+      preserveEmptyTransaction: true
+    })
 
     // Update item status to inventory
     await this.updateItem(accountId, itemId, {
@@ -5304,7 +5711,9 @@ export const unifiedItemsService = {
     const saleTransactionId = `INV_SALE_${newProjectId}`
 
     // Remove item from existing Purchase transaction
-    await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount)
+    await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount, {
+      preserveEmptyTransaction: true
+    })
 
     // Add item to Sale transaction for new project (create if none)
     await this.addItemToTransaction(accountId, itemId, saleTransactionId, finalAmount, 'To Inventory', 'Inventory sale', notes)
@@ -5398,7 +5807,13 @@ export const unifiedItemsService = {
   },
 
   // Helper: Remove item from transaction and update amounts
-  async removeItemFromTransaction(accountId: string, itemId: string, transactionId: string, _itemAmount: string): Promise<void> {
+  async removeItemFromTransaction(
+    accountId: string,
+    itemId: string,
+    transactionId: string,
+    _itemAmount: string,
+    options?: { preserveEmptyTransaction?: boolean }
+  ): Promise<void> {
     await ensureAuthenticatedForDatabase()
 
     // Get the transaction
@@ -5419,6 +5834,38 @@ export const unifiedItemsService = {
     const shouldRecalculateAmount = isCanonicalTransactionId(transactionId)
 
     if (updatedItemIds.length === 0) {
+      if (options?.preserveEmptyTransaction) {
+        const updateData: Record<string, any> = {
+          item_ids: [],
+          updated_at: new Date().toISOString()
+        }
+
+        try {
+          const { error: updateError } = await supabase
+            .from('transactions')
+            .update(updateData)
+            .eq('account_id', accountId)
+            .eq('transaction_id', transactionId)
+
+          if (updateError) throw updateError
+
+          if (shouldRecalculateAmount) {
+            console.log('🧾 Preserved empty canonical transaction amount:', transactionId)
+          } else {
+            console.log('🧾 Preserved empty transaction:', transactionId)
+          }
+
+          try {
+            await auditService.logTransactionStateChange(accountId, transactionId, 'updated', transactionData, updateData)
+          } catch (auditError) {
+            console.warn('⚠️ Failed to log preserved empty transaction update:', auditError)
+          }
+        } catch (error) {
+          console.error('❌ Failed to preserve empty transaction:', transactionId, error)
+        }
+        return
+      }
+
       // No items left - delete transaction
       try {
         const { error: deleteError } = await supabase
@@ -5442,6 +5889,34 @@ export const unifiedItemsService = {
         // Don't throw - allow the allocation to continue even if deletion fails
       }
     } else {
+      if (options?.preserveEmptyTransaction && shouldRecalculateAmount) {
+        const updateData = {
+          item_ids: updatedItemIds,
+          updated_at: new Date().toISOString()
+        }
+
+        try {
+          const { error: updateError } = await supabase
+            .from('transactions')
+            .update(updateData)
+            .eq('account_id', accountId)
+            .eq('transaction_id', transactionId)
+
+          if (updateError) throw updateError
+
+          console.log('🧾 Preserved canonical transaction amount after removal:', transactionId)
+
+          try {
+            await auditService.logTransactionStateChange(accountId, transactionId, 'updated', transactionData, updateData)
+          } catch (auditError) {
+            console.warn('⚠️ Failed to log preserved transaction update:', auditError)
+          }
+        } catch (error) {
+          console.error('❌ Failed to preserve canonical transaction amount after removal:', transactionId, error)
+        }
+        return
+      }
+
       if (!shouldRecalculateAmount) {
         console.info('ℹ️ Skipping amount recalculation for non-canonical transaction removal', {
           transactionId,
@@ -5744,7 +6219,9 @@ export const unifiedItemsService = {
           // A.1: Remove item from Sale and DO NOT add to Purchase. Assign back to
           // the same project (mark allocated) but do not create an INV_PURCHASE.
           console.log('📋 Batch A.1: Item in sale for target project — removing from sale and assigning to project', itemId)
-          await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount)
+          await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount, {
+            preserveEmptyTransaction: true
+          })
           const { restoredTransactionId } = await this._restoreItemAfterSaleRemoval(
             accountId,
             item,
@@ -5769,7 +6246,9 @@ export const unifiedItemsService = {
         } else {
           // A.2: Remove from Sale then add to Purchase for target project
           console.log('📋 Batch A.2: Item in sale for different project — moving to purchase for target project', itemId)
-          await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount)
+          await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount, {
+            preserveEmptyTransaction: true
+          })
           await this.addItemToTransaction(accountId, itemId, canonicalTransactionId, finalAmount, 'Purchase', 'Inventory allocation', allocationData.notes)
           await this.updateItem(accountId, itemId, {
             projectId: projectId,
@@ -5907,9 +6386,11 @@ export const unifiedItemsService = {
     // Remove item from existing Purchase transaction and return it to inventory.
     // Per allocation rules, do NOT create an INV_SALE when the item was part of
     // an INV_PURCHASE for the same project. Simply remove the item from the
-    // purchase (the helper will delete the purchase if empty), then update the
-    // item to reflect that it's back in business inventory.
-    await this.removeItemFromTransaction(accountId, item.itemId, currentTransactionId, finalAmount)
+    // purchase (preserving empty canonical rows for lineage history), then update
+    // the item to reflect that it's back in business inventory.
+    await this.removeItemFromTransaction(accountId, item.itemId, currentTransactionId, finalAmount, {
+      preserveEmptyTransaction: true
+    })
 
     // Update item status to inventory and clear transaction linkage for canonical state
     await this.updateItem(accountId, item.itemId, {
@@ -6234,71 +6715,45 @@ export const unifiedItemsService = {
 
   // Duplicate an existing item (unified collection version) (account-scoped)
   async duplicateItem(accountId: string, projectId: string, originalItemId: string): Promise<string> {
-    await ensureAuthenticatedForDatabase()
-
-    // Get the original item first
+    // Get the original item first (offline-aware)
     const originalItem = await this.getItemById(accountId, originalItemId)
     if (!originalItem) {
       throw new Error('Original item not found')
     }
 
-    const now = new Date()
-    const newItemId = `I-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
+    const {
+      itemId: _originalItemId,
+      dateCreated: _dateCreated,
+      lastUpdated: _lastUpdated,
+      qrKey: _qrKey,
+      createdAt: _createdAt,
+      ...itemData
+    } = originalItem
+
     const newQrKey = `QR-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
 
-    // Create duplicate item with new IDs and timestamps
-    const duplicatedItem: any = {
-      account_id: accountId,
-      item_id: newItemId,
-      description: originalItem.description || '',
-      source: originalItem.source || '',
-      sku: originalItem.sku || '',
-      purchase_price: originalItem.purchasePrice || null,
-      project_price: originalItem.projectPrice || null,
-      market_value: originalItem.marketValue || null,
-      payment_method: originalItem.paymentMethod || '',
-      disposition: 'purchased', // Default disposition for duplicates
-      notes: originalItem.notes || null,
-      space: originalItem.space || null,
-      qr_key: newQrKey,
-      bookmark: false, // Default bookmark to false for duplicates
-      transaction_id: originalItem.transactionId || null,
-      project_id: projectId,
-      inventory_status: originalItem.inventoryStatus || 'available',
-      business_inventory_location: originalItem.businessInventoryLocation || null,
-      date_created: originalItem.dateCreated || toDateOnlyString(now),
-      last_updated: now.toISOString(),
-      images: originalItem.images || [], // Copy images from original item
-      tax_rate_pct: originalItem.taxRatePct || null,
-      tax_amount_purchase_price: originalItem.taxAmountPurchasePrice || null,
-      tax_amount_project_price: originalItem.taxAmountProjectPrice || null,
-      created_by: originalItem.createdBy || null,
-      created_at: now.toISOString()
-    }
-
-    // Remove any undefined values that might still exist
-    Object.keys(duplicatedItem).forEach(key => {
-      if (duplicatedItem[key] === undefined) {
-        delete duplicatedItem[key]
-      }
+    const result = await this.createItem(accountId, {
+      ...itemData,
+      qrKey: newQrKey,
+      projectId,
+      disposition: 'purchased',
+      bookmark: false,
+      inventoryStatus: originalItem.inventoryStatus || 'available'
     })
 
-    // Create the duplicated item
-    const { error } = await supabase
-      .from('items')
-      .insert(duplicatedItem)
-
-    if (error) throw error
-
-    try {
-      if (duplicatedItem.transaction_id) {
-        await _updateTransactionItemIds(accountId, duplicatedItem.transaction_id, newItemId, 'add')
+    if (originalItem.transactionId) {
+      try {
+        if (result.mode === 'online') {
+          await _updateTransactionItemIds(accountId, originalItem.transactionId, result.itemId, 'add')
+        } else {
+          await markTransactionItemIdsPending(accountId, originalItem.transactionId, [result.itemId])
+        }
+      } catch (e) {
+        console.warn('Failed to sync transaction item_ids after duplicateItem:', e)
       }
-    } catch (e) {
-      console.warn('Failed to sync transaction item_ids after duplicateItem:', e)
     }
 
-    return newItemId
+    return result.itemId
   },
 
   // Create multiple items linked to a transaction (unified collection version) (account-scoped)
@@ -6517,12 +6972,13 @@ export const deallocationService = {
         if (purchaseProjectId === projectId) {
           console.log('🔁 Detected purchase-reversion: removing from INV_PURCHASE and returning to inventory')
 
-          // Remove item from the existing purchase (will delete if empty)
+          // Remove item from the existing purchase (preserve empty canonical row for lineage)
           await unifiedItemsService.removeItemFromTransaction(
             accountId,
             item.itemId,
             item.transactionId,
-            item.projectPrice || item.purchasePrice || item.marketValue || '0.00'
+            item.projectPrice || item.purchasePrice || item.marketValue || '0.00',
+            { preserveEmptyTransaction: true }
           )
 
           // Update the item to reflect it's back in business inventory
@@ -6534,6 +6990,14 @@ export const deallocationService = {
             previousProjectId,
             lastUpdated: new Date().toISOString()
           })
+
+          // Append lineage edge and update pointers
+          try {
+            await lineageService.appendItemLineageEdge(accountId, item.itemId, item.transactionId, null)
+            await lineageService.updateItemLineagePointers(accountId, item.itemId, null)
+          } catch (lineageError) {
+            console.warn('⚠️ Failed to append lineage edge (non-critical):', lineageError)
+          }
 
           try {
             await auditService.logAllocationEvent(accountId, 'deallocation', itemId, null, item.transactionId, {
@@ -6782,6 +7246,27 @@ export const integrationService = {
     return await unifiedItemsService.allocateItemToProject(accountId, itemId, projectId, amount, notes)
   },
 
+  // Move item from project to business inventory (non-sale correction)
+  async moveItemToBusinessInventory(
+    accountId: string,
+    itemId: string,
+    sourceProjectId: string,
+    options?: { note?: string; disposition?: ItemDisposition }
+  ): Promise<void> {
+    return await unifiedItemsService.moveItemToBusinessInventory(accountId, itemId, sourceProjectId, options)
+  },
+
+  // Sell item from source project to target project (unified collection)
+  async sellItemToProject(
+    accountId: string,
+    itemId: string,
+    sourceProjectId: string,
+    targetProjectId: string,
+    options?: { amount?: string; notes?: string; space?: string }
+  ): Promise<{ saleTransactionId: string | null; purchaseTransactionId: string }> {
+    return await unifiedItemsService.sellItemToProject(accountId, itemId, sourceProjectId, targetProjectId, options)
+  },
+
   // Return item from project to business inventory (unified collection)
   async returnItemToBusinessInventory(
     accountId: string,
@@ -6805,13 +7290,18 @@ export const integrationService = {
     return await unifiedItemsService.completePendingTransaction(accountId, 'sale', projectId, paymentMethod)
   },
 
-  // Handle item deallocation (new method)
+  // Handle item deallocation (new method).
+  // This path is used for "sell to design business" and creates/updates the canonical INV_SALE transaction.
   async handleItemDeallocation(
     accountId: string,
     itemId: string,
     projectId: string,
     disposition: string
   ): Promise<void> {
+    if (!isNetworkOnline()) {
+      await enqueueDeallocateItemToBusinessInventory(accountId, itemId, projectId, disposition)
+      return
+    }
     return await deallocationService.handleInventoryDesignation(accountId, itemId, projectId, disposition)
   }
 }

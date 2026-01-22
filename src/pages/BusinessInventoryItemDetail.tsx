@@ -3,12 +3,11 @@ import { useParams } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
 import ContextLink from '@/components/ContextLink'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
-import { Edit, Trash2, ArrowLeft, Package, DollarSign, ImagePlus, FileText, Copy, RefreshCw } from 'lucide-react'
-import { Item, Project } from '@/types'
-import { unifiedItemsService, projectService } from '@/services/inventoryService'
+import { ArrowLeft, Package, ImagePlus, FileText, RefreshCw, Bookmark } from 'lucide-react'
+import { Item, Project, ItemDisposition, Transaction } from '@/types'
+import { unifiedItemsService, projectService, transactionService } from '@/services/inventoryService'
 import { formatDate } from '@/utils/dateUtils'
 import ImagePreview from '@/components/ui/ImagePreview'
-import DuplicateQuantityMenu from '@/components/ui/DuplicateQuantityMenu'
 import UploadActivityIndicator from '@/components/ui/UploadActivityIndicator'
 import { ImageUploadService } from '@/services/imageService'
 import { useDuplication } from '@/hooks/useDuplication'
@@ -17,7 +16,14 @@ import { useBusinessInventoryRealtime } from '@/contexts/BusinessInventoryRealti
 import ItemLineageBreadcrumb from '@/components/ui/ItemLineageBreadcrumb'
 import { lineageService } from '@/services/lineageService'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
+import { useNetworkState } from '@/hooks/useNetworkState'
+import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
 import { projectItemDetail, projectItems, projectTransactionDetail } from '@/utils/routes'
+import ItemActionsMenu from '@/components/items/ItemActionsMenu'
+import BlockingConfirmDialog from '@/components/ui/BlockingConfirmDialog'
+import { Combobox } from '@/components/ui/Combobox'
+import { displayDispositionLabel } from '@/utils/dispositionUtils'
+import { supabase } from '@/services/supabase'
 
 export default function BusinessInventoryItemDetail() {
   const { id } = useParams<{ id: string }>()
@@ -25,6 +31,8 @@ export default function BusinessInventoryItemDetail() {
   const { currentAccountId } = useAccount()
   const { items: snapshotItems, isLoading: realtimeLoading, refreshCollections } = useBusinessInventoryRealtime()
   const { buildContextUrl } = useNavigationContext()
+  const { isOnline } = useNetworkState()
+  const { showOfflineSaved } = useOfflineFeedback()
   const snapshotItem = useMemo(() => {
     if (!id) return null
     return snapshotItems.find(item => item.itemId === id) ?? null
@@ -34,11 +42,19 @@ export default function BusinessInventoryItemDetail() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
   const [showAllocationModal, setShowAllocationModal] = useState(false)
-  const [showProjectDropdown, setShowProjectDropdown] = useState(false)
   const [allocationForm, setAllocationForm] = useState({
     projectId: '',
     space: ''
   })
+  const [showTransactionDialog, setShowTransactionDialog] = useState(false)
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [loadingTransactions, setLoadingTransactions] = useState(false)
+  const [selectedTransactionId, setSelectedTransactionId] = useState('')
+  const [isUpdatingTransaction, setIsUpdatingTransaction] = useState(false)
+  const [showRemoveFromTransactionConfirm, setShowRemoveFromTransactionConfirm] = useState(false)
+  const [isRemovingFromTransaction, setIsRemovingFromTransaction] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [isDeletingItem, setIsDeletingItem] = useState(false)
 
   // Image upload state
   const [uploadsInFlight, setUploadsInFlight] = useState(0)
@@ -96,23 +112,6 @@ export default function BusinessInventoryItemDetail() {
     }
   }, [id, currentAccountId, refreshCollections])
 
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (showProjectDropdown && !event.target) return
-
-      const target = event.target as Element
-      if (!target.closest('.project-dropdown') && !target.closest('.project-dropdown-button')) {
-        setShowProjectDropdown(false)
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [showProjectDropdown])
-
   const loadProjects = async () => {
     if (!currentAccountId) return
     try {
@@ -122,6 +121,44 @@ export default function BusinessInventoryItemDetail() {
       console.error('Error loading projects:', error)
     }
   }
+
+  const loadTransactions = async () => {
+    if (!currentAccountId) return
+    setLoadingTransactions(true)
+    try {
+      const txs = await transactionService.getBusinessInventoryTransactions(currentAccountId)
+      setTransactions(txs)
+    } catch (error) {
+      console.error('Failed to load transactions:', error)
+      alert('Failed to load transactions. Please try again.')
+    } finally {
+      setLoadingTransactions(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!showTransactionDialog || !currentAccountId) return
+    loadTransactions()
+  }, [showTransactionDialog, currentAccountId])
+
+  const getCanonicalTransactionTitle = (transaction: Transaction): string => {
+    if (transaction.transactionId?.startsWith('INV_SALE_')) {
+      return 'Company Inventory Sale'
+    }
+    if (transaction.transactionId?.startsWith('INV_PURCHASE_')) {
+      return 'Company Inventory Purchase'
+    }
+    return transaction.source
+  }
+
+  const projectOptions = useMemo(
+    () => projects.map(project => ({
+      id: project.id,
+      label: `${project.name} - ${project.clientName}`,
+      disabled: project.id === item?.projectId
+    })),
+    [projects, item?.projectId]
+  )
 
   useEffect(() => {
     if (!id) return
@@ -162,19 +199,171 @@ export default function BusinessInventoryItemDetail() {
     }
   }
 
+  const toggleBookmark = async () => {
+    if (!item || !currentAccountId) return
+    try {
+      await unifiedItemsService.updateItem(currentAccountId, item.itemId, {
+        bookmark: !item.bookmark
+      })
+      setItem({ ...item, bookmark: !item.bookmark })
+    } catch (error) {
+      console.error('Failed to update bookmark:', error)
+    }
+  }
 
-  const handleDelete = async () => {
-    if (!id || !item || !currentAccountId) return
+  const updateDisposition = async (newDisposition: ItemDisposition) => {
+    if (!item || !currentAccountId) return
+    try {
+      await unifiedItemsService.updateItem(currentAccountId, item.itemId, {
+        disposition: newDisposition
+      })
+      setItem({ ...item, disposition: newDisposition })
+    } catch (error) {
+      console.error('Failed to update disposition:', error)
+      alert('Failed to update status. Please try again.')
+    }
+  }
 
-    if (window.confirm('Are you sure you want to delete this item? This action cannot be undone.')) {
+  const openTransactionDialog = () => {
+    setSelectedTransactionId(item?.transactionId ?? '')
+    setShowTransactionDialog(true)
+  }
+
+  const handleChangeTransaction = async () => {
+    if (!item || !currentAccountId || !selectedTransactionId) return
+
+    setIsUpdatingTransaction(true)
+    const previousTransactionId = item.transactionId
+    let didUpdateItem = false
+
+    try {
+      await unifiedItemsService.updateItem(currentAccountId, item.itemId, {
+        transactionId: selectedTransactionId
+      })
+      didUpdateItem = true
+
       try {
-        await unifiedItemsService.deleteItem(currentAccountId, id)
-        await refreshRealtimeAfterWrite()
-        navigate('/business-inventory')
-      } catch (error) {
-        console.error('Error deleting item:', error)
-        alert('Error deleting item. Please try again.')
+        await lineageService.updateItemLineagePointers(currentAccountId, item.itemId, selectedTransactionId)
+      } catch (lineageError) {
+        console.warn('Failed to update lineage pointers for item:', item.itemId, lineageError)
       }
+
+      if (previousTransactionId) {
+        const { data: oldTxData, error: fetchOldError } = await supabase
+          .from('transactions')
+          .select('item_ids')
+          .eq('account_id', currentAccountId)
+          .eq('transaction_id', previousTransactionId)
+          .single()
+
+        if (fetchOldError) {
+          throw fetchOldError
+        }
+
+        if (oldTxData) {
+          const currentItemIds: string[] = Array.isArray(oldTxData.item_ids) ? oldTxData.item_ids : []
+          const updatedItemIds = currentItemIds.filter(id => id !== item.itemId)
+
+          const { error: updateOldError } = await supabase
+            .from('transactions')
+            .update({
+              item_ids: updatedItemIds,
+              updated_at: new Date().toISOString()
+            })
+            .eq('account_id', currentAccountId)
+            .eq('transaction_id', previousTransactionId)
+
+          if (updateOldError) {
+            throw updateOldError
+          }
+        }
+      }
+
+      const { data: newTxData, error: fetchNewError } = await supabase
+        .from('transactions')
+        .select('item_ids')
+        .eq('account_id', currentAccountId)
+        .eq('transaction_id', selectedTransactionId)
+        .single()
+
+      if (fetchNewError) {
+        throw fetchNewError
+      }
+
+      if (newTxData) {
+        const currentItemIds: string[] = Array.isArray(newTxData.item_ids) ? newTxData.item_ids : []
+        if (!currentItemIds.includes(item.itemId)) {
+          const updatedItemIds = [...currentItemIds, item.itemId]
+
+          const { error: updateNewError } = await supabase
+            .from('transactions')
+            .update({
+              item_ids: updatedItemIds,
+              updated_at: new Date().toISOString()
+            })
+            .eq('account_id', currentAccountId)
+            .eq('transaction_id', selectedTransactionId)
+
+          if (updateNewError) {
+            throw updateNewError
+          }
+        }
+      }
+
+      await refreshRealtimeAfterWrite()
+      await handleRefreshItem()
+      setShowTransactionDialog(false)
+      setSelectedTransactionId('')
+    } catch (error) {
+      console.error('Failed to update transaction:', error)
+      const message = didUpdateItem
+        ? 'Item updated, but transaction links could not be updated. Refresh and verify the transaction.'
+        : 'Failed to update transaction. Please try again.'
+      alert(message)
+    } finally {
+      setIsUpdatingTransaction(false)
+    }
+  }
+
+  const handleRemoveFromTransaction = async () => {
+    if (!item || !currentAccountId) return
+    if (!item.transactionId) return
+
+    setIsRemovingFromTransaction(true)
+    try {
+      await unifiedItemsService.unlinkItemFromTransaction(currentAccountId, item.transactionId, item.itemId, {
+        itemCurrentTransactionId: item.transactionId
+      })
+      await refreshRealtimeAfterWrite()
+      await handleRefreshItem()
+      setShowRemoveFromTransactionConfirm(false)
+    } catch (error) {
+      console.error('Failed to remove item from transaction:', error)
+      alert('Failed to remove item from transaction. Please try again.')
+    } finally {
+      setIsRemovingFromTransaction(false)
+      setShowRemoveFromTransactionConfirm(false)
+    }
+  }
+
+
+  const handleDeleteItem = () => {
+    setShowDeleteConfirm(true)
+  }
+
+  const confirmDeleteItem = async () => {
+    if (!id || !item || !currentAccountId) return
+    setIsDeletingItem(true)
+    try {
+      await unifiedItemsService.deleteItem(currentAccountId, id)
+      await refreshRealtimeAfterWrite()
+      navigate('/business-inventory')
+    } catch (error) {
+      console.error('Error deleting item:', error)
+      alert('Error deleting item. Please try again.')
+    } finally {
+      setIsDeletingItem(false)
+      setShowDeleteConfirm(false)
     }
   }
 
@@ -186,16 +375,10 @@ export default function BusinessInventoryItemDetail() {
 
   const closeAllocationModal = () => {
     setShowAllocationModal(false)
-    setShowProjectDropdown(false)
     setAllocationForm({
       projectId: '',
       space: ''
     })
-  }
-
-  const getSelectedProjectName = () => {
-    const selectedProject = projects.find(p => p.id === allocationForm.projectId)
-    return selectedProject ? `${selectedProject.name} - ${selectedProject.clientName}` : 'Select a project...'
   }
 
   const handleAllocationSubmit = async () => {
@@ -203,6 +386,7 @@ export default function BusinessInventoryItemDetail() {
 
     setIsUpdating(true)
     try {
+      const wasOffline = !isOnline
       await unifiedItemsService.allocateItemToProject(
         currentAccountId,
         id!,
@@ -211,6 +395,11 @@ export default function BusinessInventoryItemDetail() {
         undefined,
         allocationForm.space
       )
+      if (wasOffline) {
+        showOfflineSaved(null)
+        closeAllocationModal()
+        return
+      }
       await refreshRealtimeAfterWrite()
       closeAllocationModal()
 
@@ -394,32 +583,40 @@ export default function BusinessInventoryItemDetail() {
             </button>
           </div>
 
-          <div className="flex flex-wrap gap-2 sm:space-x-2">
-            {item.inventoryStatus === 'available' && (
-              <button
-                onClick={openAllocationModal}
-                disabled={isUpdating}
-                className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
-                title="Allocate to Project"
-              >
-                <DollarSign className="h-4 w-4" />
-              </button>
-            )}
-            <ContextLink
-              to={buildContextUrl(`/business-inventory/${id}/edit`)}
-              className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-              title="Edit Item"
+          <div className="flex flex-wrap items-center gap-2">
+            {item.disposition ? (
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
+                {displayDispositionLabel(item.disposition)}
+              </span>
+            ) : null}
+            <button
+              onClick={toggleBookmark}
+              className={`inline-flex items-center justify-center p-2 text-sm font-medium transition-colors ${
+                item.bookmark
+                  ? 'text-red-700 bg-transparent'
+                  : 'text-primary-600 bg-transparent'
+              } focus:outline-none`}
+              title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
             >
-              <Edit className="h-4 w-4" />
-            </ContextLink>
-            {item && (
-              <DuplicateQuantityMenu
-                onDuplicate={(quantity) => duplicateItem(item.itemId, quantity)}
-                buttonClassName="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                buttonTitle="Duplicate Item"
-                buttonContent={<Copy className="h-4 w-4" />}
-              />
-            )}
+              <Bookmark className="h-5 w-5" fill={item.bookmark ? 'currentColor' : 'none'} />
+            </button>
+            <ItemActionsMenu
+              itemId={item.itemId}
+              itemProjectId={item.projectId ?? null}
+              itemTransactionId={item.transactionId ?? null}
+              disposition={item.disposition}
+              isPersisted={true}
+              currentProjectId={item.projectId ?? null}
+              triggerSize="md"
+              onEdit={() => {
+                navigate(buildContextUrl(`/business-inventory/${id}/edit`))
+              }}
+              onDuplicate={(quantity) => duplicateItem(item.itemId, quantity)}
+              onAddToTransaction={openTransactionDialog}
+              onMoveToProject={openAllocationModal}
+              onChangeStatus={updateDisposition}
+              onDelete={handleDeleteItem}
+            />
           </div>
         </div>
       </div>
@@ -615,21 +812,118 @@ export default function BusinessInventoryItemDetail() {
                 )}
               </dl>
 
-              {/* Delete button in lower right corner */}
-              <div className="absolute bottom-0 right-0">
-                <button
-                  onClick={handleDelete}
-                  className="inline-flex items-center justify-center p-2 border border-red-300 text-sm font-medium rounded-md text-red-700 bg-red-50 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-                  title="Delete Item"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
             </div>
           </div>
         </div>
       </div>
 
+
+      {/* Transaction Change Dialog */}
+      {showTransactionDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-medium text-gray-900">
+                {item?.transactionId ? 'Change Transaction' : 'Assign To Transaction'}
+              </h3>
+            </div>
+            <div className="px-6 py-4">
+              <Combobox
+                label="Select Transaction"
+                value={selectedTransactionId}
+                onChange={setSelectedTransactionId}
+                disabled={loadingTransactions || isUpdatingTransaction}
+                loading={loadingTransactions}
+                placeholder={loadingTransactions ? "Loading transactions..." : "Select a transaction"}
+                options={
+                  loadingTransactions ? [] : [
+                    { id: '', label: 'Select a transaction' },
+                    ...transactions.map((transaction) => ({
+                      id: transaction.transactionId,
+                      label: `${new Date(transaction.transactionDate).toLocaleDateString()} - ${getCanonicalTransactionTitle(transaction)} - $${transaction.amount}`
+                    }))
+                  ]
+                }
+              />
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex flex-wrap justify-between gap-3">
+              {item?.transactionId ? (
+                <button
+                  onClick={() => {
+                    setShowTransactionDialog(false)
+                    setShowRemoveFromTransactionConfirm(true)
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 disabled:opacity-50"
+                  disabled={isUpdatingTransaction}
+                >
+                  Remove
+                </button>
+              ) : (
+                <span />
+              )}
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => {
+                    setShowTransactionDialog(false)
+                    setSelectedTransactionId('')
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                  disabled={isUpdatingTransaction}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleChangeTransaction}
+                  disabled={!selectedTransactionId || isUpdatingTransaction}
+                  className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isUpdatingTransaction ? 'Updating...' : 'Update'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <BlockingConfirmDialog
+        open={showRemoveFromTransactionConfirm}
+        title="Remove item from transaction?"
+        description={
+          <div className="text-sm text-gray-700 space-y-2">
+            <p>This will remove the item from this transaction.</p>
+            <p className="text-gray-600">The item will not be deleted.</p>
+          </div>
+        }
+        confirmLabel="Remove"
+        cancelLabel="Cancel"
+        confirmVariant="danger"
+        isConfirming={isRemovingFromTransaction}
+        onCancel={() => {
+          if (isRemovingFromTransaction) return
+          setShowRemoveFromTransactionConfirm(false)
+        }}
+        onConfirm={handleRemoveFromTransaction}
+      />
+
+      <BlockingConfirmDialog
+        open={showDeleteConfirm}
+        title="Delete item?"
+        description={
+          <div className="text-sm text-gray-700 space-y-2">
+            <p>This will permanently delete the item.</p>
+            <p className="text-gray-600">This action cannot be undone.</p>
+          </div>
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        confirmVariant="danger"
+        isConfirming={isDeletingItem}
+        onCancel={() => {
+          if (isDeletingItem) return
+          setShowDeleteConfirm(false)
+        }}
+        onConfirm={confirmDeleteItem}
+      />
 
       {/* Allocation Modal */}
       {showAllocationModal && (
@@ -639,48 +933,15 @@ export default function BusinessInventoryItemDetail() {
               <h3 className="text-lg font-medium text-gray-900 mb-4">Allocate Item to Project</h3>
 
               <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">
-                    Select Project
-                  </label>
-                  <div className="relative mt-1">
-                    <button
-                      type="button"
-                      onClick={() => setShowProjectDropdown(!showProjectDropdown)}
-                      className="project-dropdown-button relative w-full bg-white border border-gray-300 rounded-md shadow-sm pl-3 pr-10 py-2 text-left cursor-default focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                    >
-                      <span className={`block truncate ${!allocationForm.projectId ? 'text-gray-500' : 'text-gray-900'}`}>
-                        {getSelectedProjectName()}
-                      </span>
-                      <span className="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
-                        <svg className="h-5 w-5 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-                        </svg>
-                      </span>
-                    </button>
-
-                    {showProjectDropdown && (
-                      <div className="project-dropdown absolute z-10 mt-1 w-full bg-white shadow-lg max-h-60 rounded-md py-1 text-base border border-gray-200 overflow-auto focus:outline-none sm:text-sm">
-                        {projects.map((project) => (
-                          <button
-                            key={project.id}
-                            type="button"
-                            onClick={() => {
-                              setAllocationForm(prev => ({ ...prev, projectId: project.id }))
-                              setShowProjectDropdown(false)
-                            }}
-                            className={`w-full text-left px-3 py-2 hover:bg-gray-50 ${
-                              allocationForm.projectId === project.id ? 'bg-primary-50 text-primary-600' : 'text-gray-900'
-                            }`}
-                          >
-                            <div className="font-medium">{project.name}</div>
-                            <div className="text-sm text-gray-500">{project.clientName}</div>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <Combobox
+                  label="Select Project"
+                  value={allocationForm.projectId}
+                  onChange={(nextProjectId) => {
+                    setAllocationForm(prev => ({ ...prev, projectId: nextProjectId }))
+                  }}
+                  options={projectOptions}
+                  placeholder={projectOptions.length > 0 ? 'Select a project' : 'No projects available'}
+                />
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Space (optional)</label>
                   <input

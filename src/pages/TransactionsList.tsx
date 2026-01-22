@@ -145,8 +145,9 @@ interface TransactionsListProps {
 }
 
 const TRANSACTION_FILTER_MODES = ['all', 'we-owe', 'client-owes'] as const
-const RECEIPT_FILTER_MODES = ['all', 'no-email'] as const
+const RECEIPT_FILTER_MODES = ['all', 'yes', 'no'] as const
 const TRANSACTION_TYPE_FILTER_MODES = ['all', 'purchase', 'return'] as const
+const PURCHASE_METHOD_FILTER_MODES = ['all', 'client-card', 'design-business', 'missing'] as const
 const TRANSACTION_SORT_MODES = [
   'date-desc',
   'date-asc',
@@ -162,6 +163,7 @@ const DEFAULT_SOURCE_FILTER = 'all'
 const DEFAULT_RECEIPT_FILTER = 'all'
 const DEFAULT_TRANSACTION_TYPE_FILTER = 'all'
 const DEFAULT_SORT_MODE = 'date-desc'
+const DEFAULT_PURCHASE_METHOD_FILTER = 'all'
 
 const parseFilterMode = (value: string | null) =>
   TRANSACTION_FILTER_MODES.includes(value as (typeof TRANSACTION_FILTER_MODES)[number])
@@ -183,6 +185,11 @@ const parseTransactionTypeFilter = (value: string | null) =>
     ? (value as (typeof TRANSACTION_TYPE_FILTER_MODES)[number])
     : DEFAULT_TRANSACTION_TYPE_FILTER
 
+const parsePurchaseMethodFilter = (value: string | null) =>
+  PURCHASE_METHOD_FILTER_MODES.includes(value as (typeof PURCHASE_METHOD_FILTER_MODES)[number])
+    ? (value as (typeof PURCHASE_METHOD_FILTER_MODES)[number])
+    : DEFAULT_PURCHASE_METHOD_FILTER
+
 export default function TransactionsList({ projectId: propProjectId, transactions: propTransactions }: TransactionsListProps) {
   const { id, projectId: routeProjectId } = useParams<{ id?: string; projectId?: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -201,16 +208,21 @@ export default function TransactionsList({ projectId: propProjectId, transaction
   // Search and filter state
   const [searchQuery, setSearchQuery] = useState<string>(() => searchParams.get('txSearch') ?? '')
   const [showFilterMenu, setShowFilterMenu] = useState(false)
-  const [filterMenuView, setFilterMenuView] = useState<'main' | 'source'>('main')
+  const [filterMenuView, setFilterMenuView] = useState<
+    'main' | 'source' | 'purchase-method' | 'reimbursement-status' | 'transaction-type' | 'email-receipt'
+  >('main')
   const [filterMode, setFilterMode] = useState<'all' | 'we-owe' | 'client-owes'>(() =>
     parseFilterMode(searchParams.get('txFilter'))
   )
   const [sourceFilter, setSourceFilter] = useState<string>(() => searchParams.get('txSource') ?? DEFAULT_SOURCE_FILTER)
-  const [receiptFilter, setReceiptFilter] = useState<'all' | 'no-email'>(() =>
+  const [receiptFilter, setReceiptFilter] = useState<'all' | 'yes' | 'no'>(() =>
     parseReceiptFilter(searchParams.get('txReceipt'))
   )
   const [transactionTypeFilter, setTransactionTypeFilter] = useState<'all' | 'purchase' | 'return'>(() =>
     parseTransactionTypeFilter(searchParams.get('txType'))
+  )
+  const [purchaseMethodFilter, setPurchaseMethodFilter] = useState<'all' | 'client-card' | 'design-business' | 'missing'>(() =>
+    parsePurchaseMethodFilter(searchParams.get('txPurchaseMethod'))
   )
 
   // Sort state
@@ -250,6 +262,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     const nextReceiptFilter = parseReceiptFilter(searchParams.get('txReceipt'))
     const nextTransactionTypeFilter = parseTransactionTypeFilter(searchParams.get('txType'))
     const nextSortMode = parseSortMode(searchParams.get('txSort'))
+    const nextPurchaseMethodFilter = parsePurchaseMethodFilter(searchParams.get('txPurchaseMethod'))
 
     const hasChanges =
       searchQuery !== nextSearchQuery ||
@@ -257,7 +270,8 @@ export default function TransactionsList({ projectId: propProjectId, transaction
       sourceFilter !== nextSourceFilter ||
       receiptFilter !== nextReceiptFilter ||
       transactionTypeFilter !== nextTransactionTypeFilter ||
-      sortMode !== nextSortMode
+      sortMode !== nextSortMode ||
+      purchaseMethodFilter !== nextPurchaseMethodFilter
 
     if (!hasChanges) return
 
@@ -268,6 +282,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     if (receiptFilter !== nextReceiptFilter) setReceiptFilter(nextReceiptFilter)
     if (transactionTypeFilter !== nextTransactionTypeFilter) setTransactionTypeFilter(nextTransactionTypeFilter)
     if (sortMode !== nextSortMode) setSortMode(nextSortMode)
+    if (purchaseMethodFilter !== nextPurchaseMethodFilter) setPurchaseMethodFilter(nextPurchaseMethodFilter)
   }, [searchParams])
 
   useEffect(() => {
@@ -291,11 +306,22 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     setParam('txReceipt', receiptFilter, DEFAULT_RECEIPT_FILTER)
     setParam('txType', transactionTypeFilter, DEFAULT_TRANSACTION_TYPE_FILTER)
     setParam('txSort', sortMode, DEFAULT_SORT_MODE)
+    setParam('txPurchaseMethod', purchaseMethodFilter, DEFAULT_PURCHASE_METHOD_FILTER)
 
     if (nextParams.toString() !== searchParams.toString()) {
       setSearchParams(nextParams, { replace: true, state: location.state })
     }
-  }, [filterMode, location.state, receiptFilter, searchQuery, setSearchParams, sortMode, sourceFilter, transactionTypeFilter])
+  }, [
+    filterMode,
+    location.state,
+    purchaseMethodFilter,
+    receiptFilter,
+    searchQuery,
+    setSearchParams,
+    sortMode,
+    sourceFilter,
+    transactionTypeFilter,
+  ])
 
   useEffect(() => {
     if (hasRestoredScrollRef.current || isLoading) return
@@ -460,8 +486,22 @@ export default function TransactionsList({ projectId: propProjectId, transaction
       filtered = filtered.filter(t => (t.transactionType ?? '').toLowerCase() === filterValue)
     }
 
-    if (receiptFilter === 'no-email') {
+    if (receiptFilter === 'yes') {
+      filtered = filtered.filter(t => t.receiptEmailed)
+    } else if (receiptFilter === 'no') {
       filtered = filtered.filter(t => !t.receiptEmailed)
+    }
+
+    if (purchaseMethodFilter !== 'all') {
+      const normalized = (tValue: string | null | undefined) => (tValue ?? '').trim().toLowerCase()
+      const clientValue = normalized('client')
+      const designBusinessValue = normalized('design business')
+      filtered = filtered.filter(t => {
+        const value = normalized(t.paymentMethod)
+        if (purchaseMethodFilter === 'missing') return value.length === 0
+        if (purchaseMethodFilter === 'client-card') return value.includes(clientValue)
+        return value.includes(designBusinessValue)
+      })
     }
 
     // Apply search filter (source/title/type/notes/amount)
@@ -492,7 +532,16 @@ export default function TransactionsList({ projectId: propProjectId, transaction
 
     // Apply sorting
     return sortTransactionsByMode(filtered, sortMode)
-  }, [transactions, filterMode, receiptFilter, sourceFilter, searchQuery, sortMode, transactionTypeFilter])
+  }, [
+    transactions,
+    filterMode,
+    receiptFilter,
+    sourceFilter,
+    searchQuery,
+    sortMode,
+    transactionTypeFilter,
+    purchaseMethodFilter,
+  ])
 
   const handleExportCsv = useCallback(() => {
     if (!transactions.length) return
@@ -720,7 +769,11 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                 if (next) setFilterMenuView('main')
               }}
               className={`filter-button inline-flex items-center justify-center px-3 py-2 border text-sm font-medium rounded-md transition-colors duration-200 ${
-                filterMode === 'all' && sourceFilter === 'all' && receiptFilter === 'all' && transactionTypeFilter === 'all'
+                filterMode === 'all' &&
+                sourceFilter === 'all' &&
+                receiptFilter === 'all' &&
+                transactionTypeFilter === 'all' &&
+                purchaseMethodFilter === 'all'
                   ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
                   : 'border-primary-500 text-primary-600 bg-primary-50 hover:bg-primary-100'
               }`}
@@ -741,80 +794,86 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                         setSourceFilter('all')
                         setReceiptFilter('all')
                         setTransactionTypeFilter('all')
+                        setPurchaseMethodFilter('all')
                         setShowFilterMenu(false)
                       }}
                       className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
-                        filterMode === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                        filterMode === 'all' &&
+                        sourceFilter === 'all' &&
+                        receiptFilter === 'all' &&
+                        transactionTypeFilter === 'all' &&
+                        purchaseMethodFilter === 'all'
+                          ? 'bg-primary-50 text-primary-600'
+                          : 'text-gray-700'
                       }`}
                     >
                       <span>All Transactions</span>
-                      {filterMode === 'all' ? <Check className="h-4 w-4" /> : null}
+                      {filterMode === 'all' &&
+                      sourceFilter === 'all' &&
+                      receiptFilter === 'all' &&
+                      transactionTypeFilter === 'all' &&
+                      purchaseMethodFilter === 'all' ? (
+                        <Check className="h-4 w-4" />
+                      ) : null}
                     </button>
+
                     <button
-                      onClick={() => {
-                        setFilterMode('we-owe')
-                        setShowFilterMenu(false)
-                      }}
-                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
-                        filterMode === 'we-owe' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      onClick={() => setFilterMenuView('transaction-type')}
+                      className={`w-full px-3 py-2 text-sm hover:bg-gray-50 ${
+                        transactionTypeFilter !== 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
                       }`}
+                      aria-label="Transaction type"
                     >
-                      <span>We Owe</span>
-                      {filterMode === 'we-owe' ? <Check className="h-4 w-4" /> : null}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setFilterMode('client-owes')
-                        setShowFilterMenu(false)
-                      }}
-                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
-                        filterMode === 'client-owes' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                      }`}
-                    >
-                      <span>Client Owes</span>
-                      {filterMode === 'client-owes' ? <Check className="h-4 w-4" /> : null}
+                      <div className="flex items-center justify-between">
+                        <span>Transaction Type</span>
+                        <span className="text-xs text-gray-500 truncate max-w-[10rem]">
+                          {transactionTypeFilter === 'all'
+                            ? 'All'
+                            : transactionTypeFilter === 'purchase'
+                            ? 'Purchase'
+                            : 'Return'}
+                        </span>
+                      </div>
                     </button>
 
                     <div className="my-1 border-t border-gray-100" />
 
                     <button
-                      onClick={() => {
-                        setTransactionTypeFilter('purchase')
-                        setShowFilterMenu(false)
-                      }}
-                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
-                        transactionTypeFilter === 'purchase' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      onClick={() => setFilterMenuView('email-receipt')}
+                      className={`w-full px-3 py-2 text-sm hover:bg-gray-50 ${
+                        receiptFilter !== 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
                       }`}
+                      aria-label="Email receipt"
                     >
-                      <span>Purchase</span>
-                      {transactionTypeFilter === 'purchase' ? <Check className="h-4 w-4" /> : null}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setTransactionTypeFilter('return')
-                        setShowFilterMenu(false)
-                      }}
-                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
-                        transactionTypeFilter === 'return' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                      }`}
-                    >
-                      <span>Return</span>
-                      {transactionTypeFilter === 'return' ? <Check className="h-4 w-4" /> : null}
+                      <div className="flex items-center justify-between">
+                        <span>Email Receipt</span>
+                        <span className="text-xs text-gray-500 truncate max-w-[10rem]">
+                          {receiptFilter === 'all' ? 'All' : receiptFilter === 'yes' ? 'Yes' : 'No'}
+                        </span>
+                      </div>
                     </button>
 
                     <div className="my-1 border-t border-gray-100" />
 
                     <button
-                      onClick={() => {
-                        setReceiptFilter(receiptFilter === 'no-email' ? 'all' : 'no-email')
-                        setShowFilterMenu(false)
-                      }}
-                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
-                        receiptFilter === 'no-email' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      onClick={() => setFilterMenuView('purchase-method')}
+                      className={`w-full px-3 py-2 text-sm hover:bg-gray-50 ${
+                        purchaseMethodFilter !== 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
                       }`}
+                      aria-label="Purchased by"
                     >
-                      <span>No Email Receipt</span>
-                      {receiptFilter === 'no-email' ? <Check className="h-4 w-4" /> : null}
+                      <div className="flex items-center justify-between">
+                        <span>Purchased By</span>
+                        <span className="text-xs text-gray-500 truncate max-w-[10rem]">
+                          {purchaseMethodFilter === 'all'
+                            ? 'All'
+                            : purchaseMethodFilter === 'client-card'
+                            ? 'Client'
+                            : purchaseMethodFilter === 'missing'
+                            ? 'Not Set'
+                            : 'Design Business'}
+                        </span>
+                      </div>
                     </button>
 
                     <div className="my-1 border-t border-gray-100" />
@@ -829,12 +888,33 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                       <div className="flex items-center justify-between">
                         <span>Source</span>
                         <span className="text-xs text-gray-500 truncate max-w-[10rem]">
-                          {sourceFilter === 'all' ? 'All sources' : sourceFilter}
+                          {sourceFilter === 'all' ? 'All' : sourceFilter}
+                        </span>
+                      </div>
+                    </button>
+
+                    <div className="my-1 border-t border-gray-100" />
+
+                    <button
+                      onClick={() => setFilterMenuView('reimbursement-status')}
+                      className={`w-full px-3 py-2 text-sm hover:bg-gray-50 ${
+                        filterMode !== 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                      aria-label="Reimbursement status"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span>Reimbursement</span>
+                        <span className="text-xs text-gray-500 truncate max-w-[10rem]">
+                          {filterMode === 'all'
+                            ? 'All'
+                            : filterMode === 'we-owe'
+                            ? 'Owed to Client'
+                            : 'Owed to Design Business'}
                         </span>
                       </div>
                     </button>
                   </div>
-                ) : (
+                ) : filterMenuView === 'source' ? (
                   <div className="py-1">
                     <button
                       onClick={() => setFilterMenuView('main')}
@@ -875,6 +955,223 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                       </button>
                     ))}
                   </div>
+                ) : filterMenuView === 'purchase-method' ? (
+                  <div className="py-1">
+                    <button
+                      onClick={() => setFilterMenuView('main')}
+                      className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      ← Back
+                    </button>
+
+                    <div className="my-1 border-t border-gray-100" />
+
+                    <button
+                      onClick={() => {
+                        setPurchaseMethodFilter('all')
+                        setShowFilterMenu(false)
+                        setFilterMenuView('main')
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        purchaseMethodFilter === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>All</span>
+                      {purchaseMethodFilter === 'all' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setPurchaseMethodFilter('client-card')
+                        setShowFilterMenu(false)
+                        setFilterMenuView('main')
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        purchaseMethodFilter === 'client-card' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>Client</span>
+                      {purchaseMethodFilter === 'client-card' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setPurchaseMethodFilter('design-business')
+                        setShowFilterMenu(false)
+                        setFilterMenuView('main')
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        purchaseMethodFilter === 'design-business' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>Design Business</span>
+                      {purchaseMethodFilter === 'design-business' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setPurchaseMethodFilter('missing')
+                        setShowFilterMenu(false)
+                        setFilterMenuView('main')
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        purchaseMethodFilter === 'missing' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>Not Set</span>
+                      {purchaseMethodFilter === 'missing' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+                  </div>
+                ) : filterMenuView === 'reimbursement-status' ? (
+                  <div className="py-1">
+                    <button
+                      onClick={() => setFilterMenuView('main')}
+                      className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      ← Back
+                    </button>
+
+                    <div className="my-1 border-t border-gray-100" />
+
+                    <button
+                      onClick={() => {
+                        setFilterMode('all')
+                        setShowFilterMenu(false)
+                        setFilterMenuView('main')
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        filterMode === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>All Statuses</span>
+                      {filterMode === 'all' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setFilterMode('we-owe')
+                        setShowFilterMenu(false)
+                        setFilterMenuView('main')
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        filterMode === 'we-owe' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>Owed to Client</span>
+                      {filterMode === 'we-owe' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setFilterMode('client-owes')
+                        setShowFilterMenu(false)
+                        setFilterMenuView('main')
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        filterMode === 'client-owes' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>Owed to Design Business</span>
+                      {filterMode === 'client-owes' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+                  </div>
+                ) : filterMenuView === 'transaction-type' ? (
+                  <div className="py-1">
+                    <button
+                      onClick={() => setFilterMenuView('main')}
+                      className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      ← Back
+                    </button>
+
+                    <div className="my-1 border-t border-gray-100" />
+
+                    <button
+                      onClick={() => {
+                        setTransactionTypeFilter('all')
+                        setShowFilterMenu(false)
+                        setFilterMenuView('main')
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        transactionTypeFilter === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>All Types</span>
+                      {transactionTypeFilter === 'all' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setTransactionTypeFilter('purchase')
+                        setShowFilterMenu(false)
+                        setFilterMenuView('main')
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        transactionTypeFilter === 'purchase' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>Purchase</span>
+                      {transactionTypeFilter === 'purchase' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setTransactionTypeFilter('return')
+                        setShowFilterMenu(false)
+                        setFilterMenuView('main')
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        transactionTypeFilter === 'return' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>Return</span>
+                      {transactionTypeFilter === 'return' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="py-1">
+                    <button
+                      onClick={() => setFilterMenuView('main')}
+                      className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      ← Back
+                    </button>
+
+                    <div className="my-1 border-t border-gray-100" />
+
+                    <button
+                      onClick={() => {
+                        setReceiptFilter('all')
+                        setShowFilterMenu(false)
+                        setFilterMenuView('main')
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        receiptFilter === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>All</span>
+                      {receiptFilter === 'all' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setReceiptFilter('yes')
+                        setShowFilterMenu(false)
+                        setFilterMenuView('main')
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        receiptFilter === 'yes' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>Yes</span>
+                      {receiptFilter === 'yes' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setReceiptFilter('no')
+                        setShowFilterMenu(false)
+                        setFilterMenuView('main')
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        receiptFilter === 'no' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>No</span>
+                      {receiptFilter === 'no' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+                  </div>
                 )}
               </div>
             )}
@@ -904,7 +1201,12 @@ export default function TransactionsList({ projectId: propProjectId, transaction
             No transactions found
           </h3>
           <p className="text-sm text-gray-500 mb-4">
-            {searchQuery || filterMode !== 'all' || sourceFilter !== 'all' || receiptFilter !== 'all'
+            {searchQuery ||
+            filterMode !== 'all' ||
+            sourceFilter !== 'all' ||
+            receiptFilter !== 'all' ||
+            transactionTypeFilter !== 'all' ||
+            purchaseMethodFilter !== 'all'
               ? 'Try adjusting your search or filter criteria.'
               : 'No transactions found.'
             }

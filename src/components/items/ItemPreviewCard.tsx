@@ -1,12 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Camera, ChevronDown, Receipt, Bookmark, Edit, Copy, X, Link2Off } from 'lucide-react'
-import DuplicateQuantityMenu from '@/components/ui/DuplicateQuantityMenu'
+import React, { useEffect, useRef, useState } from 'react'
+import { Camera, Receipt, Bookmark } from 'lucide-react'
 import ContextLink from '@/components/ContextLink'
-import { normalizeDisposition, displayDispositionLabel, DISPOSITION_OPTIONS, dispositionsEqual } from '@/utils/dispositionUtils'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
 import { useTransactionDisplayInfo } from '@/hooks/useTransactionDisplayInfo'
 import { offlineMediaService } from '@/services/offlineMediaService'
+import ItemActionsMenu from '@/components/items/ItemActionsMenu'
+import { displayDispositionLabel } from '@/utils/dispositionUtils'
 import type { ItemDisposition, ItemImage } from '@/types'
 
 // Common interface for item data that can be displayed
@@ -20,6 +20,7 @@ export interface ItemPreviewData {
   marketValue?: string
   disposition?: ItemDisposition | string | null
   images?: ItemImage[]
+  projectId?: string | null
   transactionId?: string | null
   source?: string
   space?: string
@@ -39,14 +40,15 @@ interface ItemPreviewCardProps {
   onDuplicate?: (itemId: string, quantity?: number) => void | Promise<void>
   onEdit?: (href: string) => void
   onDelete?: (itemId: string) => void
-  onRemoveFromTransaction?: (itemId: string) => void
-  onDispositionUpdate?: (itemId: string, disposition: ItemDisposition) => void
+  onAddToTransaction?: (itemId: string) => void
+  onSellToBusiness?: (itemId: string) => void
+  onSellToProject?: (itemId: string) => void
+  onMoveToBusiness?: (itemId: string) => void
+  onMoveToProject?: (itemId: string) => void
+  onChangeStatus?: (itemId: string, disposition: ItemDisposition) => void
   onAddImage?: (itemId: string) => void
   // State
   uploadingImages?: Set<string>
-  openDispositionMenu?: string | null
-  setOpenDispositionMenu?: (itemId: string | null) => void
-  deletingItemIds?: Set<string>
   // Navigation
   itemLink?: string // Custom link for item detail page
   onClick?: () => void // Custom click handler for item detail
@@ -72,13 +74,14 @@ export default function ItemPreviewCard({
   onDuplicate,
   onEdit,
   onDelete,
-  onRemoveFromTransaction,
-  onDispositionUpdate,
+  onAddToTransaction,
+  onSellToBusiness,
+  onSellToProject,
+  onMoveToBusiness,
+  onMoveToProject,
+  onChangeStatus,
   onAddImage,
   uploadingImages = new Set(),
-  openDispositionMenu,
-  setOpenDispositionMenu,
-  deletingItemIds = new Set(),
   itemLink,
   onClick,
   editLink,
@@ -149,10 +152,6 @@ export default function ItemPreviewCard({
   const showTransactionLink = context !== 'transaction' // Hide in transaction context
   const showBookmark = (context === 'project' || context === 'businessInventory' || context === 'transaction') && !!onBookmark
   const showDuplicate = (context === 'project' || context === 'businessInventory' || context === 'transaction') && !!onDuplicate
-  const showEdit = !!onEdit
-  const showDelete = false // Never show delete in canonical layout (use selection + bulk actions)
-  const showRemoveFromTransaction = context === 'transaction' && !!onRemoveFromTransaction
-  const showDisposition = !!onDispositionUpdate
   const showLocation = true // Always show location if available
   const showNotes = context === 'transaction' // Show notes in transaction context
   const showMarketValue = context !== 'project' && context !== 'businessInventory'
@@ -160,6 +159,7 @@ export default function ItemPreviewCard({
   const { buildContextUrl } = useNavigationContext()
   
   const itemId = item.itemId || item.id || ''
+  const isPersisted = Boolean(item.itemId || (item.id && !item.id.toString().startsWith('item-')))
   
   // Fetch transaction display info if not provided and transactionId exists
   const shouldFetchTransactionInfo = showTransactionLink && item.transactionId && !providedTransactionDisplayInfo
@@ -204,41 +204,6 @@ export default function ItemPreviewCard({
     return Number.isFinite(n)
   }
 
-  const getDispositionBadgeClasses = (disposition?: string | null) => {
-    const baseClasses = 'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium cursor-pointer transition-colors hover:opacity-80'
-    const d = normalizeDisposition(disposition)
-
-    switch (d) {
-      case 'to purchase':
-        return `${baseClasses} bg-amber-100 text-amber-800`
-      case 'purchased':
-        return `${baseClasses} bg-primary-100 text-primary-600`
-      case 'to return':
-        return `${baseClasses} bg-red-100 text-red-700`
-      case 'returned':
-        return `${baseClasses} bg-red-800 text-red-100`
-      case 'inventory':
-        return `${baseClasses} bg-primary-100 text-primary-600`
-      default:
-        return `${baseClasses} bg-gray-100 text-gray-800`
-    }
-  }
-
-  const toggleDispositionMenu = (itemId: string) => {
-    if (setOpenDispositionMenu) {
-      setOpenDispositionMenu(openDispositionMenu === itemId ? null : itemId)
-    }
-  }
-
-  const updateDisposition = async (itemId: string, newDisposition: ItemDisposition) => {
-    if (onDispositionUpdate) {
-      onDispositionUpdate(itemId, newDisposition)
-    }
-    if (setOpenDispositionMenu) {
-      setOpenDispositionMenu(null)
-    }
-  }
-
   // Determine the link destination based on context
   const getItemLink = () => {
     if (itemLink) return itemLink
@@ -265,13 +230,18 @@ export default function ItemPreviewCard({
     return '#'
   }
 
+  const handleDuplicate = (quantity: number) => {
+    if (!onDuplicate) return
+    onDuplicate(itemId, quantity)
+  }
+
   const hasProjectPrice = hasNonEmptyMoneyString(item.projectPrice)
   const hasPurchasePrice = hasNonEmptyMoneyString(item.purchasePrice)
   const primaryPrice = hasProjectPrice ? item.projectPrice : hasPurchasePrice ? item.purchasePrice : undefined
   const priceLabel = primaryPrice ? formatCurrency(primaryPrice) : null
   const locationValue = context === 'project' ? item.space : item.businessInventoryLocation
 
-  const hasActions = showBookmark || showEdit || showDuplicate || showDelete || showDisposition || showRemoveFromTransaction
+  const hasActions = showBookmark || showDuplicate || onEdit || onAddToTransaction || onSellToBusiness || onSellToProject || onMoveToBusiness || onMoveToProject || onChangeStatus || onDelete
 
   const cardContent = (
     <>
@@ -303,6 +273,16 @@ export default function ItemPreviewCard({
           {/* Action buttons on the right */}
           {hasActions && (
             <div className="flex items-center space-x-2 ml-auto">
+              {duplicateCount && duplicateCount > 1 && duplicateIndex ? (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
+                  {duplicateIndex}/{duplicateCount}
+                </span>
+              ) : null}
+              {item.disposition ? (
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-medium bg-primary-100 text-primary-800">
+                  {displayDispositionLabel(item.disposition)}
+                </span>
+              ) : null}
               {showBookmark && onBookmark && (
                 <button
                   onClick={(e) => {
@@ -310,109 +290,83 @@ export default function ItemPreviewCard({
                     e.stopPropagation()
                     onBookmark(itemId)
                   }}
-                  className={`inline-flex items-center justify-center p-1 text-sm font-medium transition-colors ${
+                  className={`inline-flex items-center justify-center p-1.5 text-sm font-medium transition-colors ${
                     item.bookmark
                       ? 'text-red-700 bg-transparent'
                       : 'text-primary-600 bg-transparent'
                   } focus:outline-none`}
                   title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
                 >
-                  <Bookmark className="h-4 w-4" fill={item.bookmark ? 'currentColor' : 'none'} />
+                  <Bookmark className="h-5 w-5" fill={item.bookmark ? 'currentColor' : 'none'} />
                 </button>
               )}
-              {showEdit && onEdit && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    onEdit(getEditLink())
-                  }}
-                  className="inline-flex items-center justify-center p-1 text-sm font-medium text-primary-600 bg-transparent focus:outline-none transition-colors"
-                  title="Edit item"
-                >
-                  <Edit className="h-4 w-4" />
-                </button>
-              )}
-              {showDuplicate && onDuplicate && (
-                <DuplicateQuantityMenu
-                  onDuplicate={(quantity) => onDuplicate(itemId, quantity)}
-                  buttonClassName="inline-flex items-center justify-center p-1 text-sm font-medium text-primary-600 bg-transparent focus:outline-none transition-colors"
-                  buttonTitle="Duplicate item"
-                  buttonContent={<Copy className="h-4 w-4" />}
+              {hasActions && (
+                <ItemActionsMenu
+                  itemId={itemId}
+                  itemProjectId={item.projectId ?? projectId ?? null}
+                  itemTransactionId={item.transactionId ?? null}
+                  disposition={item.disposition}
+                  isPersisted={isPersisted}
+                  currentProjectId={projectId ?? null}
+                  triggerSize="md"
+                  onEdit={
+                    onEdit
+                      ? () => {
+                          onEdit(getEditLink())
+                        }
+                      : undefined
+                  }
+                  onDuplicate={showDuplicate ? handleDuplicate : undefined}
+                  onAddToTransaction={
+                    onAddToTransaction
+                      ? () => {
+                          onAddToTransaction(itemId)
+                        }
+                      : undefined
+                  }
+                  onSellToBusiness={
+                    onSellToBusiness
+                      ? () => {
+                          onSellToBusiness(itemId)
+                        }
+                      : undefined
+                  }
+                  onSellToProject={
+                    onSellToProject
+                      ? () => {
+                          onSellToProject(itemId)
+                        }
+                      : undefined
+                  }
+                  onMoveToBusiness={
+                    onMoveToBusiness
+                      ? () => {
+                          onMoveToBusiness(itemId)
+                        }
+                      : undefined
+                  }
+                  onMoveToProject={
+                    onMoveToProject
+                      ? () => {
+                          onMoveToProject(itemId)
+                        }
+                      : undefined
+                  }
+                  onChangeStatus={
+                    onChangeStatus
+                      ? (nextStatus) => {
+                          onChangeStatus(itemId, nextStatus)
+                        }
+                      : undefined
+                  }
+                  onDelete={
+                    onDelete
+                      ? () => {
+                          onDelete(itemId)
+                        }
+                      : undefined
+                  }
                 />
-              )}
-              {showRemoveFromTransaction && onRemoveFromTransaction && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    onRemoveFromTransaction(itemId)
-                  }}
-                  className="inline-flex items-center justify-center p-1 text-sm font-medium text-gray-500 hover:text-gray-900 bg-transparent focus:outline-none transition-colors"
-                  title="Remove from transaction"
-                  aria-label="Remove from transaction"
-                >
-                  <Link2Off className="h-4 w-4" />
-                </button>
-              )}
-              {showDelete && onDelete && (
-                <button
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    onDelete(itemId)
-                  }}
-                  className="text-red-600 hover:text-red-900 p-1 disabled:opacity-50 disabled:cursor-not-allowed"
-                  title={deletingItemIds.has(itemId) ? 'Deleting item' : 'Delete item'}
-                  disabled={deletingItemIds.has(itemId)}
-                >
-                  {deletingItemIds.has(itemId) ? (
-                    <span className="text-xs font-medium">...</span>
-                  ) : (
-                    <X className="h-4 w-4" />
-                  )}
-                </button>
-              )}
-              {showDisposition && (
-                <div className="relative">
-                  <span
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      toggleDispositionMenu(itemId)
-                    }}
-                    className={`disposition-badge ${getDispositionBadgeClasses(item.disposition)}`}
-                    title="Change disposition"
-                  >
-                    {displayDispositionLabel(item.disposition) || 'Not Set'}
-                    <ChevronDown className="h-3 w-3 ml-1" />
-                  </span>
-
-                  {/* Dropdown menu */}
-                  {openDispositionMenu === itemId && (
-                    <div className="disposition-menu absolute top-full right-0 mt-1 w-32 bg-white border border-gray-200 rounded-md shadow-lg z-40">
-                      <div className="py-1">
-                        {DISPOSITION_OPTIONS.map((disposition) => (
-                          <button
-                            key={disposition}
-                            onClick={(e) => {
-                              e.preventDefault()
-                              e.stopPropagation()
-                              updateDisposition(itemId, disposition)
-                            }}
-                            className={`block w-full text-left px-3 py-2 text-xs hover:bg-gray-50 ${
-                              dispositionsEqual(item.disposition, disposition) ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
-                            }`}
-                          >
-                            {displayDispositionLabel(disposition)}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
               )}
             </div>
           )}
@@ -453,11 +407,6 @@ export default function ItemPreviewCard({
                 <Camera className="h-5 w-5" />
               </div>
             )
-          )}
-          {duplicateCount && duplicateCount > 1 && duplicateIndex && (
-            <span className="mt-1 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
-              ×{duplicateIndex}/{duplicateCount}
-            </span>
           )}
         </div>
 

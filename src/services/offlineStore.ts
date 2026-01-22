@@ -59,9 +59,9 @@ interface DBTransaction {
   status?: 'pending' | 'completed' | 'canceled'
   reimbursementType?: string | null
   triggerEvent?: string
-  taxRatePreset?: string
-  taxRatePct?: number
-  subtotal?: string
+  taxRatePreset?: string | null
+  taxRatePct?: number | null
+  subtotal?: string | null
   needsReview?: boolean
   sumItemPurchasePrices?: string
   itemIds?: string[]
