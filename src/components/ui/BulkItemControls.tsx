@@ -86,10 +86,10 @@ export default function BulkItemControls({
 
   const getCanonicalTransactionTitle = (transaction: Transaction): string => {
     if (transaction.transactionId?.startsWith('INV_SALE_')) {
-      return 'Company Inventory Sale'
+      return 'Design Business Inventory Sale'
     }
     if (transaction.transactionId?.startsWith('INV_PURCHASE_')) {
-      return 'Company Inventory Purchase'
+      return 'Design Business Inventory Purchase'
     }
     return transaction.source
   }

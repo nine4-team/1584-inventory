@@ -28,9 +28,9 @@ export async function getTransactionDisplayInfo(
     // Use the same logic as getCanonicalTransactionTitle
     let title: string
     if (transaction.transactionId?.startsWith('INV_SALE_')) {
-      title = 'Company Inventory Sale'
+      title = 'Design Business Inventory Sale'
     } else if (transaction.transactionId?.startsWith('INV_PURCHASE_')) {
-      title = 'Company Inventory Purchase'
+      title = 'Design Business Inventory Purchase'
     } else {
       title = transaction.source
     }

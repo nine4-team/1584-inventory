@@ -181,9 +181,13 @@ export const isCanonicalTransactionId = (transactionId: string | null | undefine
   return CANONICAL_TRANSACTION_PREFIXES.some(prefix => transactionId.startsWith(prefix))
 }
 
-const isCanonicalAmountTransactionId = (transactionId: string | null | undefined): boolean => {
+export const isCanonicalSaleOrPurchaseTransactionId = (transactionId: string | null | undefined): boolean => {
   if (!transactionId) return false
   return transactionId.startsWith('INV_PURCHASE_') || transactionId.startsWith('INV_SALE_')
+}
+
+const isCanonicalAmountTransactionId = (transactionId: string | null | undefined): boolean => {
+  return isCanonicalSaleOrPurchaseTransactionId(transactionId)
 }
 
 const getCanonicalBudgetCategoryId = async (accountId: string): Promise<string | null> => {
@@ -2989,9 +2993,13 @@ export const transactionService = {
     }
   },
 
-  // Move a non-canonical transaction (and its current items) to another project
-  async moveTransactionToProject(accountId: string, transactionId: string, nextProjectId: string): Promise<void> {
-    if (!accountId || !transactionId || !nextProjectId) return
+  // Move a non-canonical sale/purchase transaction (and its current items) to another project or business inventory
+  async moveTransactionToProject(
+    accountId: string,
+    transactionId: string,
+    nextProjectId: string | null
+  ): Promise<void> {
+    if (!accountId || !transactionId) return
 
     const refreshCaches = (previousProjectId: string | null, nextProjectIdValue: string | null) => {
       const queryClient = tryGetQueryClient()
@@ -3021,7 +3029,7 @@ export const transactionService = {
       }
     }
 
-    const updateOfflineItemsForTransaction = async (newProjectId: string, shouldQueue: boolean) => {
+    const updateOfflineItemsForTransaction = async (newProjectId: string | null, shouldQueue: boolean) => {
       await offlineStore.init().catch(() => {})
       const cachedItems = await offlineStore.getAllItems().catch(() => [])
       const itemsToUpdate = cachedItems.filter(item =>
@@ -3045,7 +3053,7 @@ export const transactionService = {
       }
     }
 
-    const updateOfflineTransaction = async (newProjectId: string) => {
+    const updateOfflineTransaction = async (newProjectId: string | null) => {
       await offlineStore.init().catch(() => {})
       const cached = await offlineStore.getTransactionById(transactionId).catch(() => null)
       if (!cached) return
@@ -3059,7 +3067,7 @@ export const transactionService = {
     if (!transaction) {
       throw new Error('Transaction not found')
     }
-    if (isCanonicalTransactionId(transaction.transactionId)) {
+    if (isCanonicalSaleOrPurchaseTransactionId(transaction.transactionId)) {
       return
     }
     const previousProjectId = transaction.projectId ?? projectId ?? null

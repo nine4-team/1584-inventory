@@ -124,7 +124,7 @@ export default function CollapsedDuplicateGroup({
       {isExpanded && (
         <div
           id={`group-${groupId}-content`}
-          className="border-l-2 border-gray-200 ml-4 pl-4 pt-3 space-y-3"
+          className="border-l-2 border-gray-200 ml-2 pl-2 pt-3 space-y-3 sm:ml-4 sm:pl-4"
         >
           {children}
         </div>
