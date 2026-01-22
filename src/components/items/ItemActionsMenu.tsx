@@ -64,9 +64,8 @@ export default function ItemActionsMenu({
   const sellToBusinessDisabledReason = useMemo(() => {
     if (isUnpersisted) return 'Save this item before selling.'
     if (isInBusinessInventory) return 'This item is already in business inventory.'
-    if (isTiedToTransaction) return transactionMoveDisabledReason
     return null
-  }, [isInBusinessInventory, isTiedToTransaction, isUnpersisted, transactionMoveDisabledReason])
+  }, [isInBusinessInventory, isUnpersisted])
 
   const moveToBusinessDisabledReason = useMemo(() => {
     if (isUnpersisted) return 'Save this item before moving.'
@@ -86,14 +85,10 @@ export default function ItemActionsMenu({
   const sellToProjectDisabledReason = useMemo(() => {
     if (isUnpersisted) return 'Save this item before selling.'
     if (isInBusinessInventory) return 'This item is already in business inventory. Use Move to Project.'
-    if (isTiedToTransaction && !isCanonicalTransaction) return transactionMoveDisabledReason
     return null
   }, [
     isUnpersisted,
-    isInBusinessInventory,
-    isTiedToTransaction,
-    isCanonicalTransaction,
-    transactionMoveDisabledReason
+    isInBusinessInventory
   ])
 
   const duplicateDisabledReason = useMemo(() => {
@@ -256,7 +251,7 @@ export default function ItemActionsMenu({
         />
       )}
       {renderMenuItem({
-        label: 'Add To Transaction…',
+        label: 'Associate With Transaction…',
         onClick: onAddToTransaction,
         disabled: Boolean(addToTransactionDisabledReason),
         disabledReason: addToTransactionDisabledReason
@@ -296,6 +291,11 @@ export default function ItemActionsMenu({
       {openSubmenu === 'move' && (
         <div className="border-t border-gray-100 bg-gray-50">
           <div className="py-1 pl-3">
+            {isTiedToTransaction && transactionMoveDisabledReason && (
+               <div className="px-3 py-2 text-xs text-gray-500 italic">
+                 {transactionMoveDisabledReason}
+               </div>
+            )}
             {renderMenuItem({
               label: 'Move To Design Business',
               onClick: onMoveToBusiness,

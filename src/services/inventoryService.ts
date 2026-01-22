@@ -4737,12 +4737,11 @@ export const unifiedItemsService = {
       console.warn('Failed to inherit tax_rate_pct when updating item:', e)
     }
 
-    // If transaction_id is being set and the item currently has a 'to return'
-    // disposition, and the target transaction is a Return, automatically mark
-    // the item as 'returned' so it reflects the transaction assignment.
+    // If transaction_id is being set and the target transaction is a Return,
+    // automatically mark the item as 'returned' so it reflects the assignment.
     try {
       const willSetTransaction = updates.transactionId !== undefined && updates.transactionId !== null
-      if (willSetTransaction && existingItem?.disposition === 'to return') {
+      if (willSetTransaction) {
         const txId = updates.transactionId as string
         if (txId) {
           const { data: txData } = await supabase
@@ -4985,13 +4984,30 @@ export const unifiedItemsService = {
 
     await ensureAuthenticatedForDatabase()
 
-    // Online: Use updateItem (which handles lineage etc) + direct transaction update
-    await Promise.all(itemIds.map(itemId => 
+    // Online: Use updateItem + lineage edge preservation for moves
+    await Promise.all(itemIds.map(itemId =>
       this.updateItem(accountId, itemId, {
         transactionId: transactionId,
         latestTransactionId: transactionId,
       })
     ))
+
+    if (itemPreviousTransactionId && itemPreviousTransactionId !== transactionId) {
+      await Promise.all(itemIds.map(async (itemId) => {
+        try {
+          await lineageService.appendItemLineageEdge(
+            accountId,
+            itemId,
+            itemPreviousTransactionId,
+            transactionId,
+            'Moved to transaction'
+          )
+          await lineageService.updateItemLineagePointers(accountId, itemId, transactionId)
+        } catch (lineageError) {
+          console.warn('assignItemsToTransaction - failed to append lineage edge:', lineageError)
+        }
+      }))
+    }
 
     // Update target transaction
     try {
@@ -5211,14 +5227,6 @@ export const unifiedItemsService = {
             actualProjectId: item.projectId ?? null
           }
         }
-      )
-    }
-
-    if (item.transactionId && !isCanonicalTransactionId(item.transactionId)) {
-      throw new SellItemToProjectError(
-        'NON_CANONICAL_TRANSACTION',
-        'Item is tied to a non-canonical transaction. Move the transaction instead.',
-        { details: { transactionId: item.transactionId } }
       )
     }
 
@@ -5523,7 +5531,9 @@ export const unifiedItemsService = {
     space?: string
   ): Promise<string> {
     // Remove item from existing Sale transaction
-    await this.removeItemFromTransaction(accountId, item.itemId, currentTransactionId, finalAmount)
+    await this.removeItemFromTransaction(accountId, item.itemId, currentTransactionId, finalAmount, {
+      preserveEmptyTransaction: true
+    })
 
     const { restoredTransactionId, restorationStatus } = await this._restoreItemAfterSaleRemoval(
       accountId,
@@ -5590,8 +5600,10 @@ export const unifiedItemsService = {
   ): Promise<string> {
     const purchaseTransactionId = `INV_PURCHASE_${newProjectId}`
 
-    // Remove item from existing Sale transaction
-    await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount)
+    // Remove item from existing Sale transaction but preserve the canonical sale record
+    await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount, {
+      preserveEmptyTransaction: true
+    })
 
     // Add item to Purchase transaction for new project (create if none)
     await this.addItemToTransaction(accountId, itemId, purchaseTransactionId, finalAmount, 'Purchase', 'Inventory allocation', notes)
@@ -5644,7 +5656,9 @@ export const unifiedItemsService = {
     space?: string
   ): Promise<string> {
     // Remove item from existing Purchase transaction
-    await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount)
+    await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount, {
+      preserveEmptyTransaction: true
+    })
 
     // Update item status to inventory
     await this.updateItem(accountId, itemId, {
@@ -5697,7 +5711,9 @@ export const unifiedItemsService = {
     const saleTransactionId = `INV_SALE_${newProjectId}`
 
     // Remove item from existing Purchase transaction
-    await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount)
+    await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount, {
+      preserveEmptyTransaction: true
+    })
 
     // Add item to Sale transaction for new project (create if none)
     await this.addItemToTransaction(accountId, itemId, saleTransactionId, finalAmount, 'To Inventory', 'Inventory sale', notes)
@@ -5791,7 +5807,13 @@ export const unifiedItemsService = {
   },
 
   // Helper: Remove item from transaction and update amounts
-  async removeItemFromTransaction(accountId: string, itemId: string, transactionId: string, _itemAmount: string): Promise<void> {
+  async removeItemFromTransaction(
+    accountId: string,
+    itemId: string,
+    transactionId: string,
+    _itemAmount: string,
+    options?: { preserveEmptyTransaction?: boolean }
+  ): Promise<void> {
     await ensureAuthenticatedForDatabase()
 
     // Get the transaction
@@ -5812,6 +5834,38 @@ export const unifiedItemsService = {
     const shouldRecalculateAmount = isCanonicalTransactionId(transactionId)
 
     if (updatedItemIds.length === 0) {
+      if (options?.preserveEmptyTransaction) {
+        const updateData: Record<string, any> = {
+          item_ids: [],
+          updated_at: new Date().toISOString()
+        }
+
+        try {
+          const { error: updateError } = await supabase
+            .from('transactions')
+            .update(updateData)
+            .eq('account_id', accountId)
+            .eq('transaction_id', transactionId)
+
+          if (updateError) throw updateError
+
+          if (shouldRecalculateAmount) {
+            console.log('🧾 Preserved empty canonical transaction amount:', transactionId)
+          } else {
+            console.log('🧾 Preserved empty transaction:', transactionId)
+          }
+
+          try {
+            await auditService.logTransactionStateChange(accountId, transactionId, 'updated', transactionData, updateData)
+          } catch (auditError) {
+            console.warn('⚠️ Failed to log preserved empty transaction update:', auditError)
+          }
+        } catch (error) {
+          console.error('❌ Failed to preserve empty transaction:', transactionId, error)
+        }
+        return
+      }
+
       // No items left - delete transaction
       try {
         const { error: deleteError } = await supabase
@@ -5835,6 +5889,34 @@ export const unifiedItemsService = {
         // Don't throw - allow the allocation to continue even if deletion fails
       }
     } else {
+      if (options?.preserveEmptyTransaction && shouldRecalculateAmount) {
+        const updateData = {
+          item_ids: updatedItemIds,
+          updated_at: new Date().toISOString()
+        }
+
+        try {
+          const { error: updateError } = await supabase
+            .from('transactions')
+            .update(updateData)
+            .eq('account_id', accountId)
+            .eq('transaction_id', transactionId)
+
+          if (updateError) throw updateError
+
+          console.log('🧾 Preserved canonical transaction amount after removal:', transactionId)
+
+          try {
+            await auditService.logTransactionStateChange(accountId, transactionId, 'updated', transactionData, updateData)
+          } catch (auditError) {
+            console.warn('⚠️ Failed to log preserved transaction update:', auditError)
+          }
+        } catch (error) {
+          console.error('❌ Failed to preserve canonical transaction amount after removal:', transactionId, error)
+        }
+        return
+      }
+
       if (!shouldRecalculateAmount) {
         console.info('ℹ️ Skipping amount recalculation for non-canonical transaction removal', {
           transactionId,
@@ -6137,7 +6219,9 @@ export const unifiedItemsService = {
           // A.1: Remove item from Sale and DO NOT add to Purchase. Assign back to
           // the same project (mark allocated) but do not create an INV_PURCHASE.
           console.log('📋 Batch A.1: Item in sale for target project — removing from sale and assigning to project', itemId)
-          await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount)
+          await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount, {
+            preserveEmptyTransaction: true
+          })
           const { restoredTransactionId } = await this._restoreItemAfterSaleRemoval(
             accountId,
             item,
@@ -6162,7 +6246,9 @@ export const unifiedItemsService = {
         } else {
           // A.2: Remove from Sale then add to Purchase for target project
           console.log('📋 Batch A.2: Item in sale for different project — moving to purchase for target project', itemId)
-          await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount)
+          await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount, {
+            preserveEmptyTransaction: true
+          })
           await this.addItemToTransaction(accountId, itemId, canonicalTransactionId, finalAmount, 'Purchase', 'Inventory allocation', allocationData.notes)
           await this.updateItem(accountId, itemId, {
             projectId: projectId,
@@ -6300,9 +6386,11 @@ export const unifiedItemsService = {
     // Remove item from existing Purchase transaction and return it to inventory.
     // Per allocation rules, do NOT create an INV_SALE when the item was part of
     // an INV_PURCHASE for the same project. Simply remove the item from the
-    // purchase (the helper will delete the purchase if empty), then update the
-    // item to reflect that it's back in business inventory.
-    await this.removeItemFromTransaction(accountId, item.itemId, currentTransactionId, finalAmount)
+    // purchase (preserving empty canonical rows for lineage history), then update
+    // the item to reflect that it's back in business inventory.
+    await this.removeItemFromTransaction(accountId, item.itemId, currentTransactionId, finalAmount, {
+      preserveEmptyTransaction: true
+    })
 
     // Update item status to inventory and clear transaction linkage for canonical state
     await this.updateItem(accountId, item.itemId, {
@@ -6884,12 +6972,13 @@ export const deallocationService = {
         if (purchaseProjectId === projectId) {
           console.log('🔁 Detected purchase-reversion: removing from INV_PURCHASE and returning to inventory')
 
-          // Remove item from the existing purchase (will delete if empty)
+          // Remove item from the existing purchase (preserve empty canonical row for lineage)
           await unifiedItemsService.removeItemFromTransaction(
             accountId,
             item.itemId,
             item.transactionId,
-            item.projectPrice || item.purchasePrice || item.marketValue || '0.00'
+            item.projectPrice || item.purchasePrice || item.marketValue || '0.00',
+            { preserveEmptyTransaction: true }
           )
 
           // Update the item to reflect it's back in business inventory
@@ -6901,6 +6990,14 @@ export const deallocationService = {
             previousProjectId,
             lastUpdated: new Date().toISOString()
           })
+
+          // Append lineage edge and update pointers
+          try {
+            await lineageService.appendItemLineageEdge(accountId, item.itemId, item.transactionId, null)
+            await lineageService.updateItemLineagePointers(accountId, item.itemId, null)
+          } catch (lineageError) {
+            console.warn('⚠️ Failed to append lineage edge (non-critical):', lineageError)
+          }
 
           try {
             await auditService.logAllocationEvent(accountId, 'deallocation', itemId, null, item.transactionId, {

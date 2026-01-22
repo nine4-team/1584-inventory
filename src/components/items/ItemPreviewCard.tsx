@@ -279,7 +279,7 @@ export default function ItemPreviewCard({
                 </span>
               ) : null}
               {item.disposition ? (
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-medium bg-primary-100 text-primary-800">
                   {displayDispositionLabel(item.disposition)}
                 </span>
               ) : null}
@@ -290,14 +290,14 @@ export default function ItemPreviewCard({
                     e.stopPropagation()
                     onBookmark(itemId)
                   }}
-                  className={`inline-flex items-center justify-center p-1 text-sm font-medium transition-colors ${
+                  className={`inline-flex items-center justify-center p-1.5 text-sm font-medium transition-colors ${
                     item.bookmark
                       ? 'text-red-700 bg-transparent'
                       : 'text-primary-600 bg-transparent'
                   } focus:outline-none`}
                   title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
                 >
-                  <Bookmark className="h-4 w-4" fill={item.bookmark ? 'currentColor' : 'none'} />
+                  <Bookmark className="h-5 w-5" fill={item.bookmark ? 'currentColor' : 'none'} />
                 </button>
               )}
               {hasActions && (
@@ -308,6 +308,7 @@ export default function ItemPreviewCard({
                   disposition={item.disposition}
                   isPersisted={isPersisted}
                   currentProjectId={projectId ?? null}
+                  triggerSize="md"
                   onEdit={
                     onEdit
                       ? () => {

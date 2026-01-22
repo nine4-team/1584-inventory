@@ -816,7 +816,7 @@ export default function EditItem() {
                         : 'Remove from transaction'
                     }
                   >
-                    Remove from transaction
+              Remove from transaction
                   </button>
                   <span className="text-xs text-gray-500">Does not delete the item</span>
                 </div>

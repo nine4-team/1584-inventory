@@ -49,12 +49,8 @@ export default function TransactionAudit({
   }, [transaction.itemIds, transactionItems])
 
   // Filter out transaction types that don't require item attribution
-  const shouldShowAudit = transaction.transactionType !== 'Return' && 
+  const shouldShowAudit = transaction.transactionType !== 'Return' &&
                           transaction.transactionType !== 'Internal Transfer'
-  
-  if (!shouldShowAudit) {
-    return null
-  }
 
   // Load completeness metrics
   useEffect(() => {
@@ -195,6 +191,10 @@ export default function TransactionAudit({
       return description.includes(query) || sku.includes(query) || price.includes(query)
     })
   }, [suggestedItems, suggestedSearch])
+
+  if (!shouldShowAudit) {
+    return null
+  }
 
   if (isLoading || !completeness) {
     return (

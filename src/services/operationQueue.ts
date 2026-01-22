@@ -695,8 +695,9 @@ class OperationQueue {
       const localItem = await offlineStore.getItemById(data.id)
       
       if (!localItem) {
-        console.error(`Cannot create item: local item ${data.id} not found in offline store`)
-        return false
+        const message = `Cannot create item: local item ${data.id} not found in offline store`
+        console.error(message)
+        throw new FatalError(message)
       }
 
       // Create on server using the FULL item data from local store, not just operation data
@@ -899,11 +900,62 @@ class OperationQueue {
     try {
       // Get the full item data from local store - it has all the user's actual data
       // This prevents conflicts by ensuring server gets the same data as local store
-      const localItem = await offlineStore.getItemById(data.id)
+      let localItem = await offlineStore.getItemById(data.id)
       
       if (!localItem) {
-        console.error(`Cannot update item: local item ${data.id} not found in offline store`)
-        return false
+        // Try to resurrect from server to prevent data loss
+        console.warn(`Local item ${data.id} missing for update, attempting to fetch from server...`)
+        const { data: serverItem, error: fetchError } = await supabase
+          .from('items')
+          .select()
+          .eq('item_id', data.id)
+          .single()
+
+        if (serverItem && !fetchError) {
+          console.info(`Resurrected item ${data.id} from server`)
+          const cachedAt = new Date().toISOString()
+          // Reconstruct DBItem from server data
+          localItem = {
+            itemId: serverItem.item_id,
+            accountId: serverItem.account_id,
+            projectId: serverItem.project_id,
+            transactionId: serverItem.transaction_id,
+            previousProjectTransactionId: serverItem.previous_project_transaction_id,
+            previousProjectId: serverItem.previous_project_id,
+            name: serverItem.name,
+            description: serverItem.description ?? '',
+            source: serverItem.source,
+            sku: serverItem.sku,
+            paymentMethod: serverItem.payment_method,
+            disposition: serverItem.disposition ?? 'purchased',
+            notes: serverItem.notes,
+            space: serverItem.space,
+            qrKey: serverItem.qr_key,
+            bookmark: serverItem.bookmark ?? false,
+            purchasePrice: serverItem.purchase_price,
+            projectPrice: serverItem.project_price,
+            marketValue: serverItem.market_value,
+            taxRatePct: serverItem.tax_rate_pct,
+            taxAmountPurchasePrice: serverItem.tax_amount_purchase_price,
+            taxAmountProjectPrice: serverItem.tax_amount_project_price,
+            inventoryStatus: serverItem.inventory_status,
+            businessInventoryLocation: serverItem.business_inventory_location,
+            originTransactionId: serverItem.origin_transaction_id,
+            latestTransactionId: serverItem.latest_transaction_id,
+            lastUpdated: serverItem.last_updated ?? cachedAt,
+            dateCreated: serverItem.date_created ?? cachedAt,
+            createdAt: serverItem.created_at ?? cachedAt,
+            images: serverItem.images ?? [],
+            createdBy: serverItem.created_by,
+            version: serverItem.version ?? 1,
+            last_synced_at: cachedAt
+          }
+          await offlineStore.saveItems([localItem])
+        } else {
+          const message = `Cannot update item: local item ${data.id} not found in offline store and not found on server`
+          console.error(message)
+          throw new FatalError(message)
+        }
       }
 
       // Merge the operation updates into the full local item
@@ -1115,8 +1167,9 @@ class OperationQueue {
       const localTransaction = await offlineStore.getTransactionById(data.id)
       
       if (!localTransaction) {
-        console.error(`Cannot create transaction: local transaction ${data.id} not found in offline store`)
-        return false
+        const message = `Cannot create transaction: local transaction ${data.id} not found in offline store`
+        console.error(message)
+        throw new FatalError(message)
       }
 
       // Create on server using the FULL transaction data from local store
@@ -1215,11 +1268,57 @@ class OperationQueue {
 
     try {
       // Get the full transaction data from local store
-      const localTransaction = await offlineStore.getTransactionById(data.id)
+      let localTransaction = await offlineStore.getTransactionById(data.id)
 
       if (!localTransaction) {
-        console.error(`Cannot update transaction: local transaction ${data.id} not found in offline store`)
-        return false
+        // Try to resurrect from server
+        console.warn(`Local transaction ${data.id} missing for update, attempting to fetch from server...`)
+        const { data: serverTransaction, error: fetchError } = await supabase
+          .from('transactions')
+          .select()
+          .eq('transaction_id', data.id)
+          .single()
+
+        if (serverTransaction && !fetchError) {
+          console.info(`Resurrected transaction ${data.id} from server`)
+          const cachedAt = new Date().toISOString()
+          localTransaction = {
+            transactionId: serverTransaction.transaction_id,
+            accountId: serverTransaction.account_id,
+            projectId: serverTransaction.project_id,
+            projectName: null, // Will be refreshed
+            transactionDate: serverTransaction.transaction_date,
+            source: serverTransaction.source ?? '',
+            transactionType: serverTransaction.transaction_type ?? '',
+            paymentMethod: serverTransaction.payment_method ?? '',
+            amount: serverTransaction.amount ?? '0.00',
+            budgetCategory: serverTransaction.budget_category,
+            categoryId: serverTransaction.category_id,
+            notes: serverTransaction.notes,
+            transactionImages: serverTransaction.transaction_images,
+            receiptImages: serverTransaction.receipt_images,
+            otherImages: serverTransaction.other_images,
+            receiptEmailed: serverTransaction.receipt_emailed ?? false,
+            createdAt: serverTransaction.created_at ?? cachedAt,
+            createdBy: serverTransaction.created_by,
+            status: serverTransaction.status,
+            reimbursementType: serverTransaction.reimbursement_type,
+            triggerEvent: serverTransaction.trigger_event,
+            taxRatePreset: serverTransaction.tax_rate_preset,
+            taxRatePct: serverTransaction.tax_rate_pct,
+            subtotal: serverTransaction.subtotal,
+            needsReview: serverTransaction.needs_review,
+            sumItemPurchasePrices: serverTransaction.sum_item_purchase_prices,
+            itemIds: serverTransaction.item_ids,
+            version: serverTransaction.version ?? 1,
+            last_synced_at: cachedAt
+          }
+          await offlineStore.saveTransactions([localTransaction])
+        } else {
+          const message = `Cannot update transaction: local transaction ${data.id} not found in offline store and not found on server`
+          console.error(message)
+          throw new FatalError(message)
+        }
       }
 
       // Process any offline placeholder URLs in the transaction images before syncing
@@ -1520,11 +1619,48 @@ class OperationQueue {
 
     try {
       // Get the full project data from local store
-      const localProject = await offlineStore.getProjectById(data.id)
+      let localProject = await offlineStore.getProjectById(data.id)
       
       if (!localProject) {
-        console.error(`Cannot update project: local project ${data.id} not found in offline store`)
-        return false
+        // Try to resurrect from server
+        console.warn(`Local project ${data.id} missing for update, attempting to fetch from server...`)
+        const { data: serverProject, error: fetchError } = await supabase
+          .from('projects')
+          .select()
+          .eq('id', data.id)
+          .single()
+
+        if (serverProject && !fetchError) {
+          console.info(`Resurrected project ${data.id} from server`)
+          const cachedAt = new Date().toISOString()
+          localProject = {
+            id: serverProject.id,
+            accountId: serverProject.account_id,
+            name: serverProject.name,
+            description: serverProject.description ?? '',
+            clientName: serverProject.client_name ?? '',
+            budget: serverProject.budget,
+            designFee: serverProject.design_fee,
+            budgetCategories: serverProject.budget_categories ?? {},
+            defaultCategoryId: serverProject.default_category_id,
+            mainImageUrl: serverProject.main_image_url,
+            settings: serverProject.settings ?? {},
+            metadata: serverProject.metadata ?? {},
+            itemCount: serverProject.item_count ?? 0,
+            transactionCount: serverProject.transaction_count ?? 0,
+            totalValue: serverProject.total_value ?? 0,
+            createdAt: serverProject.created_at ?? cachedAt,
+            updatedAt: serverProject.updated_at ?? cachedAt,
+            createdBy: serverProject.created_by,
+            version: serverProject.version ?? 1,
+            last_synced_at: cachedAt
+          }
+          await offlineStore.saveProjects([localProject])
+        } else {
+          const message = `Cannot update project: local project ${data.id} not found in offline store and not found on server`
+          console.error(message)
+          throw new FatalError(message)
+        }
       }
 
       // Merge the operation updates into the full local project
