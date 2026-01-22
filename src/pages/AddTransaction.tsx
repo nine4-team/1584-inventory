@@ -21,6 +21,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { useAccount } from '../contexts/AccountContext'
 import { Shield } from 'lucide-react'
 import { getTaxPresets } from '@/services/taxPresetsService'
+import { NO_TAX_PRESET_ID } from '@/constants/taxPresets'
 import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import { getCachedDefaultCategory, getDefaultCategory } from '@/services/accountPresetsService'
 import CategorySelect from '@/components/CategorySelect'
@@ -247,7 +248,7 @@ export default function AddTransaction() {
 
   // Update selected preset rate when preset changes
   useEffect(() => {
-    if (taxRatePreset && taxRatePreset !== 'Other') {
+    if (taxRatePreset && taxRatePreset !== 'Other' && taxRatePreset !== NO_TAX_PRESET_ID) {
       const preset = taxPresets.find(p => p.id === taxRatePreset)
       setSelectedPresetRate(preset?.rate)
     } else {
@@ -402,13 +403,14 @@ export default function AddTransaction() {
         }
       }
 
+      const isNoTaxSelection = taxRatePreset === NO_TAX_PRESET_ID
       const transactionData = {
         ...formDataWithoutImages,
         projectId: projectId,
         projectName: projectName,
         createdBy: user.id,
-        taxRatePreset: taxRatePreset ?? null,
-        taxRatePct: taxRatePreset ? undefined : 0,
+        taxRatePreset: isNoTaxSelection ? null : taxRatePreset ?? null,
+        taxRatePct: isNoTaxSelection ? 0 : undefined,
         receiptEmailed: formData.receiptEmailed ?? false,
         subtotal: taxRatePreset === 'Other' ? subtotal : null,
         ...(processedReceiptImages && { receiptImages: processedReceiptImages }),
@@ -894,16 +896,16 @@ export default function AddTransaction() {
                   type="radio"
                   id="tax_preset_none"
                   name="tax_rate_preset"
-                  value=""
-                  checked={!taxRatePreset}
+                  value={NO_TAX_PRESET_ID}
+                  checked={taxRatePreset === NO_TAX_PRESET_ID}
                   onChange={() => {
-                    setTaxRatePreset(undefined)
+                    setTaxRatePreset(NO_TAX_PRESET_ID)
                     setSubtotal('')
                   }}
                   className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
                 />
                 <label htmlFor="tax_preset_none" className="ml-2 block text-sm text-gray-900">
-                  No tax (0%)
+                  No Tax (0%)
                 </label>
               </div>
               {taxPresets.map((preset) => (
@@ -940,7 +942,10 @@ export default function AddTransaction() {
               </div>
             </div>
             {/* Show selected tax rate for presets */}
-            {taxRatePreset && taxRatePreset !== 'Other' && selectedPresetRate !== undefined && (
+            {taxRatePreset &&
+              taxRatePreset !== 'Other' &&
+              taxRatePreset !== NO_TAX_PRESET_ID &&
+              selectedPresetRate !== undefined && (
               <div className="mt-3 p-3 bg-gray-50 rounded-md">
                 <p className="text-sm text-gray-700">
                   <span className="font-medium">Tax Rate:</span> {selectedPresetRate}%

@@ -8,6 +8,7 @@ import { CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { transactionService, projectService } from '@/services/inventoryService'
 import { toDateOnlyString } from '@/utils/dateUtils'
 import { getTaxPresets } from '@/services/taxPresetsService'
+import { NO_TAX_PRESET_ID } from '@/constants/taxPresets'
 import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import { useAccount } from '@/contexts/AccountContext'
 import CategorySelect from '@/components/CategorySelect'
@@ -102,7 +103,7 @@ export default function EditBusinessInventoryTransaction() {
 
   // Update selected preset rate when preset changes
   useEffect(() => {
-    if (taxRatePreset && taxRatePreset !== 'Other') {
+    if (taxRatePreset && taxRatePreset !== 'Other' && taxRatePreset !== NO_TAX_PRESET_ID) {
       const preset = taxPresets.find(p => p.id === taxRatePreset)
       setSelectedPresetRate(preset?.rate)
     } else {
@@ -191,6 +192,8 @@ export default function EditBusinessInventoryTransaction() {
           // Populate tax fields if present
           if (transactionData.taxRatePreset) {
             setTaxRatePreset(transactionData.taxRatePreset)
+          } else if (transactionData.taxRatePct === 0) {
+            setTaxRatePreset(NO_TAX_PRESET_ID)
           }
           setSubtotal(transactionData.subtotal || '')
           
@@ -264,13 +267,15 @@ export default function EditBusinessInventoryTransaction() {
       // Business inventory transactions always have projectId set to null
       const actualProjectId = null
 
+      const isNoTaxSelection = taxRatePreset === NO_TAX_PRESET_ID
       const updateData: Partial<Transaction> = {
         ...formData,
         projectId: actualProjectId,
-        // Allow explicit clearing via "No tax" (persist 0%).
-        ...(taxRatePreset
-          ? { taxRatePreset: taxRatePreset, subtotal: taxRatePreset === 'Other' ? subtotal : null }
-          : { taxRatePreset: null, taxRatePct: 0, subtotal: null })
+        ...(taxRatePreset === undefined
+          ? { taxRatePreset: null, taxRatePct: null, subtotal: null }
+          : isNoTaxSelection
+            ? { taxRatePreset: null, taxRatePct: 0, subtotal: null }
+            : { taxRatePreset: taxRatePreset, subtotal: taxRatePreset === 'Other' ? subtotal : null })
       }
 
       if (!currentAccountId) {
@@ -603,16 +608,16 @@ export default function EditBusinessInventoryTransaction() {
                   type="radio"
                   id="tax_preset_none"
                   name="taxRatePreset"
-                  value=""
-                  checked={!taxRatePreset}
+                  value={NO_TAX_PRESET_ID}
+                  checked={taxRatePreset === NO_TAX_PRESET_ID}
                   onChange={() => {
-                    setTaxRatePreset(undefined)
+                    setTaxRatePreset(NO_TAX_PRESET_ID)
                     setSubtotal('')
                   }}
                   className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
                 />
                 <label htmlFor="tax_preset_none" className="ml-2 block text-sm text-gray-900">
-                  No tax (0%)
+                  No Tax (0%)
                 </label>
               </div>
               {taxPresets.map((preset) => (
@@ -647,7 +652,10 @@ export default function EditBusinessInventoryTransaction() {
               </div>
             </div>
             {/* Show selected tax rate for presets */}
-            {taxRatePreset && taxRatePreset !== 'Other' && selectedPresetRate !== undefined && (
+            {taxRatePreset &&
+              taxRatePreset !== 'Other' &&
+              taxRatePreset !== NO_TAX_PRESET_ID &&
+              selectedPresetRate !== undefined && (
               <div className="mt-3 p-3 bg-gray-50 rounded-md">
                 <p className="text-sm text-gray-700">
                   <span className="font-medium">Tax Rate:</span> {selectedPresetRate}%

@@ -210,7 +210,10 @@ export class ConflictResolver {
       dateCreated: serverItem.date_created as string || now,
       lastUpdated: (serverItem.last_updated || serverItem.updated_at) as string || now,
       images: Array.isArray(serverItem.images) ? serverItem.images : [],
-      taxRatePct: serverItem.tax_rate_pct ? Number(serverItem.tax_rate_pct) : undefined,
+      taxRatePct:
+        serverItem.tax_rate_pct !== undefined && serverItem.tax_rate_pct !== null
+          ? Number(serverItem.tax_rate_pct)
+          : undefined,
       taxAmountPurchasePrice: serverItem.tax_amount_purchase_price as string | undefined,
       taxAmountProjectPrice: serverItem.tax_amount_project_price as string | undefined,
       createdBy: serverItem.created_by as string | undefined,

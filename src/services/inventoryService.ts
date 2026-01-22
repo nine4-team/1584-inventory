@@ -1925,16 +1925,18 @@ export const transactionService = {
           .select('*')
           .eq('account_id', accountId)
           .eq('transaction_id', transactionId)
-          .single()
+          .limit(1)
 
-        if (error || !data) {
+        if (error || !data || data.length === 0) {
           return { transaction: null, projectId: null }
         }
 
-        void cacheTransactionsOffline([data])
+        const row = data[0]
 
-        const converted = convertTimestamps(data)
-        const transaction = _convertTransactionFromDb(data)
+        void cacheTransactionsOffline([row])
+
+        const converted = convertTimestamps(row)
+        const transaction = _convertTransactionFromDb(row)
         const enriched = await _enrichTransactionsWithProjectNames(accountId, [transaction])
 
         // Update React Query cache with fetched transaction
@@ -2755,10 +2757,10 @@ export const transactionService = {
       if (finalUpdates.taxRatePreset !== undefined) {
         const presetSelection = finalUpdates.taxRatePreset
 
-        // Treat null/empty-string as an explicit "No tax" selection (store 0%)
+        // Treat null/empty-string as "no selection" (clear preset, keep explicit rate if provided).
         if (presetSelection === null || presetSelection === '') {
           finalUpdates.taxRatePreset = null
-          finalUpdates.taxRatePct = 0
+          finalUpdates.taxRatePct = finalUpdates.taxRatePct ?? null
           finalUpdates.subtotal = null
         } else if (presetSelection === 'Other') {
           // Compute from provided subtotal and amount if present in updates or existing doc
@@ -3416,7 +3418,7 @@ export const transactionService = {
               return
             }
 
-            console.log('Business inventory transactions change received!', payload)
+            console.debug('Transaction change received', { eventType, table: payload.table })
 
             let nextTransactions = entry?.data ?? []
             const transactionId = (eventType === 'DELETE' ? typedOldRecord?.transaction_id : typedNewRecord?.transaction_id) ?? typedOldRecord?.transaction_id ?? null
@@ -6269,7 +6271,7 @@ export const unifiedItemsService = {
       date_created: originalItem.dateCreated || toDateOnlyString(now),
       last_updated: now.toISOString(),
       images: originalItem.images || [], // Copy images from original item
-      tax_rate_pct: originalItem.taxRatePct || null,
+      tax_rate_pct: originalItem.taxRatePct ?? null,
       tax_amount_purchase_price: originalItem.taxAmountPurchasePrice || null,
       tax_amount_project_price: originalItem.taxAmountProjectPrice || null,
       created_by: originalItem.createdBy || null,

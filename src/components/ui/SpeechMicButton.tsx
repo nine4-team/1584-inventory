@@ -1,4 +1,4 @@
-import { Mic, MicOff } from 'lucide-react'
+import { Mic } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 type SpeechMicButtonProps = {
@@ -127,12 +127,14 @@ export default function SpeechMicButton({
       aria-label={title}
       title={title}
       className={[
-        'absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-2 py-2 text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+        'absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center rounded-md border px-2 py-2 shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+        isListening
+          ? 'border-red-500 bg-red-50 text-red-600 hover:bg-red-100 focus:ring-red-500 animate-pulse'
+          : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:ring-primary-500',
         className
       ].join(' ')}
     >
-      {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+      <Mic className="h-4 w-4" />
     </button>
   )
 }
-

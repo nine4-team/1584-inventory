@@ -349,7 +349,7 @@ export class OfflineTransactionService {
 
     const shouldClearTax = normalizedTaxRatePreset === null
     const hasTaxRatePresetUpdate = updates.taxRatePreset !== undefined
-    const nextTaxRatePct = shouldClearTax ? 0 : updates.taxRatePct
+    const nextTaxRatePct = shouldClearTax ? (updates.taxRatePct ?? null) : updates.taxRatePct
     const nextSubtotal = shouldClearTax ? null : updates.subtotal
     const taxRatePctUpdate = hasTaxRatePresetUpdate ? nextTaxRatePct : updates.taxRatePct
     const subtotalUpdate = hasTaxRatePresetUpdate ? nextSubtotal : updates.subtotal

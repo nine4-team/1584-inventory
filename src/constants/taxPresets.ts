@@ -4,6 +4,9 @@ export interface TaxPreset {
   rate: number // percentage, e.g., 8.375
 }
 
+// UI-only sentinel for explicit "No Tax" selection.
+export const NO_TAX_PRESET_ID = '__no_tax__'
+
 // Default tax presets - these can be updated via Settings page
 export const DEFAULT_TAX_PRESETS: TaxPreset[] = [
   { id: 'nv', name: 'NV', rate: 8.375 },
