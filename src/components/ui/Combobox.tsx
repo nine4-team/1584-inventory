@@ -1,4 +1,4 @@
-import { useState, Fragment } from 'react'
+import { useState, Fragment, type ReactNode } from 'react'
 import { Combobox as HeadlessCombobox, Transition } from '@headlessui/react'
 import { Check, ChevronsUpDown } from 'lucide-react'
 import { clsx } from 'clsx'
@@ -12,7 +12,8 @@ interface ComboboxOption {
 interface ComboboxProps {
   label?: string
   error?: string
-  helperText?: string
+  helperText?: ReactNode
+  helperTextClassName?: string
   size?: 'sm' | 'md' | 'lg'
   className?: string
   options: ComboboxOption[]
@@ -28,6 +29,7 @@ export function Combobox({
   label,
   error,
   helperText,
+  helperTextClassName,
   size = 'md',
   className,
   options,
@@ -156,7 +158,9 @@ export function Combobox({
       )}
 
       {helperText && !error && (
-        <p className="text-sm text-gray-500">{helperText}</p>
+        <div className={clsx('text-sm text-gray-500', helperTextClassName)}>
+          {helperText}
+        </div>
       )}
     </div>
   )
