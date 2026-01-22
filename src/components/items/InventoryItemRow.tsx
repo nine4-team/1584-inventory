@@ -11,11 +11,15 @@ interface InventoryItemRowProps {
   onBookmark: (itemId: string) => void
   onDuplicate: (itemId: string, quantity?: number) => void
   onEdit: (href: string) => void
-  onDispositionUpdate: (itemId: string, disposition: ItemDisposition) => void
+  onAddToTransaction?: (itemId: string) => void
+  onSellToBusiness?: (itemId: string) => void
+  onSellToProject?: (itemId: string) => void
+  onMoveToBusiness?: (itemId: string) => void
+  onMoveToProject?: (itemId: string) => void
+  onChangeStatus?: (itemId: string, disposition: ItemDisposition) => void
+  onDelete?: (itemId: string) => void
   onAddImage: (itemId: string) => void
   uploadingImages: Set<string>
-  openDispositionMenu: string | null
-  setOpenDispositionMenu: (itemId: string | null) => void
   context: 'project' | 'businessInventory'
   projectId?: string // Required for project context
   itemNumber: number
@@ -30,11 +34,15 @@ export default function InventoryItemRow({
   onBookmark,
   onDuplicate,
   onEdit,
-  onDispositionUpdate,
+  onAddToTransaction,
+  onSellToBusiness,
+  onSellToProject,
+  onMoveToBusiness,
+  onMoveToProject,
+  onChangeStatus,
+  onDelete,
   onAddImage,
   uploadingImages,
-  openDispositionMenu,
-  setOpenDispositionMenu,
   context,
   projectId,
   itemNumber,
@@ -78,6 +86,7 @@ export default function InventoryItemRow({
     marketValue: item.marketValue,
     disposition: item.disposition,
     images: item.images,
+    projectId: item.projectId ?? null,
     transactionId: item.transactionId,
     source: item.source,
     space: item.space,
@@ -95,11 +104,15 @@ export default function InventoryItemRow({
         onBookmark={onBookmark}
         onDuplicate={onDuplicate}
         onEdit={onEdit}
-        onDispositionUpdate={onDispositionUpdate}
+        onAddToTransaction={onAddToTransaction}
+        onSellToBusiness={onSellToBusiness}
+        onSellToProject={onSellToProject}
+        onMoveToBusiness={onMoveToBusiness}
+        onMoveToProject={onMoveToProject}
+        onChangeStatus={onChangeStatus}
+        onDelete={onDelete}
         onAddImage={onAddImage}
         uploadingImages={uploadingImages}
-        openDispositionMenu={openDispositionMenu}
-        setOpenDispositionMenu={setOpenDispositionMenu}
         itemLink={getItemLink()}
         editLink={getEditLink()}
         context={context}

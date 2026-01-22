@@ -23,6 +23,8 @@ import CollapsedDuplicateGroup from '@/components/ui/CollapsedDuplicateGroup'
 import InventoryItemRow from '@/components/items/InventoryItemRow'
 import { getTransactionDisplayInfo, getTransactionRoute } from '@/utils/transactionDisplayUtils'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
+import BlockingConfirmDialog from '@/components/ui/BlockingConfirmDialog'
+import { Combobox } from '@/components/ui/Combobox'
 
 interface FilterOptions {
   status?: string
@@ -165,7 +167,14 @@ export default function BusinessInventory() {
   )
   const [showSortMenu, setShowSortMenu] = useState(false)
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
-  const [openDispositionMenu, setOpenDispositionMenu] = useState<string | null>(null)
+  const [showProjectDialog, setShowProjectDialog] = useState(false)
+  const [selectedProjectId, setSelectedProjectId] = useState('')
+  const [projectTargetItemId, setProjectTargetItemId] = useState<string | null>(null)
+  const [loadingProjects, setLoadingProjects] = useState(false)
+  const [isUpdatingProject, setIsUpdatingProject] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deleteTargetItemId, setDeleteTargetItemId] = useState<string | null>(null)
+  const [isDeletingItem, setIsDeletingItem] = useState(false)
   const { showSuccess, showError } = useToast()
   const { showOfflineSaved } = useOfflineFeedback()
   const { isOnline } = useNetworkState()
@@ -284,24 +293,6 @@ export default function BusinessInventory() {
     }
   }, [showFilterMenu, showTransactionFilterMenu, showSortMenu, showTransactionSortMenu])
 
-  // Close disposition menu when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (openDispositionMenu && !event.target) return
-
-      const target = event.target as Element
-      if (!target.closest('.disposition-menu') && !target.closest('.disposition-badge')) {
-        setOpenDispositionMenu(null)
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [openDispositionMenu])
-
-
   const updateDisposition = async (itemId: string, newDisposition: ItemDisposition) => {
     try {
       const item = items.find((it: Item) => it.itemId === itemId)
@@ -317,7 +308,6 @@ export default function BusinessInventory() {
       if (newDisposition === 'inventory') {
         try {
           await integrationService.handleItemDeallocation(currentAccountId, itemId, item.projectId || '', newDisposition)
-          setOpenDispositionMenu(null)
           if (wasOffline) {
             showOfflineSaved(null)
           } else {
@@ -332,7 +322,6 @@ export default function BusinessInventory() {
         }
       } else {
         setItems(prev => prev.map(i => i.itemId === itemId ? { ...i, disposition: newDisposition } : i))
-        setOpenDispositionMenu(null)
         if (wasOffline) {
           showOfflineSaved(null)
         }
@@ -341,6 +330,62 @@ export default function BusinessInventory() {
     } catch (error) {
       console.error('Failed to update disposition:', error)
       showError && showError('Failed to update disposition. Please try again.')
+    }
+  }
+
+  const projectOptions = useMemo(
+    () => projects.map(project => ({
+      id: project.id,
+      label: project.name,
+      disabled: false
+    })),
+    [projects]
+  )
+
+  const openProjectDialog = (itemId: string) => {
+    setProjectTargetItemId(itemId)
+    setSelectedProjectId('')
+    setShowProjectDialog(true)
+  }
+
+  const handleMoveToProject = async () => {
+    if (!currentAccountId || !projectTargetItemId || !selectedProjectId) return
+    setIsUpdatingProject(true)
+    try {
+      await unifiedItemsService.allocateItemToProject(
+        currentAccountId,
+        projectTargetItemId,
+        selectedProjectId,
+        undefined,
+        undefined,
+        undefined
+      )
+      await refreshRealtimeAfterWrite()
+      setItems(prev => prev.filter(item => item.itemId !== projectTargetItemId))
+      setShowProjectDialog(false)
+      setProjectTargetItemId(null)
+    } catch (error) {
+      console.error('Failed to allocate item to project:', error)
+      showError && showError('Failed to move item to project. Please try again.')
+    } finally {
+      setIsUpdatingProject(false)
+    }
+  }
+
+  const handleDeleteItem = async () => {
+    if (!currentAccountId || !deleteTargetItemId) return
+    setIsDeletingItem(true)
+    try {
+      await unifiedItemsService.deleteItem(currentAccountId, deleteTargetItemId)
+      await refreshRealtimeAfterWrite()
+      setItems(prev => prev.filter(item => item.itemId !== deleteTargetItemId))
+      setShowDeleteConfirm(false)
+      setDeleteTargetItemId(null)
+    } catch (error) {
+      console.error('Failed to delete item:', error)
+      showError && showError('Failed to delete item. Please try again.')
+    } finally {
+      setIsDeletingItem(false)
     }
   }
 
@@ -962,6 +1007,69 @@ export default function BusinessInventory() {
 
   return (
     <div className="space-y-6">
+      <BlockingConfirmDialog
+        open={showDeleteConfirm}
+        title="Delete item?"
+        description={
+          <div className="text-sm text-gray-700 space-y-2">
+            <p>This will permanently delete the item.</p>
+            <p className="text-gray-600">This action cannot be undone.</p>
+          </div>
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        confirmVariant="danger"
+        isConfirming={isDeletingItem}
+        onCancel={() => {
+          if (isDeletingItem) return
+          setShowDeleteConfirm(false)
+          setDeleteTargetItemId(null)
+        }}
+        onConfirm={handleDeleteItem}
+      />
+      {showProjectDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-medium text-gray-900">
+                Move To Project
+              </h3>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              <Combobox
+                label="Select Project"
+                value={selectedProjectId}
+                onChange={setSelectedProjectId}
+                disabled={loadingProjects || isUpdatingProject}
+                loading={loadingProjects}
+                placeholder={loadingProjects ? "Loading projects..." : "Select a project"}
+                options={projectOptions}
+              />
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  if (isUpdatingProject) return
+                  setShowProjectDialog(false)
+                  setSelectedProjectId('')
+                  setProjectTargetItemId(null)
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                disabled={isUpdatingProject}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleMoveToProject}
+                disabled={!selectedProjectId || isUpdatingProject}
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isUpdatingProject ? 'Moving...' : 'Move'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="space-y-4">
         <div>
@@ -1281,11 +1389,14 @@ export default function BusinessInventory() {
                             onBookmark={toggleBookmark}
                             onDuplicate={duplicateItem}
                             onEdit={handleNavigateToEdit}
-                            onDispositionUpdate={updateDisposition}
+                            onMoveToProject={openProjectDialog}
+                            onChangeStatus={updateDisposition}
+                            onDelete={(itemId) => {
+                              setDeleteTargetItemId(itemId)
+                              setShowDeleteConfirm(true)
+                            }}
                             onAddImage={handleAddImage}
                             uploadingImages={uploadingImages}
-                            openDispositionMenu={openDispositionMenu}
-                            setOpenDispositionMenu={setOpenDispositionMenu}
                             context="businessInventory"
                             itemNumber={groupIndex + 1}
                           />
@@ -1422,11 +1533,14 @@ export default function BusinessInventory() {
                                   onBookmark={toggleBookmark}
                                   onDuplicate={duplicateItem}
                                   onEdit={handleNavigateToEdit}
-                                  onDispositionUpdate={updateDisposition}
+                                  onMoveToProject={openProjectDialog}
+                                  onChangeStatus={updateDisposition}
+                                  onDelete={(itemId) => {
+                                    setDeleteTargetItemId(itemId)
+                                    setShowDeleteConfirm(true)
+                                  }}
                                   onAddImage={handleAddImage}
                                   uploadingImages={uploadingImages}
-                                  openDispositionMenu={openDispositionMenu}
-                                  setOpenDispositionMenu={setOpenDispositionMenu}
                                   context="businessInventory"
                                   itemNumber={groupIndex + 1}
                                   duplicateCount={groupItems.length}

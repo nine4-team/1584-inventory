@@ -2,11 +2,11 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Plus, Search, RotateCcw, Camera, Trash2, QrCode, Filter, ArrowUpDown, Receipt } from 'lucide-react'
 import ContextLink from '@/components/ContextLink'
-import { unifiedItemsService, integrationService, transactionService } from '@/services/inventoryService'
+import { unifiedItemsService, integrationService, transactionService, projectService } from '@/services/inventoryService'
 import { supabase } from '@/services/supabase'
 import { lineageService } from '@/services/lineageService'
 import { ImageUploadService } from '@/services/imageService'
-import { Item, ItemImage } from '@/types'
+import { Item, ItemImage, Transaction, Project } from '@/types'
 import { normalizeDisposition } from '@/utils/dispositionUtils'
 import type { ItemDisposition } from '@/types'
 import { useToast } from '@/components/ui/ToastContext'
@@ -23,6 +23,8 @@ import { useTransactionDisplayInfo } from '@/hooks/useTransactionDisplayInfo'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { ConflictResolutionView } from '@/components/ConflictResolutionView'
+import BlockingConfirmDialog from '@/components/ui/BlockingConfirmDialog'
+import { Combobox } from '@/components/ui/Combobox'
 
 interface InventoryListProps {
   projectId: string
@@ -72,7 +74,21 @@ export default function InventoryList({ projectId, projectName, items: propItems
   // Show loading spinner only if account is loading - items come from props (parent handles that loading)
   const isLoading = accountLoading
   const [uploadingImages, setUploadingImages] = useState<Set<string>>(new Set())
-  const [openDispositionMenu, setOpenDispositionMenu] = useState<string | null>(null)
+  const [showTransactionDialog, setShowTransactionDialog] = useState(false)
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [loadingTransactions, setLoadingTransactions] = useState(false)
+  const [selectedTransactionId, setSelectedTransactionId] = useState('')
+  const [transactionTargetItemId, setTransactionTargetItemId] = useState<string | null>(null)
+  const [isUpdatingTransaction, setIsUpdatingTransaction] = useState(false)
+  const [showProjectDialog, setShowProjectDialog] = useState(false)
+  const [projects, setProjects] = useState<Project[]>([])
+  const [loadingProjects, setLoadingProjects] = useState(false)
+  const [selectedProjectId, setSelectedProjectId] = useState('')
+  const [projectTargetItemId, setProjectTargetItemId] = useState<string | null>(null)
+  const [isUpdatingProject, setIsUpdatingProject] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deleteTargetItemId, setDeleteTargetItemId] = useState<string | null>(null)
+  const [isDeletingItem, setIsDeletingItem] = useState(false)
   const [filterMode, setFilterMode] = useState<
     'all'
     | 'bookmarked'
@@ -256,15 +272,10 @@ export default function InventoryList({ projectId, projectName, items: propItems
     }
   }, [])
 
-  // Close disposition menu when clicking outside
+  // Close menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (openDispositionMenu && !event.target) return
-
       const target = event.target as Element
-      if (!target.closest('.disposition-menu') && !target.closest('.disposition-badge')) {
-        setOpenDispositionMenu(null)
-      }
       if ((showFilterMenu || showSortMenu) && !target.closest('.filter-menu') && !target.closest('.filter-button') && !target.closest('.sort-menu') && !target.closest('.sort-button')) {
         setShowFilterMenu(false)
         setShowSortMenu(false)
@@ -275,7 +286,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [openDispositionMenu, showFilterMenu, showSortMenu])
+  }, [showFilterMenu, showSortMenu])
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -378,8 +389,6 @@ export default function InventoryList({ projectId, projectName, items: propItems
             newDisposition
           )
           console.log('✅ Deallocation completed successfully')
-          // Close the disposition menu - real-time subscription will handle state update
-          setOpenDispositionMenu(null)
         } catch (deallocationError) {
           console.error('❌ Failed to handle deallocation:', deallocationError)
           // Revert the disposition change if deallocation fails
@@ -397,12 +406,211 @@ export default function InventoryList({ projectId, projectName, items: propItems
             : item
         ))
 
-        // Close the disposition menu
-        setOpenDispositionMenu(null)
       }
     } catch (error) {
       console.error('❌ Failed to update disposition:', error)
       setError('Failed to update item disposition. Please try again.')
+    }
+  }
+
+  const openTransactionDialog = (itemId: string) => {
+    const item = items.find((entry) => entry.itemId === itemId)
+    setTransactionTargetItemId(itemId)
+    setSelectedTransactionId(item?.transactionId ?? '')
+    setShowTransactionDialog(true)
+  }
+
+  const loadTransactions = async () => {
+    if (!currentAccountId) return
+    setLoadingTransactions(true)
+    try {
+      const txs = await transactionService.getTransactions(currentAccountId, projectId)
+      setTransactions(txs)
+    } catch (error) {
+      console.error('Failed to load transactions:', error)
+    } finally {
+      setLoadingTransactions(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!showTransactionDialog) return
+    if (transactions.length > 0) return
+    loadTransactions()
+  }, [showTransactionDialog, transactions.length])
+
+  const handleChangeTransaction = async () => {
+    if (!currentAccountId || !transactionTargetItemId || !selectedTransactionId) return
+    const item = items.find(entry => entry.itemId === transactionTargetItemId)
+    if (!item) return
+    const previousTransactionId = item.transactionId
+
+    setIsUpdatingTransaction(true)
+    try {
+      await unifiedItemsService.updateItem(currentAccountId, transactionTargetItemId, {
+        transactionId: selectedTransactionId
+      })
+
+      try {
+        await lineageService.updateItemLineagePointers(currentAccountId, transactionTargetItemId, selectedTransactionId)
+      } catch (lineageError) {
+        console.warn('Failed to update lineage pointers for item:', transactionTargetItemId, lineageError)
+      }
+
+      if (previousTransactionId) {
+        try {
+          const { data: oldTxData, error: fetchOldError } = await supabase
+            .from('transactions')
+            .select('item_ids')
+            .eq('account_id', currentAccountId)
+            .eq('transaction_id', previousTransactionId)
+            .single()
+
+          if (!fetchOldError && oldTxData) {
+            const currentItemIds: string[] = Array.isArray(oldTxData.item_ids) ? oldTxData.item_ids : []
+            const updatedItemIds = currentItemIds.filter(id => id !== transactionTargetItemId)
+
+            await supabase
+              .from('transactions')
+              .update({
+                item_ids: updatedItemIds,
+                updated_at: new Date().toISOString()
+              })
+              .eq('account_id', currentAccountId)
+              .eq('transaction_id', previousTransactionId)
+          }
+        } catch (oldTxError) {
+          console.warn('Failed to update old transaction item_ids:', oldTxError)
+        }
+      }
+
+      try {
+        const { data: newTxData, error: fetchNewError } = await supabase
+          .from('transactions')
+          .select('item_ids')
+          .eq('account_id', currentAccountId)
+          .eq('transaction_id', selectedTransactionId)
+          .single()
+
+        if (!fetchNewError && newTxData) {
+          const currentItemIds: string[] = Array.isArray(newTxData.item_ids) ? newTxData.item_ids : []
+          if (!currentItemIds.includes(transactionTargetItemId)) {
+            const updatedItemIds = [...currentItemIds, transactionTargetItemId]
+
+            await supabase
+              .from('transactions')
+              .update({
+                item_ids: updatedItemIds,
+                updated_at: new Date().toISOString()
+              })
+              .eq('account_id', currentAccountId)
+              .eq('transaction_id', selectedTransactionId)
+          }
+        }
+      } catch (newTxError) {
+        console.warn('Failed to update new transaction item_ids:', newTxError)
+      }
+
+      await refreshRealtimeAfterWrite()
+      setShowTransactionDialog(false)
+      setTransactionTargetItemId(null)
+      setSelectedTransactionId('')
+    } catch (error) {
+      console.error('Failed to update transaction:', error)
+      setError('Failed to update transaction. Please try again.')
+    } finally {
+      setIsUpdatingTransaction(false)
+    }
+  }
+
+  const handleRemoveFromTransaction = async () => {
+    if (!currentAccountId || !transactionTargetItemId) return
+    const item = items.find(entry => entry.itemId === transactionTargetItemId)
+    if (!item?.transactionId) return
+
+    setIsUpdatingTransaction(true)
+    try {
+      await unifiedItemsService.unlinkItemFromTransaction(currentAccountId, item.transactionId, item.itemId, {
+        itemCurrentTransactionId: item.transactionId
+      })
+      await refreshRealtimeAfterWrite()
+      setShowTransactionDialog(false)
+    } catch (error) {
+      console.error('Failed to remove item from transaction:', error)
+      setError('Failed to remove item from transaction. Please try again.')
+    } finally {
+      setIsUpdatingTransaction(false)
+    }
+  }
+
+  const openProjectDialog = async (itemId: string) => {
+    setProjectTargetItemId(itemId)
+    setSelectedProjectId('')
+    setShowProjectDialog(true)
+    if (projects.length === 0 && currentAccountId) {
+      setLoadingProjects(true)
+      try {
+        const fetchedProjects = await projectService.getProjects(currentAccountId)
+        setProjects(fetchedProjects)
+      } catch (error) {
+        console.error('Failed to load projects:', error)
+      } finally {
+        setLoadingProjects(false)
+      }
+    }
+  }
+
+  const handleMoveToProject = async () => {
+    if (!currentAccountId || !projectTargetItemId || !selectedProjectId) return
+    const item = items.find(entry => entry.itemId === projectTargetItemId)
+    if (!item) return
+    if (selectedProjectId === item.projectId) {
+      setShowProjectDialog(false)
+      return
+    }
+
+    setIsUpdatingProject(true)
+    try {
+      await unifiedItemsService.updateItem(currentAccountId, projectTargetItemId, { projectId: selectedProjectId })
+      await refreshRealtimeAfterWrite()
+      setItems(prev => prev.filter(entry => entry.itemId !== projectTargetItemId))
+      setShowProjectDialog(false)
+      setProjectTargetItemId(null)
+    } catch (error) {
+      console.error('Failed to move item to project:', error)
+      setError('Failed to move item to project. Please try again.')
+    } finally {
+      setIsUpdatingProject(false)
+    }
+  }
+
+  const handleMoveToBusinessInventory = async (itemId: string) => {
+    if (!currentAccountId) return
+    const item = items.find(entry => entry.itemId === itemId)
+    if (!item?.projectId) return
+    try {
+      await integrationService.handleItemDeallocation(currentAccountId, itemId, item.projectId, 'inventory')
+      await refreshRealtimeAfterWrite()
+    } catch (error) {
+      console.error('Failed to move item to business inventory:', error)
+      setError('Failed to move item to business inventory. Please try again.')
+    }
+  }
+
+  const handleDeleteItem = async () => {
+    if (!currentAccountId || !deleteTargetItemId) return
+    setIsDeletingItem(true)
+    try {
+      await unifiedItemsService.deleteItem(currentAccountId, deleteTargetItemId)
+      await refreshRealtimeAfterWrite()
+      setItems(prev => prev.filter(entry => entry.itemId !== deleteTargetItemId))
+      setShowDeleteConfirm(false)
+      setDeleteTargetItemId(null)
+    } catch (error) {
+      console.error('Failed to delete item:', error)
+      setError('Failed to delete item. Please try again.')
+    } finally {
+      setIsDeletingItem(false)
     }
   }
 
@@ -760,8 +968,142 @@ export default function InventoryList({ projectId, projectName, items: propItems
       .map(([groupKey, items]) => ({ groupKey, items }))
   }, [filteredItems])
 
+  const projectOptions = useMemo(
+    () => projects.map(project => ({
+      id: project.id,
+      label: project.name,
+      disabled: project.id === projectId
+    })),
+    [projects, projectId]
+  )
+
   return (
     <div className="space-y-4">
+      <BlockingConfirmDialog
+        open={showDeleteConfirm}
+        title="Delete item?"
+        description={
+          <div className="text-sm text-gray-700 space-y-2">
+            <p>This will permanently delete the item.</p>
+            <p className="text-gray-600">This action cannot be undone.</p>
+          </div>
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        confirmVariant="danger"
+        isConfirming={isDeletingItem}
+        onCancel={() => {
+          if (isDeletingItem) return
+          setShowDeleteConfirm(false)
+          setDeleteTargetItemId(null)
+        }}
+        onConfirm={handleDeleteItem}
+      />
+      {showTransactionDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-medium text-gray-900">
+                Add To Transaction
+              </h3>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              <Combobox
+                label="Select Transaction"
+                value={selectedTransactionId}
+                onChange={setSelectedTransactionId}
+                disabled={loadingTransactions || isUpdatingTransaction}
+                loading={loadingTransactions}
+                placeholder={loadingTransactions ? "Loading transactions..." : "Select a transaction"}
+                options={
+                  loadingTransactions ? [] : [
+                    { id: '', label: 'Select a transaction' },
+                    ...transactions.map((transaction) => ({
+                      id: transaction.transactionId,
+                      label: `${new Date(transaction.transactionDate).toLocaleDateString()} - ${transaction.source} - $${transaction.amount}`
+                    }))
+                  ]
+                }
+              />
+              {transactionTargetItemId && items.find(item => item.itemId === transactionTargetItemId)?.transactionId && (
+                <button
+                  type="button"
+                  onClick={handleRemoveFromTransaction}
+                  className="text-sm text-gray-700 hover:text-gray-900"
+                  disabled={isUpdatingTransaction}
+                >
+                  Remove from transaction
+                </button>
+              )}
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  if (isUpdatingTransaction) return
+                  setShowTransactionDialog(false)
+                  setSelectedTransactionId('')
+                  setTransactionTargetItemId(null)
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                disabled={isUpdatingTransaction}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleChangeTransaction}
+                disabled={!selectedTransactionId || isUpdatingTransaction}
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isUpdatingTransaction ? 'Updating...' : 'Update'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showProjectDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-medium text-gray-900">
+                Move To Project
+              </h3>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              <Combobox
+                label="Select Project"
+                value={selectedProjectId}
+                onChange={setSelectedProjectId}
+                disabled={loadingProjects || isUpdatingProject}
+                loading={loadingProjects}
+                placeholder={loadingProjects ? "Loading projects..." : "Select a project"}
+                options={projectOptions}
+              />
+              <p className="text-xs text-gray-500">Current project is disabled.</p>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  if (isUpdatingProject) return
+                  setShowProjectDialog(false)
+                  setSelectedProjectId('')
+                  setProjectTargetItemId(null)
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                disabled={isUpdatingProject}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleMoveToProject}
+                disabled={!selectedProjectId || isUpdatingProject}
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isUpdatingProject ? 'Moving...' : 'Move'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Controls - Sticky Container */}
       <div className="sticky top-0 z-10 bg-white border-b border-gray-200 py-3 mb-2">
         <div className="flex flex-wrap items-center gap-3">
@@ -1066,11 +1408,17 @@ export default function InventoryList({ projectId, projectName, items: propItems
                       onBookmark={toggleBookmark}
                       onDuplicate={duplicateItem}
                       onEdit={handleNavigateToEdit}
-                      onDispositionUpdate={updateDisposition}
+                      onAddToTransaction={openTransactionDialog}
+                      onSellToBusiness={handleMoveToBusinessInventory}
+                      onMoveToBusiness={handleMoveToBusinessInventory}
+                      onMoveToProject={openProjectDialog}
+                      onChangeStatus={updateDisposition}
+                      onDelete={(itemId) => {
+                        setDeleteTargetItemId(itemId)
+                        setShowDeleteConfirm(true)
+                      }}
                       onAddImage={handleAddImage}
                       uploadingImages={uploadingImages}
-                      openDispositionMenu={openDispositionMenu}
-                      setOpenDispositionMenu={setOpenDispositionMenu}
                       context="project"
                       projectId={projectId}
                       itemNumber={groupIndex + 1}
@@ -1203,11 +1551,17 @@ export default function InventoryList({ projectId, projectName, items: propItems
                             onBookmark={toggleBookmark}
                             onDuplicate={duplicateItem}
                             onEdit={handleNavigateToEdit}
-                            onDispositionUpdate={updateDisposition}
+                            onAddToTransaction={openTransactionDialog}
+                            onSellToBusiness={handleMoveToBusinessInventory}
+                            onMoveToBusiness={handleMoveToBusinessInventory}
+                            onMoveToProject={openProjectDialog}
+                            onChangeStatus={updateDisposition}
+                            onDelete={(itemId) => {
+                              setDeleteTargetItemId(itemId)
+                              setShowDeleteConfirm(true)
+                            }}
                             onAddImage={handleAddImage}
                             uploadingImages={uploadingImages}
-                            openDispositionMenu={openDispositionMenu}
-                            setOpenDispositionMenu={setOpenDispositionMenu}
                             context="project"
                             projectId={projectId}
                             itemNumber={groupIndex + 1}
