@@ -151,27 +151,43 @@ export default function InventoryList({ projectId, projectName, items: propItems
     if (sortMode !== nextSortMode) setSortMode(nextSortMode)
   }, [searchParams])
 
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
+
   useEffect(() => {
     if (isSyncingFromUrlRef.current) {
       isSyncingFromUrlRef.current = false
       return
     }
 
-    const nextParams = new URLSearchParams(searchParams)
-    const setParam = (key: string, value: string, defaultValue: string) => {
-      if (!value || value === defaultValue) {
-        nextParams.delete(key)
-      } else {
-        nextParams.set(key, value)
+    const updateUrl = () => {
+      const nextParams = new URLSearchParams(searchParams)
+      const setParam = (key: string, value: string, defaultValue: string) => {
+        if (!value || value === defaultValue) {
+          nextParams.delete(key)
+        } else {
+          nextParams.set(key, value)
+        }
+      }
+
+      setParam('itemSearch', searchQuery, '')
+      setParam('itemFilter', filterMode, DEFAULT_ITEM_FILTER)
+      setParam('itemSort', sortMode, DEFAULT_ITEM_SORT)
+
+      if (nextParams.toString() !== searchParams.toString()) {
+        setSearchParams(nextParams, { replace: true })
       }
     }
 
-    setParam('itemSearch', searchQuery, '')
-    setParam('itemFilter', filterMode, DEFAULT_ITEM_FILTER)
-    setParam('itemSort', sortMode, DEFAULT_ITEM_SORT)
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+    }
 
-    if (nextParams.toString() !== searchParams.toString()) {
-      setSearchParams(nextParams, { replace: true })
+    debounceTimerRef.current = setTimeout(updateUrl, 500)
+
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current)
+      }
     }
   }, [filterMode, searchParams, searchQuery, setSearchParams, sortMode])
 

@@ -227,33 +227,49 @@ export default function BusinessInventory() {
     if (transactionSortMode !== nextTxSort) setTransactionSortMode(nextTxSort)
   }, [searchParams])
 
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
+
   useEffect(() => {
     if (isSyncingFromUrlRef.current) {
       isSyncingFromUrlRef.current = false
       return
     }
 
-    const nextParams = new URLSearchParams(searchParams)
-    const setParam = (key: string, value: string, defaultValue: string) => {
-      if (!value || value === defaultValue) {
-        nextParams.delete(key)
-      } else {
-        nextParams.set(key, value)
+    const updateUrl = () => {
+      const nextParams = new URLSearchParams(searchParams)
+      const setParam = (key: string, value: string, defaultValue: string) => {
+        if (!value || value === defaultValue) {
+          nextParams.delete(key)
+        } else {
+          nextParams.set(key, value)
+        }
+      }
+
+      setParam('bizTab', activeTab, DEFAULT_BUSINESS_TAB)
+      setParam('bizItemSearch', inventorySearchQuery, '')
+      setParam('bizTxSearch', transactionSearchQuery, '')
+      setParam('bizItemFilter', filterMode, DEFAULT_BUSINESS_ITEM_FILTER)
+      setParam('bizItemSort', sortMode, DEFAULT_BUSINESS_ITEM_SORT)
+      setParam('bizTxFilter', transactionFilterMode, DEFAULT_BUSINESS_TX_FILTER)
+      setParam('bizTxReceipt', transactionReceiptFilter, DEFAULT_BUSINESS_TX_RECEIPT_FILTER)
+      setParam('bizTxType', transactionTypeFilter, DEFAULT_BUSINESS_TX_TYPE_FILTER)
+      setParam('bizTxSort', transactionSortMode, DEFAULT_BUSINESS_TX_SORT)
+
+      if (nextParams.toString() !== searchParams.toString()) {
+        setSearchParams(nextParams, { replace: true, state: location.state })
       }
     }
 
-    setParam('bizTab', activeTab, DEFAULT_BUSINESS_TAB)
-    setParam('bizItemSearch', inventorySearchQuery, '')
-    setParam('bizTxSearch', transactionSearchQuery, '')
-    setParam('bizItemFilter', filterMode, DEFAULT_BUSINESS_ITEM_FILTER)
-    setParam('bizItemSort', sortMode, DEFAULT_BUSINESS_ITEM_SORT)
-    setParam('bizTxFilter', transactionFilterMode, DEFAULT_BUSINESS_TX_FILTER)
-    setParam('bizTxReceipt', transactionReceiptFilter, DEFAULT_BUSINESS_TX_RECEIPT_FILTER)
-    setParam('bizTxType', transactionTypeFilter, DEFAULT_BUSINESS_TX_TYPE_FILTER)
-    setParam('bizTxSort', transactionSortMode, DEFAULT_BUSINESS_TX_SORT)
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+    }
 
-    if (nextParams.toString() !== searchParams.toString()) {
-      setSearchParams(nextParams, { replace: true, state: location.state })
+    debounceTimerRef.current = setTimeout(updateUrl, 500)
+
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current)
+      }
     }
   }, [
     activeTab,
