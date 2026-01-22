@@ -890,11 +890,13 @@ export default function InventoryList({ projectId, projectName, items: propItems
 
   const filteredItems = items.filter(item => {
     // Apply search filter
-    const matchesSearch = item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.source.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.sku?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.paymentMethod?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (item.space && item.space.toLowerCase().includes(searchQuery.toLowerCase()))
+    const query = searchQuery.toLowerCase().trim()
+    const matchesSearch = !query ||
+      (item.description || '').toLowerCase().includes(query) ||
+      (item.source || '').toLowerCase().includes(query) ||
+      (item.sku || '').toLowerCase().includes(query) ||
+      (item.paymentMethod || '').toLowerCase().includes(query) ||
+      (item.space || '').toLowerCase().includes(query)
 
     // Apply filter based on filterMode
     let matchesFilter = false

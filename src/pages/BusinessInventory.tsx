@@ -489,10 +489,13 @@ export default function BusinessInventory() {
   const filteredItems = useMemo(() => {
     let filtered = items.filter(item => {
       // Apply search filter
-      const matchesSearch = !inventorySearchQuery ||
-        item.description?.toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
-        item.sku?.toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
-        item.businessInventoryLocation?.toLowerCase().includes(inventorySearchQuery.toLowerCase())
+      const query = (inventorySearchQuery || '').toLowerCase().trim()
+      const matchesSearch = !query ||
+        (item.description || '').toLowerCase().includes(query) ||
+        (item.sku || '').toLowerCase().includes(query) ||
+        (item.source || '').toLowerCase().includes(query) ||
+        (item.paymentMethod || '').toLowerCase().includes(query) ||
+        (item.businessInventoryLocation || '').toLowerCase().includes(query)
 
       // Apply status filter
       const matchesStatus = !filters.status || item.inventoryStatus === filters.status
