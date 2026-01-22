@@ -24,6 +24,7 @@ interface TransactionItemsListProps {
   items: TransactionItemFormData[]
   onItemsChange: (items: TransactionItemFormData[]) => void
   onAddItem?: (item: TransactionItemFormData) => Promise<void> | void
+  onAddExistingItems?: () => void
   onUpdateItem?: (item: TransactionItemFormData) => Promise<void> | void
   onDuplicateItem?: (item: TransactionItemFormData, quantity?: number) => Promise<void> | void
   projectId?: string
@@ -42,6 +43,7 @@ export default function TransactionItemsList({
   items,
   onItemsChange,
   onAddItem,
+  onAddExistingItems,
   onUpdateItem,
   onDuplicateItem,
   projectId,
@@ -80,6 +82,7 @@ export default function TransactionItemsList({
   const [sortMode, setSortMode] = useState<'alphabetical' | 'price'>('alphabetical')
   const [transactionDialogError, setTransactionDialogError] = useState<string | null>(null)
   const [showSortMenu, setShowSortMenu] = useState(false)
+  const [showAddItemMenu, setShowAddItemMenu] = useState(false)
   const [shouldStick, setShouldStick] = useState(true)
   const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null)
   const [removeTargetItemId, setRemoveTargetItemId] = useState<string | null>(null)
@@ -253,6 +256,9 @@ export default function TransactionItemsList({
       if ((showFilterMenu || showSortMenu) && !target.closest('.filter-menu') && !target.closest('.filter-button') && !target.closest('.sort-menu') && !target.closest('.sort-button')) {
         setShowFilterMenu(false)
         setShowSortMenu(false)
+      }
+      if (showAddItemMenu && !target.closest('.add-item-menu') && !target.closest('.add-item-button')) {
+        setShowAddItemMenu(false)
       }
     }
 
@@ -1124,26 +1130,49 @@ export default function TransactionItemsList({
       {items.length > 0 && showSelectionControls && (
         <div className={`z-10 bg-white border-b border-gray-200 py-3 mb-4 ${shouldStick ? 'sticky top-0' : ''}`}>
           <div className="flex flex-wrap items-center gap-3">
-            {/* Select All Checkbox */}
-            <label className="flex items-center cursor-pointer flex-shrink-0">
-              <input
-                type="checkbox"
-                className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 h-4 w-4"
-                onChange={(e) => toggleSelectAll()}
-                checked={selectedItemIds.size === filteredItems.length && filteredItems.length > 0}
-              />
-              <span className="ml-2 text-sm font-medium text-gray-700">Select all</span>
-            </label>
-
-            {/* Add Button */}
-            <button
-              type="button"
-              onClick={() => setIsAddingItem(true)}
-              className="inline-flex items-center gap-1 px-3 py-2 rounded-md border border-transparent text-sm font-medium text-white bg-primary-600 hover:bg-primary-900 flex-shrink-0"
-            >
-              <Plus className="h-4 w-4" />
-              Create Item
-            </button>
+            {/* Add Item Button */}
+            <div className="relative flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  if (onAddExistingItems) {
+                    setShowAddItemMenu(prev => !prev)
+                  } else {
+                    setIsAddingItem(true)
+                  }
+                }}
+                className="add-item-button inline-flex items-center gap-1 px-3 py-2 rounded-md border border-transparent text-sm font-medium text-white bg-primary-600 hover:bg-primary-900"
+              >
+                <Plus className="h-4 w-4" />
+                Add Item
+              </button>
+              {onAddExistingItems && showAddItemMenu && (
+                <div className="add-item-menu absolute top-full left-0 mt-1 w-[min(12rem,calc(100vw-2rem))] bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                  <div className="py-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAddingItem(true)
+                        setShowAddItemMenu(false)
+                      }}
+                      className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      Create item
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onAddExistingItems()
+                        setShowAddItemMenu(false)
+                      }}
+                      className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      Add existing
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Sort Button */}
             <div className="relative flex-shrink-0">
@@ -1431,6 +1460,20 @@ export default function TransactionItemsList({
                 totalAmount || filteredItems.reduce((sum, item) => sum + (parseFloat(item.projectPrice || item.purchasePrice || '0') || 0), 0).toString()
               )}
             </div>
+          </div>
+        )}
+
+        {items.length > 0 && showSelectionControls && (
+          <div className="flex justify-end pt-3">
+            <label className="flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 h-4 w-4"
+                onChange={() => toggleSelectAll()}
+                checked={selectedItemIds.size === filteredItems.length && filteredItems.length > 0}
+              />
+              <span className="ml-2 text-sm font-medium text-gray-700">Select all</span>
+            </label>
           </div>
         )}
       </div>

@@ -187,7 +187,7 @@ describe('TransactionItemPicker', () => {
     )
   })
 
-  it('labels Add/Pull/Added actions appropriately', async () => {
+  it('labels Add/Added actions appropriately', async () => {
     const transaction = buildTransaction({ projectId: 'project-1' })
     const items = [
       buildItem({ itemId: 'item-added', description: 'Already added', transactionId: 'txn-1', projectId: 'project-1', sku: 'SKU-ADD' }),
@@ -206,7 +206,10 @@ describe('TransactionItemPicker', () => {
 
     const addedButton = await screen.findByRole('button', { name: 'Added' })
     expect(addedButton).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Add' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Pull' })).toBeEnabled()
+    const addButtons = screen.getAllByRole('button', { name: 'Add' })
+    expect(addButtons).toHaveLength(2)
+    addButtons.forEach(button => {
+      expect(button).toBeEnabled()
+    })
   })
 })

@@ -91,15 +91,10 @@ export default function TransactionItemPicker({
     return transactionItemIdSet.has(item.itemId)
   }, [transactionId, transactionItemIdSet])
 
-  const isItemInScope = useCallback((item: Item) => {
-    const itemProjectId = normalizeProjectId(item.projectId ?? null)
-    return itemProjectId === targetProjectId
-  }, [targetProjectId])
-
   const getItemActionLabel = useCallback((item: Item) => {
     if (isItemAlreadyAdded(item)) return 'Added'
-    return isItemInScope(item) ? 'Add' : 'Pull'
-  }, [isItemAlreadyAdded, isItemInScope])
+    return 'Add'
+  }, [isItemAlreadyAdded])
 
   const getSelectableItems = useCallback((items: Item[]) => {
     return items.filter(item => !isItemAlreadyAdded(item))
