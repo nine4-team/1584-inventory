@@ -6,6 +6,7 @@ import { useAccount } from '@/contexts/AccountContext'
 import { useTransactionDisplayInfo } from '@/hooks/useTransactionDisplayInfo'
 import { offlineMediaService } from '@/services/offlineMediaService'
 import ItemActionsMenu from '@/components/items/ItemActionsMenu'
+import { displayDispositionLabel } from '@/utils/dispositionUtils'
 import type { ItemDisposition, ItemImage } from '@/types'
 
 // Common interface for item data that can be displayed
@@ -229,12 +230,8 @@ export default function ItemPreviewCard({
     return '#'
   }
 
-  const handleDuplicate = () => {
+  const handleDuplicate = (quantity: number) => {
     if (!onDuplicate) return
-    const input = window.prompt('How many copies?', '1')
-    if (input === null) return
-    const quantity = Math.max(0, Math.floor(Number.parseInt(input, 10) || 0))
-    if (quantity <= 0) return
     onDuplicate(itemId, quantity)
   }
 
@@ -276,6 +273,16 @@ export default function ItemPreviewCard({
           {/* Action buttons on the right */}
           {hasActions && (
             <div className="flex items-center space-x-2 ml-auto">
+              {duplicateCount && duplicateCount > 1 && duplicateIndex ? (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
+                  {duplicateIndex}/{duplicateCount}
+                </span>
+              ) : null}
+              {item.disposition ? (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
+                  {displayDispositionLabel(item.disposition)}
+                </span>
+              ) : null}
               {showBookmark && onBookmark && (
                 <button
                   onClick={(e) => {
@@ -399,11 +406,6 @@ export default function ItemPreviewCard({
                 <Camera className="h-5 w-5" />
               </div>
             )
-          )}
-          {duplicateCount && duplicateCount > 1 && duplicateIndex && (
-            <span className="mt-1 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
-              ×{duplicateIndex}/{duplicateCount}
-            </span>
           )}
         </div>
 

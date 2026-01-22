@@ -3,12 +3,11 @@ import { useParams } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
 import ContextLink from '@/components/ContextLink'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
-import { Edit, Trash2, ArrowLeft, Package, DollarSign, ImagePlus, FileText, Copy, RefreshCw } from 'lucide-react'
-import { Item, Project } from '@/types'
+import { ArrowLeft, Package, ImagePlus, FileText, RefreshCw, Bookmark } from 'lucide-react'
+import { Item, Project, ItemDisposition } from '@/types'
 import { unifiedItemsService, projectService } from '@/services/inventoryService'
 import { formatDate } from '@/utils/dateUtils'
 import ImagePreview from '@/components/ui/ImagePreview'
-import DuplicateQuantityMenu from '@/components/ui/DuplicateQuantityMenu'
 import UploadActivityIndicator from '@/components/ui/UploadActivityIndicator'
 import { ImageUploadService } from '@/services/imageService'
 import { useDuplication } from '@/hooks/useDuplication'
@@ -18,6 +17,10 @@ import ItemLineageBreadcrumb from '@/components/ui/ItemLineageBreadcrumb'
 import { lineageService } from '@/services/lineageService'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { projectItemDetail, projectItems, projectTransactionDetail } from '@/utils/routes'
+import ItemActionsMenu from '@/components/items/ItemActionsMenu'
+import BlockingConfirmDialog from '@/components/ui/BlockingConfirmDialog'
+import { Combobox } from '@/components/ui/Combobox'
+import { displayDispositionLabel } from '@/utils/dispositionUtils'
 
 export default function BusinessInventoryItemDetail() {
   const { id } = useParams<{ id: string }>()
@@ -34,11 +37,12 @@ export default function BusinessInventoryItemDetail() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
   const [showAllocationModal, setShowAllocationModal] = useState(false)
-  const [showProjectDropdown, setShowProjectDropdown] = useState(false)
   const [allocationForm, setAllocationForm] = useState({
     projectId: '',
     space: ''
   })
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [isDeletingItem, setIsDeletingItem] = useState(false)
 
   // Image upload state
   const [uploadsInFlight, setUploadsInFlight] = useState(0)
@@ -96,23 +100,6 @@ export default function BusinessInventoryItemDetail() {
     }
   }, [id, currentAccountId, refreshCollections])
 
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (showProjectDropdown && !event.target) return
-
-      const target = event.target as Element
-      if (!target.closest('.project-dropdown') && !target.closest('.project-dropdown-button')) {
-        setShowProjectDropdown(false)
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [showProjectDropdown])
-
   const loadProjects = async () => {
     if (!currentAccountId) return
     try {
@@ -122,6 +109,15 @@ export default function BusinessInventoryItemDetail() {
       console.error('Error loading projects:', error)
     }
   }
+
+  const projectOptions = useMemo(
+    () => projects.map(project => ({
+      id: project.id,
+      label: `${project.name} - ${project.clientName}`,
+      disabled: project.id === item?.projectId
+    })),
+    [projects, item?.projectId]
+  )
 
   useEffect(() => {
     if (!id) return
@@ -162,19 +158,49 @@ export default function BusinessInventoryItemDetail() {
     }
   }
 
+  const toggleBookmark = async () => {
+    if (!item || !currentAccountId) return
+    try {
+      await unifiedItemsService.updateItem(currentAccountId, item.itemId, {
+        bookmark: !item.bookmark
+      })
+      setItem({ ...item, bookmark: !item.bookmark })
+    } catch (error) {
+      console.error('Failed to update bookmark:', error)
+    }
+  }
 
-  const handleDelete = async () => {
+  const updateDisposition = async (newDisposition: ItemDisposition) => {
+    if (!item || !currentAccountId) return
+    try {
+      await unifiedItemsService.updateItem(currentAccountId, item.itemId, {
+        disposition: newDisposition
+      })
+      setItem({ ...item, disposition: newDisposition })
+    } catch (error) {
+      console.error('Failed to update disposition:', error)
+      alert('Failed to update status. Please try again.')
+    }
+  }
+
+
+  const handleDeleteItem = () => {
+    setShowDeleteConfirm(true)
+  }
+
+  const confirmDeleteItem = async () => {
     if (!id || !item || !currentAccountId) return
-
-    if (window.confirm('Are you sure you want to delete this item? This action cannot be undone.')) {
-      try {
-        await unifiedItemsService.deleteItem(currentAccountId, id)
-        await refreshRealtimeAfterWrite()
-        navigate('/business-inventory')
-      } catch (error) {
-        console.error('Error deleting item:', error)
-        alert('Error deleting item. Please try again.')
-      }
+    setIsDeletingItem(true)
+    try {
+      await unifiedItemsService.deleteItem(currentAccountId, id)
+      await refreshRealtimeAfterWrite()
+      navigate('/business-inventory')
+    } catch (error) {
+      console.error('Error deleting item:', error)
+      alert('Error deleting item. Please try again.')
+    } finally {
+      setIsDeletingItem(false)
+      setShowDeleteConfirm(false)
     }
   }
 
@@ -186,16 +212,10 @@ export default function BusinessInventoryItemDetail() {
 
   const closeAllocationModal = () => {
     setShowAllocationModal(false)
-    setShowProjectDropdown(false)
     setAllocationForm({
       projectId: '',
       space: ''
     })
-  }
-
-  const getSelectedProjectName = () => {
-    const selectedProject = projects.find(p => p.id === allocationForm.projectId)
-    return selectedProject ? `${selectedProject.name} - ${selectedProject.clientName}` : 'Select a project...'
   }
 
   const handleAllocationSubmit = async () => {
@@ -394,32 +414,39 @@ export default function BusinessInventoryItemDetail() {
             </button>
           </div>
 
-          <div className="flex flex-wrap gap-2 sm:space-x-2">
-            {item.inventoryStatus === 'available' && (
-              <button
-                onClick={openAllocationModal}
-                disabled={isUpdating}
-                className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
-                title="Allocate to Project"
-              >
-                <DollarSign className="h-4 w-4" />
-              </button>
-            )}
-            <ContextLink
-              to={buildContextUrl(`/business-inventory/${id}/edit`)}
-              className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-              title="Edit Item"
+          <div className="flex flex-wrap items-center gap-2">
+            {item.disposition ? (
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
+                {displayDispositionLabel(item.disposition)}
+              </span>
+            ) : null}
+            <button
+              onClick={toggleBookmark}
+              className={`inline-flex items-center justify-center p-2 text-sm font-medium transition-colors ${
+                item.bookmark
+                  ? 'text-red-700 bg-transparent'
+                  : 'text-primary-600 bg-transparent'
+              } focus:outline-none`}
+              title={item.bookmark ? 'Remove Bookmark' : 'Add Bookmark'}
             >
-              <Edit className="h-4 w-4" />
-            </ContextLink>
-            {item && (
-              <DuplicateQuantityMenu
-                onDuplicate={(quantity) => duplicateItem(item.itemId, quantity)}
-                buttonClassName="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                buttonTitle="Duplicate Item"
-                buttonContent={<Copy className="h-4 w-4" />}
-              />
-            )}
+              <Bookmark className="h-5 w-5" fill={item.bookmark ? 'currentColor' : 'none'} />
+            </button>
+            <ItemActionsMenu
+              itemId={item.itemId}
+              itemProjectId={item.projectId ?? null}
+              itemTransactionId={item.transactionId ?? null}
+              disposition={item.disposition}
+              isPersisted={true}
+              currentProjectId={item.projectId ?? null}
+              triggerSize="md"
+              onEdit={() => {
+                navigate(buildContextUrl(`/business-inventory/${id}/edit`))
+              }}
+              onDuplicate={(quantity) => duplicateItem(item.itemId, quantity)}
+              onMoveToProject={openAllocationModal}
+              onChangeStatus={updateDisposition}
+              onDelete={handleDeleteItem}
+            />
           </div>
         </div>
       </div>
@@ -615,21 +642,31 @@ export default function BusinessInventoryItemDetail() {
                 )}
               </dl>
 
-              {/* Delete button in lower right corner */}
-              <div className="absolute bottom-0 right-0">
-                <button
-                  onClick={handleDelete}
-                  className="inline-flex items-center justify-center p-2 border border-red-300 text-sm font-medium rounded-md text-red-700 bg-red-50 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-                  title="Delete Item"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
             </div>
           </div>
         </div>
       </div>
 
+
+      <BlockingConfirmDialog
+        open={showDeleteConfirm}
+        title="Delete item?"
+        description={
+          <div className="text-sm text-gray-700 space-y-2">
+            <p>This will permanently delete the item.</p>
+            <p className="text-gray-600">This action cannot be undone.</p>
+          </div>
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        confirmVariant="danger"
+        isConfirming={isDeletingItem}
+        onCancel={() => {
+          if (isDeletingItem) return
+          setShowDeleteConfirm(false)
+        }}
+        onConfirm={confirmDeleteItem}
+      />
 
       {/* Allocation Modal */}
       {showAllocationModal && (
@@ -639,48 +676,15 @@ export default function BusinessInventoryItemDetail() {
               <h3 className="text-lg font-medium text-gray-900 mb-4">Allocate Item to Project</h3>
 
               <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">
-                    Select Project
-                  </label>
-                  <div className="relative mt-1">
-                    <button
-                      type="button"
-                      onClick={() => setShowProjectDropdown(!showProjectDropdown)}
-                      className="project-dropdown-button relative w-full bg-white border border-gray-300 rounded-md shadow-sm pl-3 pr-10 py-2 text-left cursor-default focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                    >
-                      <span className={`block truncate ${!allocationForm.projectId ? 'text-gray-500' : 'text-gray-900'}`}>
-                        {getSelectedProjectName()}
-                      </span>
-                      <span className="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
-                        <svg className="h-5 w-5 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-                        </svg>
-                      </span>
-                    </button>
-
-                    {showProjectDropdown && (
-                      <div className="project-dropdown absolute z-10 mt-1 w-full bg-white shadow-lg max-h-60 rounded-md py-1 text-base border border-gray-200 overflow-auto focus:outline-none sm:text-sm">
-                        {projects.map((project) => (
-                          <button
-                            key={project.id}
-                            type="button"
-                            onClick={() => {
-                              setAllocationForm(prev => ({ ...prev, projectId: project.id }))
-                              setShowProjectDropdown(false)
-                            }}
-                            className={`w-full text-left px-3 py-2 hover:bg-gray-50 ${
-                              allocationForm.projectId === project.id ? 'bg-primary-50 text-primary-600' : 'text-gray-900'
-                            }`}
-                          >
-                            <div className="font-medium">{project.name}</div>
-                            <div className="text-sm text-gray-500">{project.clientName}</div>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <Combobox
+                  label="Select Project"
+                  value={allocationForm.projectId}
+                  onChange={(nextProjectId) => {
+                    setAllocationForm(prev => ({ ...prev, projectId: nextProjectId }))
+                  }}
+                  options={projectOptions}
+                  placeholder={projectOptions.length > 0 ? 'Select a project' : 'No projects available'}
+                />
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Space (optional)</label>
                   <input

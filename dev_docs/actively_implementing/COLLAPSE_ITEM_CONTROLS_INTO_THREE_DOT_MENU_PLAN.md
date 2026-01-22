@@ -19,6 +19,21 @@ Apply this **everywhere items appear** (project inventory, business inventory, t
 - Completing missing backend workflows (notably **Sell → Project**). This plan includes *how the UI should behave* until the backend is ready.
 - Redesigning selection/bulk actions (those can remain separate).
 
+## Status (as of latest implementation)
+- **Completed**
+  - Added `ItemActionsMenu` with two-tier structure and disable reasons.
+  - Wired menu into item preview cards/rows and kept bookmark separate.
+  - Replaced item list controls in project inventory and business inventory lists with the menu.
+  - Added transaction assignment dialogs for list contexts where needed.
+  - Standardized delete confirms to `BlockingConfirmDialog` in list contexts.
+- **In progress**
+  - Item detail header cleanup: remove any leftover legacy controls and show the menu + non-interactive status badge.
+  - Verify disable rules for transaction-tied items (Move/Sell) across contexts.
+  - Confirm "Make Copies…" behavior parity (quantity prompt vs existing picker).
+- **Not started**
+  - Lint pass on touched files.
+  - Manual test plan run.
+
 ---
 
 ## Current State Inventory (What Exists Today)
@@ -144,6 +159,11 @@ Single menu item that opens a modal/dialog:
 - If item is not currently in a transaction: “Assign To Transaction”
 - If item is currently in a transaction: “Change Transaction” with ability to clear/unlink
 
+Availability:
+- **Business inventory**: keep enabled. Users create BI transactions and then attach items after the fact.
+- **Project context**: enabled.
+- **Transaction form drafts**: keep enabled when the underlying flow already supports it.
+
 Implementation note:
 - Reuse the existing transaction picker logic in `ItemDetail.tsx` and `EditItem.tsx` (already supports selection + unlink patterns).
 
@@ -219,6 +239,9 @@ Implementation approach:
 - Two-tier behavior:
   - Hover or click to open a submenu panel to the right.
   - Ensure mobile works (tap to open submenu; back/close affordance if needed).
+
+### Disposition status badge (non-interactive)
+Keep a **non-interactive disposition badge** in item detail, aligned with the same visual treatment used in `ItemPreviewCard` (small pill, no dropdown). This is separate from the menu’s “Change Status” submenu.
 
 ### Keep bookmark separate (per requirement)
 In preview and detail headers:

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronRight, MoreVertical } from 'lucide-react'
+import { ChevronRight, MoreVertical, Check } from 'lucide-react'
+import DuplicateQuantityMenu from '@/components/ui/DuplicateQuantityMenu'
 import { displayDispositionLabel, dispositionsEqual } from '@/utils/dispositionUtils'
 import { isCanonicalTransactionId } from '@/services/inventoryService'
 import type { ItemDisposition } from '@/types'
@@ -13,8 +14,9 @@ type ItemActionsMenuProps = {
   disposition?: ItemDisposition | string | null
   isPersisted: boolean
   currentProjectId?: string | null
+  triggerSize?: 'sm' | 'md'
   onEdit?: () => void
-  onDuplicate?: () => void
+  onDuplicate?: (quantity: number) => void
   onAddToTransaction?: () => void
   onSellToBusiness?: () => void
   onSellToProject?: () => void
@@ -33,6 +35,7 @@ export default function ItemActionsMenu({
   disposition,
   isPersisted,
   currentProjectId,
+  triggerSize = 'sm',
   onEdit,
   onDuplicate,
   onAddToTransaction,
@@ -160,11 +163,15 @@ export default function ItemActionsMenu({
   const renderSubmenuTrigger = ({
     label,
     submenuKey,
+    isOpen,
+    detail,
     disabled,
     disabledReason
   }: {
     label: string
     submenuKey: SubmenuKey
+    isOpen: boolean
+    detail?: string
     disabled?: boolean
     disabledReason?: string | null
   }) => (
@@ -176,18 +183,18 @@ export default function ItemActionsMenu({
         if (disabled) return
         setOpenSubmenu(prev => (prev === submenuKey ? null : submenuKey))
       }}
-      onMouseEnter={() => {
-        if (disabled) return
-        setOpenSubmenu(submenuKey)
-      }}
       className={`flex w-full items-center justify-between px-3 py-2 text-sm transition-colors ${
         disabled ? 'text-gray-400 cursor-not-allowed' : 'text-gray-700 hover:bg-gray-50'
       }`}
       disabled={disabled}
       title={disabledReason || undefined}
+      aria-expanded={isOpen}
     >
       <span>{label}</span>
-      <ChevronRight className="h-4 w-4 text-gray-400" />
+      <span className="flex items-center gap-2">
+        {detail ? <span className="text-xs text-gray-500 truncate max-w-[10rem]">{detail}</span> : null}
+        <ChevronRight className={`h-4 w-4 text-gray-400 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+      </span>
     </button>
   )
 
@@ -205,10 +212,24 @@ export default function ItemActionsMenu({
 
   if (!hasActions) return null
 
+  const currentStatusLabel = disposition ? displayDispositionLabel(disposition as ItemDisposition) : 'Not set'
+
   const menuItems = (
     <div className="py-1">
       {renderMenuItem({ label: 'Edit', onClick: onEdit, disabled: !onEdit })}
-      {renderMenuItem({ label: 'Make Copies…', onClick: onDuplicate, disabled: !onDuplicate })}
+      {onDuplicate ? (
+        <DuplicateQuantityMenu
+          onDuplicate={(quantity) => {
+            onDuplicate(quantity)
+            closeMenus()
+          }}
+          buttonClassName="block w-full text-left px-3 py-2 text-sm transition-colors text-gray-700 hover:bg-gray-50"
+          buttonTitle="Make Copies"
+          buttonContent="Make Copies…"
+        />
+      ) : (
+        renderMenuItem({ label: 'Make Copies…', disabled: true })
+      )}
       {renderMenuItem({
         label: 'Add To Transaction…',
         onClick: onAddToTransaction,
@@ -218,21 +239,92 @@ export default function ItemActionsMenu({
       {renderSubmenuTrigger({
         label: 'Sell',
         submenuKey: 'sell',
+        isOpen: openSubmenu === 'sell',
         disabled: !onSellToBusiness && !onSellToProject,
         disabledReason: !onSellToBusiness && !onSellToProject ? 'Not available in this context.' : null
       })}
+      {openSubmenu === 'sell' && (
+        <div className="border-t border-gray-100 bg-gray-50">
+          <div className="py-1 pl-3">
+            {renderMenuItem({
+              label: 'Sell To Design Business',
+              onClick: onSellToBusiness,
+              disabled: !onSellToBusiness || Boolean(sellToBusinessDisabledReason),
+              disabledReason: sellToBusinessDisabledReason
+            })}
+            {renderMenuItem({
+              label: 'Sell To Project…',
+              onClick: onSellToProject,
+              disabled: true,
+              disabledReason: sellToProjectDisabledReason
+            })}
+          </div>
+        </div>
+      )}
       {renderSubmenuTrigger({
         label: 'Move',
         submenuKey: 'move',
+        isOpen: openSubmenu === 'move',
         disabled: !onMoveToBusiness && !onMoveToProject,
         disabledReason: !onMoveToBusiness && !onMoveToProject ? 'Not available in this context.' : null
       })}
+      {openSubmenu === 'move' && (
+        <div className="border-t border-gray-100 bg-gray-50">
+          <div className="py-1 pl-3">
+            {renderMenuItem({
+              label: 'Move To Design Business',
+              onClick: onMoveToBusiness,
+              disabled: !onMoveToBusiness || Boolean(moveToBusinessDisabledReason),
+              disabledReason: moveToBusinessDisabledReason
+            })}
+            {renderMenuItem({
+              label: 'Move To Project…',
+              onClick: onMoveToProject,
+              disabled: !onMoveToProject || Boolean(moveToProjectDisabledReason),
+              disabledReason: moveToProjectDisabledReason
+            })}
+          </div>
+        </div>
+      )}
       {renderSubmenuTrigger({
-        label: 'Change Status',
+        label: 'Status',
         submenuKey: 'status',
+        isOpen: openSubmenu === 'status',
+        detail: currentStatusLabel,
         disabled: !onChangeStatus,
         disabledReason: !onChangeStatus ? 'Not available in this context.' : changeStatusDisabledReason
       })}
+      {openSubmenu === 'status' && (
+        <div className="border-t border-gray-100 bg-gray-50">
+          <div className="py-1 pl-3">
+            {STATUS_OPTIONS.map((status) => (
+              <button
+                key={status}
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  if (!onChangeStatus || changeStatusDisabledReason) return
+                  onChangeStatus(status)
+                  closeMenus()
+                }}
+                className={`flex w-full items-center justify-between px-3 py-2 text-sm transition-colors ${
+                  changeStatusDisabledReason
+                    ? 'text-gray-400 cursor-not-allowed'
+                    : dispositionsEqual(disposition, status)
+                      ? 'bg-primary-50 text-primary-800 font-medium'
+                      : 'text-gray-700 hover:bg-gray-50'
+                }`}
+                disabled={Boolean(changeStatusDisabledReason)}
+                title={changeStatusDisabledReason || undefined}
+              >
+                <span>{displayDispositionLabel(status)}</span>
+                {dispositionsEqual(disposition, status) ? <Check className="h-4 w-4 text-primary-600" /> : null}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {renderMenuItem({
         label: 'Delete…',
         onClick: onDelete,
@@ -243,7 +335,12 @@ export default function ItemActionsMenu({
     </div>
   )
 
-  const submenuBase = 'absolute top-0 left-full ml-1 w-56 bg-white border border-gray-200 rounded-md shadow-lg z-50'
+  const triggerStyles = triggerSize === 'md'
+    ? 'p-2 text-base'
+    : 'p-1 text-sm'
+  const iconSize = triggerSize === 'md'
+    ? 'h-5 w-5'
+    : 'h-4 w-4'
 
   return (
     <div className="relative" ref={menuRef}>
@@ -255,87 +352,18 @@ export default function ItemActionsMenu({
           setIsOpen(prev => !prev)
           setOpenSubmenu(null)
         }}
-        className="inline-flex items-center justify-center p-1 text-sm font-medium text-gray-600 hover:text-gray-900 bg-transparent focus:outline-none transition-colors"
+        className={`inline-flex items-center justify-center ${triggerStyles} font-medium text-primary-600 hover:text-primary-800 bg-transparent focus:outline-none transition-colors`}
         aria-haspopup="menu"
         aria-expanded={isOpen}
         aria-label="Item actions"
         title="More actions"
       >
-        <MoreVertical className="h-4 w-4" />
+        <MoreVertical className={iconSize} />
       </button>
 
       {isOpen && (
         <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-200 rounded-md shadow-lg z-50">
           {menuItems}
-
-          {openSubmenu === 'sell' && (
-            <div className={submenuBase}>
-              <div className="py-1">
-                {renderMenuItem({
-                  label: 'Sell To Design Business',
-                  onClick: onSellToBusiness,
-                  disabled: !onSellToBusiness || Boolean(sellToBusinessDisabledReason),
-                  disabledReason: sellToBusinessDisabledReason
-                })}
-                {renderMenuItem({
-                  label: 'Sell To Project…',
-                  onClick: onSellToProject,
-                  disabled: true,
-                  disabledReason: sellToProjectDisabledReason
-                })}
-              </div>
-            </div>
-          )}
-
-          {openSubmenu === 'move' && (
-            <div className={submenuBase}>
-              <div className="py-1">
-                {renderMenuItem({
-                  label: 'Move To Design Business',
-                  onClick: onMoveToBusiness,
-                  disabled: !onMoveToBusiness || Boolean(moveToBusinessDisabledReason),
-                  disabledReason: moveToBusinessDisabledReason
-                })}
-                {renderMenuItem({
-                  label: 'Move To Project…',
-                  onClick: onMoveToProject,
-                  disabled: !onMoveToProject || Boolean(moveToProjectDisabledReason),
-                  disabledReason: moveToProjectDisabledReason
-                })}
-              </div>
-            </div>
-          )}
-
-          {openSubmenu === 'status' && (
-            <div className={submenuBase}>
-              <div className="py-1">
-                {STATUS_OPTIONS.map((status) => (
-                  <button
-                    key={status}
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      if (!onChangeStatus || changeStatusDisabledReason) return
-                      onChangeStatus(status)
-                      closeMenus()
-                    }}
-                    className={`block w-full text-left px-3 py-2 text-sm transition-colors ${
-                      changeStatusDisabledReason
-                        ? 'text-gray-400 cursor-not-allowed'
-                        : dispositionsEqual(disposition, status)
-                          ? 'bg-gray-100 text-gray-900'
-                          : 'text-gray-700 hover:bg-gray-50'
-                    }`}
-                    disabled={Boolean(changeStatusDisabledReason)}
-                    title={changeStatusDisabledReason || undefined}
-                  >
-                    {displayDispositionLabel(status)}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>
