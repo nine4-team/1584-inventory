@@ -5,7 +5,7 @@ import ContextLink from '@/components/ContextLink'
 import ContextBackLink from '@/components/ContextBackLink'
 import { Item, ItemImage, ItemDisposition, Transaction, Project } from '@/types'
 import { formatDate, formatCurrency } from '@/utils/dateUtils'
-import { unifiedItemsService, projectService, integrationService, transactionService, isCanonicalTransactionId } from '@/services/inventoryService'
+import { unifiedItemsService, projectService, integrationService, transactionService, isCanonicalTransactionId, SellItemToProjectError } from '@/services/inventoryService'
 import { ImageUploadService } from '@/services/imageService'
 import { OfflineAwareImageService } from '@/services/offlineAwareImageService'
 import { offlineMediaService } from '@/services/offlineMediaService'
@@ -19,6 +19,7 @@ import { useDuplication } from '@/hooks/useDuplication'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
 import { useNetworkState } from '@/hooks/useNetworkState'
+import { getOfflineSaveMessage } from '@/utils/offlineUxFeedback'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { projectItemDetail, projectItemEdit, projectItems, projectTransactionDetail } from '@/utils/routes'
 import { Combobox } from '@/components/ui/Combobox'
@@ -58,6 +59,7 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
   const [selectedProjectId, setSelectedProjectId] = useState('')
   const [isUpdatingProject, setIsUpdatingProject] = useState(false)
   const [showProjectDialog, setShowProjectDialog] = useState(false)
+  const [projectDialogMode, setProjectDialogMode] = useState<'move' | 'sell'>('move')
   const [showRemoveFromTransactionConfirm, setShowRemoveFromTransactionConfirm] = useState(false)
   const [isRemovingFromTransaction, setIsRemovingFromTransaction] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -376,75 +378,11 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
 
     setIsUpdatingTransaction(true)
     const previousTransactionId = item.transactionId
-
+    
     try {
-      // Update the item's transactionId
-      await unifiedItemsService.updateItem(currentAccountId, item.itemId, {
-        transactionId: selectedTransactionId
+      await unifiedItemsService.assignItemToTransaction(currentAccountId, selectedTransactionId, item.itemId, {
+        itemPreviousTransactionId: previousTransactionId
       })
-
-      // Update lineage pointers
-      try {
-        await lineageService.updateItemLineagePointers(currentAccountId, item.itemId, selectedTransactionId)
-      } catch (lineageError) {
-        console.warn('Failed to update lineage pointers for item:', item.itemId, lineageError)
-      }
-
-      // Remove item from old transaction's item_ids array
-      if (previousTransactionId) {
-        try {
-          const { data: oldTxData, error: fetchOldError } = await supabase
-            .from('transactions')
-            .select('item_ids')
-            .eq('account_id', currentAccountId)
-            .eq('transaction_id', previousTransactionId)
-            .single()
-
-          if (!fetchOldError && oldTxData) {
-            const currentItemIds: string[] = Array.isArray(oldTxData.item_ids) ? oldTxData.item_ids : []
-            const updatedItemIds = currentItemIds.filter(id => id !== item.itemId)
-
-            await supabase
-              .from('transactions')
-              .update({
-                item_ids: updatedItemIds,
-                updated_at: new Date().toISOString()
-              })
-              .eq('account_id', currentAccountId)
-              .eq('transaction_id', previousTransactionId)
-          }
-        } catch (oldTxError) {
-          console.warn('Failed to update old transaction item_ids:', oldTxError)
-        }
-      }
-
-      // Add item to new transaction's item_ids array
-      try {
-        const { data: newTxData, error: fetchNewError } = await supabase
-          .from('transactions')
-          .select('item_ids')
-          .eq('account_id', currentAccountId)
-          .eq('transaction_id', selectedTransactionId)
-          .single()
-
-        if (!fetchNewError && newTxData) {
-          const currentItemIds: string[] = Array.isArray(newTxData.item_ids) ? newTxData.item_ids : []
-          if (!currentItemIds.includes(item.itemId)) {
-            const updatedItemIds = [...currentItemIds, item.itemId]
-
-            await supabase
-              .from('transactions')
-              .update({
-                item_ids: updatedItemIds,
-                updated_at: new Date().toISOString()
-              })
-              .eq('account_id', currentAccountId)
-              .eq('transaction_id', selectedTransactionId)
-          }
-        }
-      } catch (newTxError) {
-        console.warn('Failed to update new transaction item_ids:', newTxError)
-      }
 
       // Refresh the item data
       const updatedItem = await unifiedItemsService.getItemById(currentAccountId, item.itemId)
@@ -495,17 +433,23 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
     }
   }, [item, currentAccountId, showError, showSuccess, navigate, buildContextUrl, projects])
 
-  const openProjectDialog = () => {
-    if (associateDisabled) return
+  const openProjectDialog = (mode: 'move' | 'sell' = 'move') => {
+    if (mode === 'move' && associateDisabled) return
+    setProjectDialogMode(mode)
     setShowProjectDialog(true)
   }
 
-  const handleMoveToBusinessInventory = async () => {
+  const handleSellToBusinessInventory = async () => {
     if (!item || !currentAccountId) return
     if (!item.projectId) return
     try {
+      const wasOffline = !isOnline
       // This deallocation path creates/updates the canonical inventory sale transaction.
       await integrationService.handleItemDeallocation(currentAccountId, item.itemId, item.projectId, 'inventory')
+      if (wasOffline) {
+        showSuccess(getOfflineSaveMessage())
+        return
+      }
       await refreshRealtimeAfterWrite()
       await handleRefreshItem()
       showSuccess('Moved to business inventory.')
@@ -513,6 +457,87 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
       console.error('Failed to move item to business inventory:', error)
       showError('Failed to move item to business inventory. Please try again.')
     } finally {
+    }
+  }
+
+  const handleMoveToBusinessInventory = async () => {
+    if (!item || !currentAccountId) return
+    if (!item.projectId) return
+    if (item.transactionId) {
+      showError('This item is tied to a transaction. Move the transaction instead.')
+      return
+    }
+    try {
+      await integrationService.moveItemToBusinessInventory(currentAccountId, item.itemId, item.projectId)
+      await refreshRealtimeAfterWrite()
+      await handleRefreshItem()
+      showSuccess('Moved to business inventory.')
+    } catch (error) {
+      console.error('Failed to move item to business inventory:', error)
+      showError('Failed to move item to business inventory. Please try again.')
+    }
+  }
+
+  const handleSellToProject = async () => {
+    if (!item || !currentAccountId) return
+    if (!item.projectId) return
+    if (!selectedProjectId || selectedProjectId === item.projectId) {
+      setShowProjectDialog(false)
+      return
+    }
+
+    setIsUpdatingProject(true)
+    try {
+      const wasOffline = !isOnline
+      await integrationService.sellItemToProject(
+        currentAccountId,
+        item.itemId,
+        item.projectId,
+        selectedProjectId
+      )
+      if (wasOffline) {
+        showSuccess(getOfflineSaveMessage())
+        return
+      }
+      await refreshRealtimeAfterWrite()
+      await handleRefreshItem()
+      showSuccess('Sold to project.')
+      const nextProject = projects.find(project => project.id === selectedProjectId)
+      if (nextProject) {
+        setProjectName(nextProject.name)
+        navigate(buildContextUrl(projectItemDetail(selectedProjectId, item.itemId)))
+      }
+    } catch (error) {
+      if (error instanceof SellItemToProjectError) {
+        switch (error.code) {
+          case 'ITEM_NOT_FOUND':
+            showError('Item not found. Refresh and try again.')
+            break
+          case 'SOURCE_PROJECT_MISMATCH':
+          case 'CONFLICT':
+            showError('This item changed since you opened it. Refresh and try again.')
+            break
+          case 'NON_CANONICAL_TRANSACTION':
+            showError('This item is tied to a transaction. Move the transaction instead.')
+            break
+          case 'TARGET_SAME_AS_SOURCE':
+            showError('Select a different project to sell to.')
+            break
+          case 'PARTIAL_COMPLETION':
+            showError('Item was moved to business inventory. Allocate it to the target project from there.')
+            await refreshRealtimeAfterWrite()
+            await handleRefreshItem()
+            break
+          default:
+            showError('Failed to sell item to project. Please try again.')
+        }
+      } else {
+        console.error('Failed to sell item to project:', error)
+        showError('Failed to sell item to project. Please try again.')
+      }
+    } finally {
+      setIsUpdatingProject(false)
+      setShowProjectDialog(false)
     }
   }
 
@@ -1253,7 +1278,7 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
             <div className="px-6 py-4 border-b border-gray-200">
               <h3 className="text-lg font-medium text-gray-900">
-                Move To Project
+                {projectDialogMode === 'sell' ? 'Sell To Project' : 'Move To Project'}
               </h3>
             </div>
             <div className="px-6 py-4 space-y-4">
@@ -1266,7 +1291,7 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
                 placeholder={loadingProjects ? "Loading projects..." : "Select a project"}
                 options={projectOptions}
               />
-              {associateDisabledReason && (
+              {projectDialogMode === 'move' && associateDisabledReason && (
                 <p className="text-xs text-gray-500">{associateDisabledReason}</p>
               )}
             </div>
@@ -1282,11 +1307,21 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
                 Cancel
               </button>
               <button
-                onClick={() => handleAssociateProject(selectedProjectId)}
-                disabled={!selectedProjectId || isUpdatingProject || associateDisabled}
+                onClick={
+                  projectDialogMode === 'sell'
+                    ? handleSellToProject
+                    : () => handleAssociateProject(selectedProjectId)
+                }
+                disabled={!selectedProjectId || isUpdatingProject || (associateDisabled && projectDialogMode !== 'sell')}
                 className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isUpdatingProject ? 'Moving...' : 'Move'}
+                {isUpdatingProject
+                  ? projectDialogMode === 'sell'
+                    ? 'Selling...'
+                    : 'Moving...'
+                  : projectDialogMode === 'sell'
+                    ? 'Sell'
+                    : 'Move'}
               </button>
             </div>
           </div>
@@ -1332,9 +1367,10 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
                 }}
                 onDuplicate={handleDuplicateItem}
                 onAddToTransaction={openTransactionDialog}
-                onSellToBusiness={handleMoveToBusinessInventory}
+                onSellToBusiness={handleSellToBusinessInventory}
+                onSellToProject={() => openProjectDialog('sell')}
                 onMoveToBusiness={handleMoveToBusinessInventory}
-                onMoveToProject={openProjectDialog}
+                onMoveToProject={() => openProjectDialog('move')}
                 onChangeStatus={updateDisposition}
                 onDelete={handleDeleteItem}
               />
@@ -1435,9 +1471,10 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
                   }}
                   onDuplicate={handleDuplicateItem}
                   onAddToTransaction={openTransactionDialog}
-                  onSellToBusiness={handleMoveToBusinessInventory}
+                  onSellToBusiness={handleSellToBusinessInventory}
+                  onSellToProject={() => openProjectDialog('sell')}
                   onMoveToBusiness={handleMoveToBusinessInventory}
-                  onMoveToProject={openProjectDialog}
+                  onMoveToProject={() => openProjectDialog('move')}
                   onChangeStatus={updateDisposition}
                   onDelete={handleDeleteItem}
                 />

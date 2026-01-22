@@ -4,6 +4,7 @@ import DuplicateQuantityMenu from '@/components/ui/DuplicateQuantityMenu'
 import { displayDispositionLabel, dispositionsEqual } from '@/utils/dispositionUtils'
 import { isCanonicalTransactionId } from '@/services/inventoryService'
 import type { ItemDisposition } from '@/types'
+import { useNetworkState } from '@/hooks/useNetworkState'
 
 type SubmenuKey = 'sell' | 'move' | 'status'
 
@@ -49,6 +50,7 @@ export default function ItemActionsMenu({
   const menuRef = useRef<HTMLDivElement | null>(null)
   const [isOpen, setIsOpen] = useState(false)
   const [openSubmenu, setOpenSubmenu] = useState<SubmenuKey | null>(null)
+  const { isOnline } = useNetworkState()
 
   const isInBusinessInventory = !itemProjectId
   const isTiedToTransaction = Boolean(itemTransactionId)
@@ -81,9 +83,28 @@ export default function ItemActionsMenu({
 
   const changeStatusDisabledReason = isUnpersisted ? 'Save this item before changing status.' : null
 
-  const sellToProjectDisabledReason = isUnpersisted
-    ? 'Save this item before selling.'
-    : 'Not implemented yet.'
+  const sellToProjectDisabledReason = useMemo(() => {
+    if (isUnpersisted) return 'Save this item before selling.'
+    if (isInBusinessInventory) return 'This item is already in business inventory. Use Move to Project.'
+    if (isTiedToTransaction && !isCanonicalTransaction) return transactionMoveDisabledReason
+    return null
+  }, [
+    isUnpersisted,
+    isInBusinessInventory,
+    isTiedToTransaction,
+    isCanonicalTransaction,
+    transactionMoveDisabledReason
+  ])
+
+  const duplicateDisabledReason = useMemo(() => {
+    if (!onDuplicate) return 'Not available in this context.'
+    return null
+  }, [onDuplicate])
+
+  const addToTransactionDisabledReason = useMemo(() => {
+    if (!onAddToTransaction) return 'Not available in this context.'
+    return null
+  }, [onAddToTransaction])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -217,24 +238,28 @@ export default function ItemActionsMenu({
   const menuItems = (
     <div className="py-1">
       {renderMenuItem({ label: 'Edit', onClick: onEdit, disabled: !onEdit })}
-      {onDuplicate ? (
+      {duplicateDisabledReason ? (
+        renderMenuItem({
+          label: 'Make Copies…',
+          disabled: true,
+          disabledReason: duplicateDisabledReason
+        })
+      ) : (
         <DuplicateQuantityMenu
           onDuplicate={(quantity) => {
-            onDuplicate(quantity)
+            onDuplicate?.(quantity)
             closeMenus()
           }}
           buttonClassName="block w-full text-left px-3 py-2 text-sm transition-colors text-gray-700 hover:bg-gray-50"
           buttonTitle="Make Copies"
           buttonContent="Make Copies…"
         />
-      ) : (
-        renderMenuItem({ label: 'Make Copies…', disabled: true })
       )}
       {renderMenuItem({
         label: 'Add To Transaction…',
         onClick: onAddToTransaction,
-        disabled: !onAddToTransaction,
-        disabledReason: !onAddToTransaction ? 'Not available in this context.' : null
+        disabled: Boolean(addToTransactionDisabledReason),
+        disabledReason: addToTransactionDisabledReason
       })}
       {renderSubmenuTrigger({
         label: 'Sell',
@@ -255,7 +280,7 @@ export default function ItemActionsMenu({
             {renderMenuItem({
               label: 'Sell To Project…',
               onClick: onSellToProject,
-              disabled: true,
+              disabled: !onSellToProject || Boolean(sellToProjectDisabledReason),
               disabledReason: sellToProjectDisabledReason
             })}
           </div>
