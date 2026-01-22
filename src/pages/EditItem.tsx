@@ -611,6 +611,16 @@ export default function EditItem() {
       : 'This item is tied to a transaction. Move the transaction to another project instead.')
     : null
   const associateDisabled = Boolean(associateDisabledReason) || loadingProjects
+  const projectHelperText = associateDisabledReason
+    ? (
+      <>
+        <p>If you accidentally added this item to the wrong project.</p>
+        <p className="text-amber-600">
+          If you want to move it to a new project, move the entire transaction or remove this item from the transaction before changing project.
+        </p>
+      </>
+    )
+    : 'If you accidentally added this item to the wrong project.'
 
   if (loading) {
     return (
@@ -761,15 +771,13 @@ export default function EditItem() {
                 label="Associate with project"
                 value={selectedProjectValue}
                 onChange={handleProjectChange}
-                helperText="If you accidentally added this item to the wrong project."
+                helperText={projectHelperText}
+                helperTextClassName={associateDisabledReason ? 'space-y-1' : undefined}
                 disabled={associateDisabled}
                 loading={loadingProjects}
                 placeholder={loadingProjects ? "Loading projects..." : "Select a project"}
                 options={projectOptions}
               />
-              {associateDisabledReason && (
-                <p className="mt-1 text-sm text-amber-600">{associateDisabledReason}</p>
-              )}
 
               {/* Transaction Selection */}
               <Combobox
