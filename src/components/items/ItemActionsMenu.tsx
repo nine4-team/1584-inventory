@@ -58,7 +58,7 @@ export default function ItemActionsMenu({
   const isUnpersisted = !isPersisted
 
   const transactionMoveDisabledReason = isCanonicalTransaction
-    ? 'This item is tied to a Company Inventory transaction. Use allocation/deallocation instead.'
+    ? 'This item is tied to a Design Business Inventory transaction. Move is not available.'
     : 'This item is tied to a transaction. Move the transaction instead.'
 
   const sellToBusinessDisabledReason = useMemo(() => {

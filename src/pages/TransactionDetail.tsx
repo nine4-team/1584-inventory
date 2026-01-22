@@ -1,4 +1,4 @@
-import { ArrowLeft, Edit, Trash2, Image as ImageIcon, Package, RefreshCw, ChevronDown } from 'lucide-react'
+import { ArrowLeft, Trash2, Image as ImageIcon, Package, RefreshCw } from 'lucide-react'
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import ImageGallery from '@/components/ui/ImageGallery'
 import { TransactionImagePreview } from '@/components/ui/ImagePreview'
@@ -7,7 +7,12 @@ import ContextBackLink from '@/components/ContextBackLink'
 import ContextLink from '@/components/ContextLink'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { Transaction, Project, Item, TransactionItemFormData, BudgetCategory, ItemDisposition, ItemImage, TransactionImage } from '@/types'
-import { transactionService, projectService, unifiedItemsService, isCanonicalTransactionId } from '@/services/inventoryService'
+import {
+  transactionService,
+  projectService,
+  unifiedItemsService,
+  isCanonicalSaleOrPurchaseTransactionId
+} from '@/services/inventoryService'
 import { budgetCategoriesService } from '@/services/budgetCategoriesService'
 import { lineageService } from '@/services/lineageService'
 import { ImageUploadService } from '@/services/imageService'
@@ -35,6 +40,8 @@ import { useSyncError } from '@/hooks/useSyncError'
 import { projectTransactionDetail, projectTransactionEdit, projectTransactions } from '@/utils/routes'
 import { splitItemsByMovement, type DisplayTransactionItem } from '@/utils/transactionMovement'
 import { ConflictResolutionView } from '@/components/ConflictResolutionView'
+import TransactionActionsMenu from '@/components/transactions/TransactionActionsMenu'
+import { Combobox } from '@/components/ui/Combobox'
 
 
 // Get canonical transaction title for display
@@ -110,7 +117,7 @@ export default function TransactionDetail() {
   const [loadingProjects, setLoadingProjects] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState('')
   const [isUpdatingProject, setIsUpdatingProject] = useState(false)
-  const [showProjectMenu, setShowProjectMenu] = useState(false)
+  const [showProjectDialog, setShowProjectDialog] = useState(false)
   const transactionRef = useRef<Transaction | null>(null)
   const derivedRealtimeProjectId = projectId || transaction?.projectId || null
   const { refreshCollections: refreshRealtimeCollections, items: realtimeProjectItems } = useProjectRealtime(derivedRealtimeProjectId)
@@ -633,51 +640,79 @@ export default function TransactionDetail() {
   }, [projectId, transactionId, currentAccountId, fetchItemsViaReconcile])
 
   const projectOptions = useMemo(
-    () => projects.map(project => ({ id: project.id, label: project.name })),
-    [projects]
+    () => projects.map(project => ({
+      id: project.id,
+      label: project.name,
+      disabled: project.id === transaction?.projectId
+    })),
+    [projects, transaction?.projectId]
   )
 
-  const moveDisabledReason = useMemo(() => {
-    if (!transaction) return 'Transaction not loaded.'
-    if (isCanonicalTransactionId(transaction.transactionId)) {
-      return 'This is a company inventory transaction. Use allocation/deallocation instead.'
-    }
-    if (loadingProjects) return 'Loading projects...'
-    if (projectOptions.length === 0) return 'No projects available.'
-    return ''
-  }, [transaction, loadingProjects, projectOptions.length])
+  const canMoveToBusinessInventory = Boolean(transaction?.projectId)
+  const canMoveToProject = projectOptions.length > 0
 
-  const moveDisabled = Boolean(moveDisabledReason) || isUpdatingProject
+  const openProjectDialog = useCallback(() => {
+    if (!transaction) return
+    setSelectedProjectId(transaction.projectId || '')
+    setShowProjectDialog(true)
+  }, [transaction])
 
-  const handleMoveProject = useCallback(async (nextProjectId: string) => {
+  const handleMoveProject = useCallback(async () => {
     if (!transaction || !currentAccountId) return
-    if (!nextProjectId || nextProjectId === transaction.projectId) return
-    if (isCanonicalTransactionId(transaction.transactionId)) {
-      showError('This is a company inventory transaction. Use allocation/deallocation instead.')
+    if (!selectedProjectId || selectedProjectId === transaction.projectId) {
+      setShowProjectDialog(false)
+      return
+    }
+    if (isCanonicalSaleOrPurchaseTransactionId(transaction.transactionId)) {
+      showError('This is a Design Business Inventory purchase/sale transaction. Move is not available.')
       setSelectedProjectId(transaction.projectId || '')
+      setShowProjectDialog(false)
       return
     }
 
     setIsUpdatingProject(true)
-    setSelectedProjectId(nextProjectId)
     try {
-      await transactionService.moveTransactionToProject(currentAccountId, transaction.transactionId, nextProjectId)
-      const nextProject = projects.find(project => project.id === nextProjectId)
+      await transactionService.moveTransactionToProject(currentAccountId, transaction.transactionId, selectedProjectId)
+      const nextProject = projects.find(project => project.id === selectedProjectId)
       if (nextProject) {
         setProject(nextProject)
       }
-      setTransaction(prev => prev ? { ...prev, projectId: nextProjectId } : prev)
+      setTransaction(prev => prev ? { ...prev, projectId: selectedProjectId } : prev)
       showSuccess('Transaction moved to project.')
-      navigate(buildContextUrl(projectTransactionDetail(nextProjectId, transaction.transactionId)))
+      setShowProjectDialog(false)
+      navigate(buildContextUrl(projectTransactionDetail(selectedProjectId, transaction.transactionId)))
     } catch (error) {
       console.error('Failed to move transaction:', error)
       setSelectedProjectId(transaction.projectId || '')
       showError('Failed to move transaction. Please try again.')
     } finally {
       setIsUpdatingProject(false)
-      setShowProjectMenu(false)
     }
-  }, [transaction, currentAccountId, showError, showSuccess, navigate, buildContextUrl, projects])
+  }, [transaction, currentAccountId, selectedProjectId, showError, showSuccess, navigate, buildContextUrl, projects])
+
+  const handleMoveToBusinessInventory = useCallback(async () => {
+    if (!transaction || !currentAccountId) return
+    if (!transaction.projectId) return
+    if (isCanonicalSaleOrPurchaseTransactionId(transaction.transactionId)) {
+      showError('This is a Design Business Inventory purchase/sale transaction. Move is not available.')
+      return
+    }
+
+    setIsUpdatingProject(true)
+    try {
+      await transactionService.moveTransactionToProject(currentAccountId, transaction.transactionId, null)
+      setProject(null)
+      setTransaction(prev => prev ? { ...prev, projectId: null } : prev)
+      setSelectedProjectId('')
+      showSuccess('Transaction moved to business inventory.')
+      navigate(buildContextUrl(`/business-inventory/transaction/${transaction.transactionId}`))
+    } catch (error) {
+      console.error('Failed to move transaction to business inventory:', error)
+      showError('Failed to move transaction. Please try again.')
+    } finally {
+      setIsUpdatingProject(false)
+    }
+  }, [transaction, currentAccountId, showError, showSuccess, navigate, buildContextUrl])
 
   useEffect(() => {
     loadTransaction()
@@ -798,20 +833,28 @@ export default function TransactionDetail() {
 
 
 
-  const handleDelete = async () => {
-    if (!projectId || !transactionId || !transaction || !currentAccountId) return
+  const handleEdit = useCallback(() => {
+    if (!editTransactionUrl) return
+    navigate(buildContextUrl(editTransactionUrl))
+  }, [editTransactionUrl, navigate, buildContextUrl])
+
+  const handleDelete = useCallback(async () => {
+    if (!transactionId || !transaction || !currentAccountId) return
+
+    const resolvedProjectId = projectId || transaction.projectId
+    if (!resolvedProjectId) return
 
     if (window.confirm('Are you sure you want to delete this transaction? This action cannot be undone.')) {
       try {
-        await transactionService.deleteTransaction(currentAccountId, projectId, transactionId)
+        await transactionService.deleteTransaction(currentAccountId, resolvedProjectId, transactionId)
         await refreshRealtimeAfterWrite(true)
-        navigate(projectId ? projectTransactions(projectId) : '/projects')
+        navigate(resolvedProjectId ? projectTransactions(resolvedProjectId) : '/projects')
       } catch (error) {
         console.error('Error deleting transaction:', error)
         showError('Failed to delete transaction. Please try again.')
       }
     }
-  }
+  }, [projectId, transactionId, transaction, currentAccountId, showError, navigate, refreshRealtimeAfterWrite])
 
   const handleImageClick = (index: number) => {
     setGalleryInitialIndex(index)
@@ -1431,49 +1474,19 @@ export default function TransactionDetail() {
             </button>
           </div>
           <div className="flex items-center space-x-3">
-            {transaction && !isCanonicalTransactionId(transaction.transactionId) && (
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!moveDisabled) {
-                      setShowProjectMenu(prev => !prev)
-                    }
-                  }}
-                  className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-900 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
-                  title={moveDisabledReason || 'Move to project'}
-                  disabled={moveDisabled}
-                >
-                  Move to project
-                  <ChevronDown className="h-3 w-3 ml-1" />
-                </button>
-                {showProjectMenu && !moveDisabled && (
-                  <div className="absolute right-0 mt-1 w-64 bg-white border border-gray-200 rounded-md shadow-lg z-20">
-                    <div className="py-1">
-                      {projectOptions.map((option) => (
-                        <button
-                          key={option.id}
-                          type="button"
-                          onClick={() => handleMoveProject(option.id)}
-                          className={`block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                            option.id === selectedProjectId ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
-                          }`}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+            {transaction && (
+              <TransactionActionsMenu
+                transactionId={transaction.transactionId}
+                projectId={transaction.projectId}
+                onEdit={handleEdit}
+                onMoveToProject={openProjectDialog}
+                onMoveToBusinessInventory={handleMoveToBusinessInventory}
+                onDelete={handleDelete}
+                canMoveToBusinessInventory={canMoveToBusinessInventory}
+                canMoveToProject={canMoveToProject}
+                triggerSize="md"
+              />
             )}
-            <ContextLink
-              to={buildContextUrl(editTransactionUrl)}
-              className="inline-flex items-center justify-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-              title="Edit Transaction"
-            >
-              <Edit className="h-4 w-4" />
-            </ContextLink>
             {hasSyncError && <RetrySyncButton size="sm" variant="secondary" />}
           </div>
         </div>
@@ -1887,6 +1900,49 @@ export default function TransactionDetail() {
           initialIndex={galleryInitialIndex}
           onClose={handleGalleryClose}
         />
+      )}
+
+      {/* Move to Project Dialog */}
+      {showProjectDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-medium text-gray-900">
+                Move To Project
+              </h3>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              <Combobox
+                label="Select Project"
+                value={selectedProjectId}
+                onChange={setSelectedProjectId}
+                disabled={loadingProjects || isUpdatingProject}
+                loading={loadingProjects}
+                placeholder={loadingProjects ? "Loading projects..." : "Select a project"}
+                options={projectOptions}
+              />
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  if (isUpdatingProject) return
+                  setShowProjectDialog(false)
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                disabled={isUpdatingProject}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleMoveProject}
+                disabled={!selectedProjectId || isUpdatingProject}
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isUpdatingProject ? 'Moving...' : 'Move'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

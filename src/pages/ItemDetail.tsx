@@ -23,7 +23,6 @@ import { getOfflineSaveMessage } from '@/utils/offlineUxFeedback'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { projectItemDetail, projectItemEdit, projectItems, projectTransactionDetail } from '@/utils/routes'
 import { Combobox } from '@/components/ui/Combobox'
-import { supabase } from '@/services/supabase'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import { getGlobalQueryClient } from '@/utils/queryClient'
 import { hydrateItemCache, hydrateProjectCache } from '@/utils/hydrationHelpers'
@@ -365,10 +364,10 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
 
   const getCanonicalTransactionTitle = (transaction: Transaction): string => {
     if (transaction.transactionId?.startsWith('INV_SALE_')) {
-      return 'Company Inventory Sale'
+      return 'Design Business Inventory Sale'
     }
     if (transaction.transactionId?.startsWith('INV_PURCHASE_')) {
-      return 'Company Inventory Purchase'
+      return 'Design Business Inventory Purchase'
     }
     return transaction.source
   }
@@ -915,7 +914,7 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
   )
   const associateDisabledReason = item?.transactionId
     ? (isCanonicalTransactionId(item.transactionId)
-      ? 'This item is tied to a Company Inventory transaction. Use inventory allocation/deallocation instead.'
+      ? 'This item is tied to a Design Business Inventory transaction. You can’t change its project directly.'
       : 'This item is tied to a transaction. Move the transaction to another project instead.')
     : null
   const associateDisabled = Boolean(associateDisabledReason) || loadingProjects || isUpdatingProject

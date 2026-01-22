@@ -102,10 +102,10 @@ function buildDisplayInfoFromOffline(source: string, transactionId: string | nul
 
 function formatTransactionTitle(transactionId: string | null | undefined, source: string, maxLength: number) {
   if (transactionId?.startsWith('INV_SALE_')) {
-    return 'Company Inventory Sale'
+    return 'Design Business Inventory Sale'
   }
   if (transactionId?.startsWith('INV_PURCHASE_')) {
-    return 'Company Inventory Purchase'
+    return 'Design Business Inventory Purchase'
   }
 
   let title = source || 'Transaction'

@@ -279,7 +279,7 @@ export default function ItemPreviewCard({
                 </span>
               ) : null}
               {item.disposition ? (
-                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-medium bg-primary-100 text-primary-800">
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800 whitespace-nowrap">
                   {displayDispositionLabel(item.disposition)}
                 </span>
               ) : null}
@@ -436,7 +436,7 @@ export default function ItemPreviewCard({
   if (onClick) {
     return (
       <div 
-        className="bg-gray-50 border border-gray-200 rounded-lg p-4 cursor-pointer hover:bg-gray-100 transition-colors"
+        className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-5 cursor-pointer hover:bg-gray-100 transition-colors"
         onClick={(e) => {
           // Only trigger onClick if the click wasn't on an interactive element
           const target = e.target as HTMLElement
@@ -453,7 +453,7 @@ export default function ItemPreviewCard({
   if (shouldWrapInLink && linkUrl) {
     return (
       <ContextLink to={linkUrl} className="block">
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 hover:bg-gray-100 transition-colors">
+        <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-5 hover:bg-gray-100 transition-colors">
           {cardContent}
         </div>
       </ContextLink>
@@ -461,7 +461,7 @@ export default function ItemPreviewCard({
   }
 
   return (
-    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+    <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-5">
       {cardContent}
     </div>
   )
