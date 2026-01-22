@@ -179,6 +179,7 @@ export default function TransactionDetail() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [showGallery, setShowGallery] = useState(false)
   const [galleryInitialIndex, setGalleryInitialIndex] = useState(0)
+  const [showExistingItemsModal, setShowExistingItemsModal] = useState(false)
   const [receiptUploadsInFlight, setReceiptUploadsInFlight] = useState(0)
   const [otherUploadsInFlight, setOtherUploadsInFlight] = useState(0)
   const isUploadingReceiptImages = receiptUploadsInFlight > 0
@@ -1776,28 +1777,7 @@ export default function TransactionDetail() {
               <Package className="h-5 w-5 mr-2" />
               Transaction Items
             </h3>
-            <button
-              type="button"
-              onClick={() => setIsAddingItem(true)}
-              className="inline-flex items-center px-3 py-2 border text-xs font-medium rounded border-gray-300 text-gray-700 bg-white hover:bg-gray-50"
-            >
-              <Package className="h-3 w-3 mr-1" />
-              Create Item
-            </button>
           </div>
-
-          {transaction && (
-            <TransactionItemPicker
-              transaction={transaction}
-              projectId={projectId}
-              transactionItemIds={itemsInTransaction.map(item => item.id)}
-              containerId="transaction-items-container"
-              onItemsAdded={async () => {
-                await refreshTransactionItems()
-                await refreshRealtimeAfterWrite()
-              }}
-            />
-          )}
 
           {isLoadingItems ? (
             <div className="flex justify-center items-center h-16">
@@ -1813,6 +1793,7 @@ export default function TransactionDetail() {
                     items={itemsInTransaction}
                     onItemsChange={() => {}}
                     onAddItem={handleCreateItem}
+                      onAddExistingItems={() => setShowExistingItemsModal(true)}
                     onUpdateItem={handleUpdateItem}
                     onDuplicateItem={handleDuplicateTransactionItem}
                     projectId={projectId}
@@ -1947,6 +1928,45 @@ export default function TransactionDetail() {
                 className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isUpdatingProject ? 'Moving...' : 'Move'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Existing Items Modal */}
+      {showExistingItemsModal && transaction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50" role="dialog" aria-modal="true">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] overflow-hidden mx-4">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h3 className="text-lg font-medium text-gray-900">Add Existing Items</h3>
+              <button
+                type="button"
+                onClick={() => setShowExistingItemsModal(false)}
+                className="text-sm font-medium text-gray-600 hover:text-gray-900"
+              >
+                Close
+              </button>
+            </div>
+            <div id="transaction-items-picker-modal" className="px-6 py-4 overflow-y-auto max-h-[70vh]">
+              <TransactionItemPicker
+                transaction={transaction}
+                projectId={projectId}
+                transactionItemIds={itemsInTransaction.map(item => item.id)}
+                containerId="transaction-items-picker-modal"
+                onItemsAdded={async () => {
+                  await refreshTransactionItems()
+                  await refreshRealtimeAfterWrite()
+                }}
+              />
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowExistingItemsModal(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Done
               </button>
             </div>
           </div>
