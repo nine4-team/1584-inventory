@@ -607,7 +607,7 @@ export default function EditItem() {
     : ''
   const associateDisabledReason = formData.selectedTransactionId
     ? (isCanonicalTransactionId(formData.selectedTransactionId)
-      ? 'This item is tied to a Company Inventory transaction. Use inventory allocation/deallocation instead.'
+      ? 'This item is tied to a Design Business Inventory transaction. Use "Sell" instead of "Move" to keep accounting clean.'
       : 'This item is tied to a transaction. Move the transaction to another project instead.')
     : null
   const associateDisabled = Boolean(associateDisabledReason) || loadingProjects
