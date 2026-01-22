@@ -1,23 +1,24 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Edit, X, Plus, ChevronDown, Receipt, Camera, Search, Filter, ArrowUpDown } from 'lucide-react'
+import { Plus, Receipt, Camera, Search, Filter, ArrowUpDown } from 'lucide-react'
 import { TransactionItemFormData } from '@/types'
 import TransactionItemForm from './TransactionItemForm'
 import ItemDetail from '@/pages/ItemDetail'
 import { normalizeMoneyToTwoDecimalString } from '@/utils/money'
 import { getTransactionFormGroupKey } from '@/utils/itemGrouping'
 import CollapsedDuplicateGroup from './ui/CollapsedDuplicateGroup'
-import { normalizeDisposition, displayDispositionLabel, DISPOSITION_OPTIONS, dispositionsEqual } from '@/utils/dispositionUtils'
-import { unifiedItemsService, integrationService } from '@/services/inventoryService'
+import { unifiedItemsService, transactionService } from '@/services/inventoryService'
 import { getTransactionDisplayInfo, getTransactionRoute } from '@/utils/transactionDisplayUtils'
 import { projectItemDetail } from '@/utils/routes'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import ContextLink from './ContextLink'
-import type { ItemDisposition } from '@/types'
 import ItemPreviewCard, { type ItemPreviewData } from './items/ItemPreviewCard'
 import BulkItemControls from '@/components/ui/BulkItemControls'
 import BlockingConfirmDialog from '@/components/ui/BlockingConfirmDialog'
+import { Combobox } from '@/components/ui/Combobox'
+import { supabase } from '@/services/supabase'
+import { lineageService } from '@/services/lineageService'
 
 interface TransactionItemsListProps {
   items: TransactionItemFormData[]
@@ -62,7 +63,6 @@ export default function TransactionItemsList({
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set())
   const [isMergeDialogOpen, setIsMergeDialogOpen] = useState(false)
   const [mergeMasterId, setMergeMasterId] = useState<string | null>(null)
-  const [openDispositionMenu, setOpenDispositionMenu] = useState<string | null>(null)
   const [deletingItemIds, setDeletingItemIds] = useState<Set<string>>(new Set())
   const [bookmarkedItemIds, setBookmarkedItemIds] = useState<Set<string>>(new Set())
   const [transactionDisplayInfos, setTransactionDisplayInfos] = useState<Map<string, {title: string, amount: string} | null>>(new Map())
@@ -84,6 +84,12 @@ export default function TransactionItemsList({
   const [removeTargetItemId, setRemoveTargetItemId] = useState<string | null>(null)
   const [isRemoveConfirmOpen, setIsRemoveConfirmOpen] = useState(false)
   const [isRemoving, setIsRemoving] = useState(false)
+  const [showTransactionDialog, setShowTransactionDialog] = useState(false)
+  const [transactions, setTransactions] = useState<import('@/types').Transaction[]>([])
+  const [loadingTransactions, setLoadingTransactions] = useState(false)
+  const [selectedTransactionId, setSelectedTransactionId] = useState('')
+  const [transactionTargetItemId, setTransactionTargetItemId] = useState<string | null>(null)
+  const [isUpdatingTransaction, setIsUpdatingTransaction] = useState(false)
   const [bulkControlsWidth, setBulkControlsWidth] = useState<number | undefined>(undefined)
   const { currentAccountId } = useAccount()
   const { buildContextUrl } = useNavigationContext()
@@ -243,9 +249,6 @@ export default function TransactionItemsList({
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Element
-      if (!target.closest('.disposition-menu') && !target.closest('.disposition-badge')) {
-        setOpenDispositionMenu(null)
-      }
       if ((showFilterMenu || showSortMenu) && !target.closest('.filter-menu') && !target.closest('.filter-button') && !target.closest('.sort-menu') && !target.closest('.sort-button')) {
         setShowFilterMenu(false)
         setShowSortMenu(false)
@@ -661,31 +664,7 @@ export default function TransactionItemsList({
     return isNaN(num) ? '$0.00' : `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   }
 
-  const getDispositionBadgeClasses = (disposition?: string | null) => {
-    const baseClasses = 'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium cursor-pointer transition-colors hover:opacity-80'
-    const d = normalizeDisposition(disposition)
-
-    switch (d) {
-      case 'to purchase':
-        return `${baseClasses} bg-amber-100 text-amber-800`
-      case 'purchased':
-        return `${baseClasses} bg-green-100 text-green-800`
-      case 'to return':
-        return `${baseClasses} bg-red-100 text-red-700`
-      case 'returned':
-        return `${baseClasses} bg-red-800 text-red-100`
-      case 'inventory':
-        return `${baseClasses} bg-primary-100 text-primary-600`
-      default:
-        return `${baseClasses} bg-gray-100 text-gray-800`
-    }
-  }
-
-  const toggleDispositionMenu = (itemId: string) => {
-    setOpenDispositionMenu(openDispositionMenu === itemId ? null : itemId)
-  }
-
-  const updateDisposition = async (itemId: string, newDisposition: ItemDisposition) => {
+  const updateDisposition = async (itemId: string, newDisposition: import('@/types').ItemDisposition) => {
     if (!enablePersistedItemFeatures) {
       return
     }
@@ -702,43 +681,19 @@ export default function TransactionItemsList({
       const isPersisted = !itemId.toString().startsWith('item-')
 
       if (!isPersisted) {
-        // Update the local state (draft items only exist locally)
         const updatedItems = items.map(item =>
           item.id === itemId ? { ...item, disposition: newDisposition } : item
         )
         onItemsChange(updatedItems)
-        setOpenDispositionMenu(null)
         return
       }
 
-      const originalDisposition = item.disposition
-
       await unifiedItemsService.updateItem(currentAccountId, itemId, { disposition: newDisposition })
 
-      // If disposition is set to 'inventory', trigger deallocation process
-      if (newDisposition === 'inventory') {
-        try {
-          await integrationService.handleItemDeallocation(
-            currentAccountId,
-            itemId,
-            projectId || '',
-            newDisposition
-          )
-        } catch (deallocationError) {
-          console.error('Failed to handle deallocation:', deallocationError)
-          // Revert the disposition change if deallocation fails
-          await unifiedItemsService.updateItem(currentAccountId, itemId, { disposition: originalDisposition as ItemDisposition })
-          throw deallocationError
-        }
-      }
-
-      // Update the local state (for both persisted and draft items)
       const updatedItems = items.map(item =>
         item.id === itemId ? { ...item, disposition: newDisposition } : item
       )
       onItemsChange(updatedItems)
-
-      setOpenDispositionMenu(null)
     } catch (error) {
       console.error('Failed to update disposition:', error)
     }
@@ -812,12 +767,9 @@ export default function TransactionItemsList({
         onDuplicate={handleDuplicateItem}
         onEdit={(href) => handleEditItem(item.id)}
         onClick={isPersisted ? () => setViewingItemId(item.id) : undefined}
-        onDispositionUpdate={enablePersistedControls ? updateDisposition : undefined}
-        onRemoveFromTransaction={requestRemoveFromTransaction}
+        onChangeStatus={enablePersistedControls ? updateDisposition : undefined}
+        onAddToTransaction={() => openTransactionDialog(item.id)}
         uploadingImages={new Set()}
-        openDispositionMenu={openDispositionMenu}
-        setOpenDispositionMenu={setOpenDispositionMenu}
-        deletingItemIds={deletingItemIds}
         context="transaction"
         projectId={projectId}
         duplicateCount={groupSize}
@@ -986,6 +938,132 @@ export default function TransactionItemsList({
     }
   }
 
+  const openTransactionDialog = (itemId: string) => {
+    setTransactionTargetItemId(itemId)
+    const targetItem = items.find(i => i.id === itemId)
+    setSelectedTransactionId(targetItem?.transactionId ?? '')
+    setShowTransactionDialog(true)
+  }
+
+  const loadTransactions = async () => {
+    if (!currentAccountId || !projectId) return
+    setLoadingTransactions(true)
+    try {
+      const txs = await transactionService.getTransactions(currentAccountId, projectId)
+      setTransactions(txs)
+    } catch (error) {
+      console.error('Failed to load transactions:', error)
+    } finally {
+      setLoadingTransactions(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!showTransactionDialog || !projectId) return
+    if (transactions.length > 0) return
+    loadTransactions()
+  }, [showTransactionDialog, projectId])
+
+  const handleChangeTransaction = async () => {
+    if (!transactionTargetItemId) return
+    const item = items.find(i => i.id === transactionTargetItemId)
+    if (!item) return
+    if (!selectedTransactionId || !currentAccountId) return
+
+    const isPersisted = !transactionTargetItemId.toString().startsWith('item-')
+    if (!isPersisted) {
+      const updatedItems = items.map(existing =>
+        existing.id === transactionTargetItemId ? { ...existing, transactionId: selectedTransactionId } : existing
+      )
+      onItemsChange(updatedItems)
+      setShowTransactionDialog(false)
+      return
+    }
+
+    const previousTransactionId = item.transactionId
+    setIsUpdatingTransaction(true)
+    try {
+      await unifiedItemsService.updateItem(currentAccountId, transactionTargetItemId, {
+        transactionId: selectedTransactionId
+      })
+
+      try {
+        await lineageService.updateItemLineagePointers(currentAccountId, transactionTargetItemId, selectedTransactionId)
+      } catch (lineageError) {
+        console.warn('Failed to update lineage pointers for item:', transactionTargetItemId, lineageError)
+      }
+
+      if (previousTransactionId) {
+        try {
+          const { data: oldTxData, error: fetchOldError } = await supabase
+            .from('transactions')
+            .select('item_ids')
+            .eq('account_id', currentAccountId)
+            .eq('transaction_id', previousTransactionId)
+            .single()
+
+          if (!fetchOldError && oldTxData) {
+            const currentItemIds: string[] = Array.isArray(oldTxData.item_ids) ? oldTxData.item_ids : []
+            const updatedItemIds = currentItemIds.filter(id => id !== transactionTargetItemId)
+
+            await supabase
+              .from('transactions')
+              .update({
+                item_ids: updatedItemIds,
+                updated_at: new Date().toISOString()
+              })
+              .eq('account_id', currentAccountId)
+              .eq('transaction_id', previousTransactionId)
+          }
+        } catch (oldTxError) {
+          console.warn('Failed to update old transaction item_ids:', oldTxError)
+        }
+      }
+
+      try {
+        const { data: newTxData, error: fetchNewError } = await supabase
+          .from('transactions')
+          .select('item_ids')
+          .eq('account_id', currentAccountId)
+          .eq('transaction_id', selectedTransactionId)
+          .single()
+
+        if (!fetchNewError && newTxData) {
+          const currentItemIds: string[] = Array.isArray(newTxData.item_ids) ? newTxData.item_ids : []
+          if (!currentItemIds.includes(transactionTargetItemId)) {
+            const updatedItemIds = [...currentItemIds, transactionTargetItemId]
+
+            await supabase
+              .from('transactions')
+              .update({
+                item_ids: updatedItemIds,
+                updated_at: new Date().toISOString()
+              })
+              .eq('account_id', currentAccountId)
+              .eq('transaction_id', selectedTransactionId)
+          }
+        }
+      } catch (newTxError) {
+        console.warn('Failed to update new transaction item_ids:', newTxError)
+      }
+
+      const updatedItems = items.map(existing =>
+        existing.id === transactionTargetItemId ? { ...existing, transactionId: selectedTransactionId } : existing
+      )
+      onItemsChange(updatedItems)
+      if (projectId) {
+        refreshProjectCollections().catch(err =>
+          console.debug('TransactionItemsList: failed to refresh after change transaction', err)
+        )
+      }
+      setShowTransactionDialog(false)
+    } catch (error) {
+      console.error('TransactionItemsList: failed to update transaction', error)
+    } finally {
+      setIsUpdatingTransaction(false)
+    }
+  }
+
   if (isAddingItem || editingItemId) {
     const itemToEdit = getItemToEdit()
     return (
@@ -1033,6 +1111,68 @@ export default function TransactionItemsList({
         }}
         onConfirm={confirmRemoveFromTransaction}
       />
+      {showTransactionDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-medium text-gray-900">
+                Change Transaction
+              </h3>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              <Combobox
+                label="Select Transaction"
+                value={selectedTransactionId}
+                onChange={setSelectedTransactionId}
+                disabled={loadingTransactions || isUpdatingTransaction}
+                loading={loadingTransactions}
+                placeholder={loadingTransactions ? "Loading transactions..." : "Select a transaction"}
+                options={
+                  loadingTransactions ? [] : [
+                    { id: '', label: 'Select a transaction' },
+                    ...transactions.map((transaction) => ({
+                      id: transaction.transactionId,
+                      label: `${new Date(transaction.transactionDate).toLocaleDateString()} - ${transaction.source} - $${transaction.amount}`
+                    }))
+                  ]
+                }
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  if (!transactionTargetItemId) return
+                  requestRemoveFromTransaction(transactionTargetItemId)
+                  setShowTransactionDialog(false)
+                }}
+                className="text-sm text-gray-700 hover:text-gray-900"
+              >
+                Remove from transaction
+              </button>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  if (isUpdatingTransaction) return
+                  setShowTransactionDialog(false)
+                  setSelectedTransactionId('')
+                  setTransactionTargetItemId(null)
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                disabled={isUpdatingTransaction}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleChangeTransaction}
+                disabled={!selectedTransactionId || isUpdatingTransaction}
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isUpdatingTransaction ? 'Updating...' : 'Update'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {items.length > 0 && showSelectionControls && (
         <div className={`z-10 bg-white border-b border-gray-200 py-3 mb-4 ${shouldStick ? 'sticky top-0' : ''}`}>
           <div className="flex flex-wrap items-center gap-3">
