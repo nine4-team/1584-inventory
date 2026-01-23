@@ -1,8 +1,7 @@
-import { ArrowLeft, Trash2, Image as ImageIcon, Package, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Trash2, Image as ImageIcon, Package, RefreshCw, X } from 'lucide-react'
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import ImageGallery from '@/components/ui/ImageGallery'
 import { TransactionImagePreview } from '@/components/ui/ImagePreview'
-import PinnedImageViewer from '@/components/ui/PinnedImageViewer'
 import { useParams } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
 import ContextLink from '@/components/ContextLink'
@@ -194,8 +193,7 @@ export default function TransactionDetail() {
   const [galleryInitialIndex, setGalleryInitialIndex] = useState(0)
   const [showExistingItemsModal, setShowExistingItemsModal] = useState(false)
   const [isImagePinned, setIsImagePinned] = useState(false)
-  const [pinnedImagePosition, setPinnedImagePosition] = useState({ x: 100, y: 100 })
-  const [pinnedImageSize, setPinnedImageSize] = useState({ width: 400, height: 600 })
+  const [pinnedImage, setPinnedImage] = useState<ItemImage | null>(null)
   const [receiptUploadsInFlight, setReceiptUploadsInFlight] = useState(0)
   const [otherUploadsInFlight, setOtherUploadsInFlight] = useState(0)
   const isUploadingReceiptImages = receiptUploadsInFlight > 0
@@ -1137,23 +1135,15 @@ export default function TransactionDetail() {
     setShowGallery(true)
   }
 
-  const handlePinToggle = () => {
-    setIsImagePinned(prev => {
-      if (!prev) {
-        // When pinning, close gallery and set initial position and size
-        setShowGallery(false)
-        const initialX = Math.max(20, window.innerWidth - 420)
-        const initialY = 20
-        setPinnedImagePosition({ x: initialX, y: initialY })
-        setPinnedImageSize({ width: 400, height: 600 })
-        // Keep current image index
-      }
-      return !prev
-    })
-  }
-
-  const handleUnpin = () => {
+  const handlePinToggle = (image?: ItemImage) => {
+    if (image) {
+      setPinnedImage(image)
+      setIsImagePinned(true)
+      setShowGallery(false)
+      return
+    }
     setIsImagePinned(false)
+    setPinnedImage(null)
   }
 
   const handleGalleryClose = () => {
@@ -1746,6 +1736,29 @@ export default function TransactionDetail() {
 
   return (
     <div className="space-y-6">
+      <div className={isImagePinned ? 'lg:flex lg:gap-6' : ''}>
+        {isImagePinned && pinnedImage && (
+          <div className="fixed top-0 left-0 right-0 h-[50vh] bg-white border-b border-gray-200 z-40 lg:sticky lg:top-4 lg:h-[600px] lg:w-96 lg:rounded-lg lg:border lg:shadow-sm lg:flex-shrink-0">
+            <div className="relative w-full h-full p-3">
+              <button
+                onClick={() => handlePinToggle()}
+                className="absolute top-3 right-3 z-10 p-2 bg-white/90 border border-gray-200 rounded-full shadow hover:bg-white"
+                aria-label="Unpin image"
+                title="Unpin image"
+              >
+                <X className="h-4 w-4 text-gray-700" />
+              </button>
+              <div className="w-full h-full flex items-center justify-center">
+                <img
+                  src={pinnedImage.url}
+                  alt={pinnedImage.alt || pinnedImage.fileName}
+                  className="max-h-full max-w-full object-contain"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+        <div className={isImagePinned ? 'pt-[50vh] lg:pt-0 lg:flex-1' : ''}>
       {/* Header */}
       <div className="space-y-4">
         {/* Back button row */}
@@ -2211,19 +2224,6 @@ export default function TransactionDetail() {
         />
       )}
 
-      {/* Pinned image viewer - resizable and draggable */}
-      {isImagePinned && itemImages.length > 0 && (
-        <PinnedImageViewer
-          images={itemImages}
-          position={pinnedImagePosition}
-          size={pinnedImageSize}
-          onPositionChange={setPinnedImagePosition}
-          onSizeChange={setPinnedImageSize}
-          onClose={handleUnpin}
-          initialIndex={galleryInitialIndex}
-        />
-      )}
-
       {/* Move to Project Dialog */}
       {showProjectDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
@@ -2358,6 +2358,8 @@ export default function TransactionDetail() {
           </div>
         </div>
       )}
+        </div>
+      </div>
     </div>
   )
 }
