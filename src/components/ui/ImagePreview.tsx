@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
-import { Plus, ChevronDown, Trash2, Star, ExternalLink, Crown, FileText } from 'lucide-react'
+import { Plus, ChevronDown, Trash2, Star, ExternalLink, Crown, FileText, Pin } from 'lucide-react'
 import { ItemImage, TransactionImage } from '@/types'
 import ImageGallery from './ImageGallery'
 import { offlineMediaService } from '@/services/offlineMediaService'
@@ -18,6 +18,7 @@ interface ImagePreviewProps {
 interface TransactionImagePreviewProps {
   images: TransactionImage[]
   onRemoveImage?: (imageUrl: string) => void
+  onPinImage?: (image: TransactionImage) => void
   maxImages?: number
   showControls?: boolean
   size?: 'sm' | 'md' | 'lg'
@@ -299,6 +300,7 @@ export default function ImagePreview({
 export function TransactionImagePreview({
   images,
   onRemoveImage,
+  onPinImage,
   showControls = true,
   size = 'md',
   className = '',
@@ -452,6 +454,12 @@ export function TransactionImagePreview({
       case 'open':
         openAttachment(resolvedUrls[imageUrl] || imageUrl)
         break
+      case 'pin':
+        const image = images[index]
+        if (image && isRenderableImage(image)) {
+          onPinImage?.(image)
+        }
+        break
       case 'delete':
         onRemoveImage?.(imageUrl)
         break
@@ -527,6 +535,15 @@ export function TransactionImagePreview({
                           <ExternalLink className="h-4 w-4 mr-2" />
                             <span>{isRenderableImage(image) ? 'Open' : 'Open file'}</span>
                         </button>
+                        {onPinImage && isRenderableImage(image) && (
+                          <button
+                            onClick={(e) => handleMenuAction(e, 'pin', image.url, index)}
+                            className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
+                          >
+                            <Pin className="h-4 w-4 mr-2" />
+                            <span>Pin</span>
+                          </button>
+                        )}
                         {onRemoveImage && (
                           <button
                             onClick={(e) => handleMenuAction(e, 'delete', image.url, index)}
