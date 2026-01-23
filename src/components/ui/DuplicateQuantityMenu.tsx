@@ -70,7 +70,7 @@ export default function DuplicateQuantityMenu({
       {isOpen && (
         <div className="absolute top-full right-0 mt-2 w-auto rounded-lg border border-gray-200 bg-white p-3 shadow-lg z-50">
           <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-            Number of copies
+            Number of additional copies
           </div>
           <div className="mt-2 flex items-center gap-2">
             <QuantityPill

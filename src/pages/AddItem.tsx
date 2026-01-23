@@ -584,7 +584,7 @@ export default function AddItem() {
             <label htmlFor="quantity" className="block text-sm font-medium text-gray-700">
               Quantity
             </label>
-            <p className="text-xs text-gray-500 mt-1">Number of copies to create</p>
+            <p className="text-xs text-gray-500 mt-1">Total number of items to create</p>
             <div className="mt-2">
               <QuantityPill
                 value={quantity}

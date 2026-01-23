@@ -969,6 +969,8 @@ export default function InventoryList({ projectId, projectName, items: propItems
     return 0
   })
 
+  const lastItemId = filteredItems[filteredItems.length - 1]?.itemId
+
   // Group filtered items by their grouping key
   const groupedItems = useMemo(() => {
     const groups = new Map<string, Item[]>()
@@ -1427,6 +1429,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
                       key={item.itemId}
                       item={item}
                       isSelected={selectedItems.has(item.itemId)}
+                      isLastItem={item.itemId === lastItemId}
                       onSelect={handleSelectItem}
                       onBookmark={toggleBookmark}
                       onDuplicate={duplicateItem}
@@ -1568,6 +1571,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
                             key={item.itemId}
                             item={item}
                             isSelected={selectedItems.has(item.itemId)}
+                            isLastItem={item.itemId === lastItemId}
                             onSelect={handleSelectItem}
                             onBookmark={toggleBookmark}
                             onDuplicate={duplicateItem}

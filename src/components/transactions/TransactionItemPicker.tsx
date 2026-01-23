@@ -579,7 +579,8 @@ export default function TransactionItemPicker({
     contextOverride?: 'project' | 'businessInventory',
     projectIdOverride?: string | null,
     duplicateCount?: number,
-    duplicateIndex?: number
+    duplicateIndex?: number,
+    isLastItem?: boolean
   ) => {
     const isAdded = isItemAlreadyAdded(item)
     const actionLabel = getItemActionLabel(item)
@@ -597,6 +598,7 @@ export default function TransactionItemPicker({
         projectId={normalizeProjectId(resolvedProjectId) ?? undefined}
         duplicateCount={duplicateCount}
         duplicateIndex={duplicateIndex}
+        menuDirection={isLastItem ? 'top' : 'bottom'}
         headerAction={(
           <button
             type="button"
@@ -625,11 +627,13 @@ export default function TransactionItemPicker({
     resolveContext: (item: Item) => 'project' | 'businessInventory',
     projectIdOverride?: string | null
   ) => {
+    const lastItemId = items[items.length - 1]?.itemId
     const grouped = groupItems(items, resolveContext)
     return grouped.map(([groupKey, groupData]) => {
       const { context, items: groupItems } = groupData
       if (groupItems.length === 1) {
-        return renderItemRow(groupItems[0], context, projectIdOverride)
+        const item = groupItems[0]
+        return renderItemRow(item, context, projectIdOverride, undefined, undefined, item.itemId === lastItemId)
       }
       const groupSelectionState = getGroupSelectionState(groupItems)
       const selectableItems = getSelectableItems(groupItems)
@@ -681,7 +685,8 @@ export default function TransactionItemPicker({
               context,
               projectIdOverride,
               hasDuplicates ? groupItems.length : undefined,
-              hasDuplicates ? index + 1 : undefined
+              hasDuplicates ? index + 1 : undefined,
+              item.itemId === lastItemId
             ))}
           </div>
         </CollapsedDuplicateGroup>

@@ -60,6 +60,7 @@ interface ItemPreviewCardProps {
   duplicateCount?: number
   duplicateIndex?: number
   itemNumber?: number
+  menuDirection?: 'auto' | 'top' | 'bottom'
   // Transaction display info (optional, will be fetched if not provided)
   transactionDisplayInfo?: { title: string; amount: string } | null
   transactionRoute?: { path: string; projectId: string | null } | null
@@ -94,6 +95,7 @@ export default function ItemPreviewCard({
   duplicateCount,
   duplicateIndex,
   itemNumber,
+  menuDirection,
   transactionDisplayInfo: providedTransactionDisplayInfo,
   transactionRoute: providedTransactionRoute,
   isLoadingTransaction: providedIsLoadingTransaction,
@@ -316,6 +318,7 @@ export default function ItemPreviewCard({
                   isPersisted={isPersisted}
                   currentProjectId={projectId ?? null}
                   triggerSize="md"
+                  menuDirection={menuDirection}
                   onEdit={
                     onEdit
                       ? () => {
