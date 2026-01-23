@@ -19,6 +19,7 @@ type ItemActionsMenuProps = {
   onEdit?: () => void
   onDuplicate?: (quantity: number) => void
   onAddToTransaction?: () => void
+  onRemoveFromTransaction?: () => void
   onSellToBusiness?: () => void
   onSellToProject?: () => void
   onMoveToBusiness?: () => void
@@ -40,6 +41,7 @@ export default function ItemActionsMenu({
   onEdit,
   onDuplicate,
   onAddToTransaction,
+  onRemoveFromTransaction,
   onSellToBusiness,
   onSellToProject,
   onMoveToBusiness,
@@ -100,6 +102,12 @@ export default function ItemActionsMenu({
     if (!onAddToTransaction) return 'Not available in this context.'
     return null
   }, [onAddToTransaction])
+
+  const removeFromTransactionDisabledReason = useMemo(() => {
+    if (!onRemoveFromTransaction) return 'Not available in this context.'
+    if (!isTiedToTransaction) return 'Item is not tied to a transaction.'
+    return null
+  }, [onRemoveFromTransaction, isTiedToTransaction])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -218,6 +226,7 @@ export default function ItemActionsMenu({
     onEdit ||
     onDuplicate ||
     onAddToTransaction ||
+    onRemoveFromTransaction ||
     onSellToBusiness ||
     onSellToProject ||
     onMoveToBusiness ||
@@ -256,6 +265,15 @@ export default function ItemActionsMenu({
         disabled: Boolean(addToTransactionDisabledReason),
         disabledReason: addToTransactionDisabledReason
       })}
+      {onRemoveFromTransaction
+        ? renderMenuItem({
+            label: 'Remove From Transaction…',
+            onClick: onRemoveFromTransaction,
+            disabled: Boolean(removeFromTransactionDisabledReason),
+            disabledReason: removeFromTransactionDisabledReason,
+            isDanger: true
+          })
+        : null}
       {renderSubmenuTrigger({
         label: 'Sell',
         submenuKey: 'sell',

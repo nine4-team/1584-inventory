@@ -784,6 +784,11 @@ export default function TransactionItemsList({
         onClick={isPersisted ? () => setViewingItemId(item.id) : undefined}
         onChangeStatus={enablePersistedControls ? updateDisposition : undefined}
         onAddToTransaction={enablePersistedControls ? () => openTransactionDialog(item.id) : undefined}
+        onRemoveFromTransaction={
+          item.transactionId
+            ? (itemId) => requestRemoveFromTransaction(itemId)
+            : undefined
+        }
         onSellToBusiness={onSellToBusiness}
         onSellToProject={onSellToProject}
         onMoveToBusiness={onMoveToBusiness}
