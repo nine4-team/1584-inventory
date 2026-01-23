@@ -192,6 +192,8 @@ export default function TransactionDetail() {
   const [showGallery, setShowGallery] = useState(false)
   const [galleryInitialIndex, setGalleryInitialIndex] = useState(0)
   const [showExistingItemsModal, setShowExistingItemsModal] = useState(false)
+  const [modalPosition, setModalPosition] = useState<{ top: number; left: number; width: number; containerLeft: number } | null>(null)
+  const transactionItemsContainerRef = useRef<HTMLDivElement>(null)
   const [isImagePinned, setIsImagePinned] = useState(false)
   const [pinnedImage, setPinnedImage] = useState<ItemImage | null>(null)
   // Pin panel gesture state
@@ -1286,6 +1288,52 @@ export default function TransactionDetail() {
     }
   }, [pinnedImage])
 
+  // Calculate modal position relative to transaction items container
+  useEffect(() => {
+    if (!showExistingItemsModal) {
+      setModalPosition(null)
+      return
+    }
+
+    const calculatePosition = () => {
+      const container = transactionItemsContainerRef.current
+      if (!container) {
+        // Fallback to full screen if container not found
+        setModalPosition(null)
+        return
+      }
+
+      const isDesktop = window.innerWidth >= 1024 // lg breakpoint
+      
+      // On mobile, use full screen overlay
+      if (!isDesktop) {
+        setModalPosition(null)
+        return
+      }
+
+      const rect = container.getBoundingClientRect()
+
+      // Get container width and align horizontally with it
+      const width = rect.width
+      const left = rect.left
+      const containerLeft = rect.left
+
+      const top = 16
+
+      setModalPosition({ top, left, width, containerLeft })
+    }
+
+    // Calculate immediately
+    calculatePosition()
+
+    // Recalculate on resize
+    window.addEventListener('resize', calculatePosition)
+
+    return () => {
+      window.removeEventListener('resize', calculatePosition)
+    }
+  }, [showExistingItemsModal, isImagePinned])
+
   const pinZoomStep = 0.5
   const pinMinZoom = 1
   const pinMaxZoom = 5
@@ -2064,7 +2112,7 @@ export default function TransactionDetail() {
     <div className="space-y-6">
       <div className={isImagePinned ? 'lg:flex lg:gap-6' : ''}>
         {isImagePinned && pinnedImage && (
-          <div className="fixed top-0 left-0 right-0 h-[50vh] bg-white border-b border-gray-200 z-40 lg:sticky lg:top-4 lg:h-[600px] lg:w-96 lg:rounded-lg lg:border lg:shadow-sm lg:flex-shrink-0">
+          <div className="fixed top-0 left-0 right-0 h-[33vh] bg-white border-b border-gray-200 z-40 lg:sticky lg:top-4 lg:h-screen lg:w-96 lg:rounded-lg lg:border lg:shadow-sm lg:flex-shrink-0">
             <div className="relative w-full h-full p-3">
               <button
                 onClick={() => handlePinToggle()}
@@ -2124,19 +2172,6 @@ export default function TransactionDetail() {
             </button>
           </div>
           <div className="flex items-center space-x-3">
-            {transaction && (
-              <TransactionActionsMenu
-                transactionId={transaction.transactionId}
-                projectId={transaction.projectId}
-                onEdit={handleEdit}
-                onMoveToProject={openProjectDialog}
-                onMoveToBusinessInventory={handleMoveToBusinessInventory}
-                onDelete={handleDelete}
-                canMoveToBusinessInventory={canMoveToBusinessInventory}
-                canMoveToProject={canMoveToProject}
-                triggerSize="md"
-              />
-            )}
             {hasSyncError && <RetrySyncButton size="sm" variant="secondary" />}
           </div>
         </div>
@@ -2158,16 +2193,33 @@ export default function TransactionDetail() {
       {/* Transaction Details */}
       <div className="bg-white shadow rounded-lg">
         <div className="px-6 py-6 border-b border-gray-200">
-          <h1 className="text-2xl font-bold text-gray-900 leading-tight">
-            {getCanonicalTransactionTitle(transaction)} - {formatCurrency(
-              isCanonicalSaleOrPurchaseTransactionId(transactionId) && computedTotal !== null
-                ? computedTotal
-                : transaction.amount
+          <div className="flex items-start justify-between gap-4">
+            <h1 className="text-2xl font-bold text-gray-900 leading-tight">
+              {getCanonicalTransactionTitle(transaction)} - {formatCurrency(
+                isCanonicalSaleOrPurchaseTransactionId(transactionId) && computedTotal !== null
+                  ? computedTotal
+                  : transaction.amount
+              )}
+              {isHealingAmount && (
+                <span className="ml-2 text-sm text-gray-500 font-normal">(updating...)</span>
+              )}
+            </h1>
+            {transaction && (
+              <div className="shrink-0">
+                <TransactionActionsMenu
+                  transactionId={transaction.transactionId}
+                  projectId={transaction.projectId}
+                  onEdit={handleEdit}
+                  onMoveToProject={openProjectDialog}
+                  onMoveToBusinessInventory={handleMoveToBusinessInventory}
+                  onDelete={handleDelete}
+                  canMoveToBusinessInventory={canMoveToBusinessInventory}
+                  canMoveToProject={canMoveToProject}
+                  triggerSize="md"
+                />
+              </div>
             )}
-            {isHealingAmount && (
-              <span className="ml-2 text-sm text-gray-500 font-normal">(updating...)</span>
-            )}
-          </h1>
+          </div>
         </div>
 
 
@@ -2439,7 +2491,7 @@ export default function TransactionDetail() {
         )}
 
         {/* Transaction Items */}
-        <div className="px-6 py-6 border-t border-gray-200" id="transaction-items-container">
+        <div ref={transactionItemsContainerRef} className="px-6 py-6 border-t border-gray-200" id="transaction-items-container">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-medium text-gray-900 flex items-center">
               <Package className="h-5 w-5 mr-2" />
@@ -2666,41 +2718,57 @@ export default function TransactionDetail() {
 
       {/* Add Existing Items Modal */}
       {showExistingItemsModal && transaction && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50" role="dialog" aria-modal="true">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] overflow-hidden mx-4">
-            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-              <h3 className="text-lg font-medium text-gray-900">Add Existing Items</h3>
-              <button
-                type="button"
-                onClick={() => setShowExistingItemsModal(false)}
-                className="text-sm font-medium text-gray-600 hover:text-gray-900"
-              >
-                Close
-              </button>
-            </div>
-            <div id="transaction-items-picker-modal" className="px-6 py-4 overflow-y-auto max-h-[70vh]">
-              <TransactionItemPicker
-                transaction={transaction}
-                projectId={projectId}
-                transactionItemIds={itemsInTransaction.map(item => item.id)}
-                containerId="transaction-items-picker-modal"
-                onItemsAdded={async () => {
-                  await refreshTransactionItems()
-                  await refreshRealtimeAfterWrite()
-                }}
-              />
-            </div>
-            <div className="px-6 py-4 border-t border-gray-200 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShowExistingItemsModal(false)}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-              >
-                Done
-              </button>
+        <>
+          <div className="fixed inset-0 z-30 bg-black bg-opacity-50 pointer-events-none" />
+          {/* Modal positioned relative to transaction items container on desktop, centered on mobile */}
+          <div
+            className={`fixed z-50 ${
+              modalPosition
+                ? ''
+                : isImagePinned
+                  ? 'inset-x-0 bottom-0 h-[62vh] flex items-end justify-center'
+                  : 'inset-0 flex items-end justify-center'
+            }`}
+            style={modalPosition ? {
+              top: `${modalPosition.top}px`,
+              left: `${modalPosition.left}px`,
+              width: `${modalPosition.width}px`,
+              maxWidth: 'calc(100% - 32px)', // 16px margin on each side
+              height: 'calc(100vh - 16px)'
+            } : undefined}
+            role="dialog"
+            aria-modal="true"
+          >
+              <div className={`bg-white rounded-lg shadow-xl overflow-hidden ${
+              modalPosition
+                ? 'w-full h-[calc(100vh-16px)] max-h-none flex flex-col'
+                : 'w-full max-w-5xl mx-4 h-[66vh] max-h-[66vh] flex flex-col'
+            }`}>
+              <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <h3 className="text-lg font-medium text-gray-900">Add Existing Items</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowExistingItemsModal(false)}
+                  className="text-sm font-medium text-gray-600 hover:text-gray-900"
+                >
+                  Close
+                </button>
+              </div>
+              <div id="transaction-items-picker-modal" className={`px-6 py-4 overflow-y-auto ${modalPosition ? 'flex-1' : 'max-h-[70vh]'}`}>
+                <TransactionItemPicker
+                  transaction={transaction}
+                  projectId={projectId}
+                  transactionItemIds={itemsInTransaction.map(item => item.id)}
+                  containerId="transaction-items-picker-modal"
+                  onItemsAdded={async () => {
+                    await refreshTransactionItems()
+                    await refreshRealtimeAfterWrite()
+                  }}
+                />
+              </div>
             </div>
           </div>
-        </div>
+        </>
       )}
         </div>
       </div>
