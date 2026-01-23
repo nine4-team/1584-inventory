@@ -1140,7 +1140,7 @@ export default function BusinessInventory() {
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
             <div className="px-6 py-4 border-b border-gray-200">
               <h3 className="text-lg font-medium text-gray-900">
-                Associate With Transaction
+                Associate with Transaction
               </h3>
             </div>
             <div className="px-6 py-4 space-y-4">
@@ -1201,7 +1201,7 @@ export default function BusinessInventory() {
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
             <div className="px-6 py-4 border-b border-gray-200">
               <h3 className="text-lg font-medium text-gray-900">
-                Move To Project
+                Move to Project
               </h3>
             </div>
             <div className="px-6 py-4 space-y-4">

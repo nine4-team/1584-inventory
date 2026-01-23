@@ -304,14 +304,14 @@ export default function ItemActionsMenu({
         />
       )}
       {renderMenuItem({
-        label: 'Associate With Transaction…',
+        label: 'Associate with Transaction…',
         onClick: onAddToTransaction,
         disabled: Boolean(addToTransactionDisabledReason),
         disabledReason: addToTransactionDisabledReason
       })}
       {onRemoveFromTransaction
         ? renderMenuItem({
-            label: 'Remove From Transaction…',
+            label: 'Remove from Transaction…',
             onClick: onRemoveFromTransaction,
             disabled: Boolean(removeFromTransactionDisabledReason),
             disabledReason: removeFromTransactionDisabledReason,
@@ -329,13 +329,13 @@ export default function ItemActionsMenu({
         <div className="border-t border-gray-100 bg-gray-50">
           <div className="py-1 pl-3">
             {renderMenuItem({
-              label: 'Sell To Design Business',
+              label: 'Sell to Design Business',
               onClick: onSellToBusiness,
               disabled: !onSellToBusiness || Boolean(sellToBusinessDisabledReason),
               disabledReason: sellToBusinessDisabledReason
             })}
             {renderMenuItem({
-              label: 'Sell To Project…',
+              label: 'Sell to Project…',
               onClick: onSellToProject,
               disabled: !onSellToProject || Boolean(sellToProjectDisabledReason),
               disabledReason: sellToProjectDisabledReason
@@ -359,13 +359,13 @@ export default function ItemActionsMenu({
                </div>
             )}
             {renderMenuItem({
-              label: 'Move To Design Business',
+              label: 'Move to Design Business',
               onClick: onMoveToBusiness,
               disabled: !onMoveToBusiness || Boolean(moveToBusinessDisabledReason),
               disabledReason: moveToBusinessDisabledReason
             })}
             {renderMenuItem({
-              label: 'Move To Project…',
+              label: 'Move to Project…',
               onClick: onMoveToProject,
               disabled: !onMoveToProject || Boolean(moveToProjectDisabledReason),
               disabledReason: moveToProjectDisabledReason
