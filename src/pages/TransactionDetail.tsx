@@ -11,7 +11,8 @@ import {
   transactionService,
   projectService,
   unifiedItemsService,
-  isCanonicalSaleOrPurchaseTransactionId
+  isCanonicalSaleOrPurchaseTransactionId,
+  computeCanonicalTransactionTotal
 } from '@/services/inventoryService'
 import { budgetCategoriesService } from '@/services/budgetCategoriesService'
 import { lineageService } from '@/services/lineageService'
@@ -74,6 +75,7 @@ const buildDisplayItems = (items: Item[], movedOutItemIds: Set<string>): Display
     id: item.itemId,
     description: item.description || '',
     purchasePrice: item.purchasePrice?.toString() || '',
+    projectPrice: item.projectPrice?.toString() || '',
     sku: item.sku || '',
     marketValue: item.marketValue?.toString() || '',
     notes: item.notes || '',
@@ -161,6 +163,7 @@ export default function TransactionDetail() {
         id: i.id,
         description: i.description,
         purchasePrice: i.purchasePrice,
+        projectPrice: i.projectPrice,
         sku: i.sku,
         marketValue: i.marketValue,
         notes: i.notes
@@ -186,6 +189,8 @@ export default function TransactionDetail() {
   const isUploadingOtherImages = otherUploadsInFlight > 0
   const [imageFilesMap, setImageFilesMap] = useState<Map<string, File[]>>(new Map())
   const [itemRecords, setItemRecords] = useState<Item[]>([])
+  const [computedTotal, setComputedTotal] = useState<string | null>(null)
+  const [isHealingAmount, setIsHealingAmount] = useState(false)
 
   useEffect(() => {
     if (!transaction) return
@@ -265,6 +270,91 @@ export default function TransactionDetail() {
     snapshotInitialItems(displayItems)
     resolveMissingProjectIds(validItems).catch(err => console.debug('resolveMissingProjectIds error:', err))
   }
+
+  // Compute canonical transaction total and self-heal if needed
+  useEffect(() => {
+    const computeAndHealTotal = async () => {
+      if (!transaction || !currentAccountId || !transactionId) return
+      if (!isCanonicalSaleOrPurchaseTransactionId(transactionId)) return
+
+      try {
+        // Get item IDs from transaction and lineage edges
+        const itemIds = Array.isArray(transaction.itemIds) ? transaction.itemIds : []
+        let edges: Array<{ itemId: string }> = []
+        let movedOutItemIds: string[] = []
+        try {
+          const fetchedEdges = await lineageService.getEdgesFromTransaction(transactionId, currentAccountId)
+          edges = fetchedEdges.map(edge => ({ itemId: edge.itemId }))
+          movedOutItemIds = Array.from(new Set(fetchedEdges.map(edge => edge.itemId)))
+        } catch (edgeError) {
+          console.warn('⚠️ Failed to fetch lineage edges (non-fatal):', edgeError)
+          edges = []
+          movedOutItemIds = []
+        }
+
+        // Compute total
+        const computed = await computeCanonicalTransactionTotal(
+          currentAccountId,
+          transactionId,
+          itemIds,
+          edges
+        )
+        
+        // Only proceed if compute succeeded (non-null)
+        if (computed === null) {
+          console.log('⏭️ Skipped healing (compute failed) for canonical transaction:', transactionId)
+          // Don't set computedTotal - fall back to stored amount
+          setComputedTotal(null)
+          return
+        }
+        
+        setComputedTotal(computed)
+
+        // Compare with stored amount and self-heal if different
+        const storedAmount = parseFloat(transaction.amount || '0').toFixed(2)
+        if (computed !== storedAmount) {
+          console.log('🔧 Canonical transaction total mismatch detected:', {
+            transactionId,
+            stored: storedAmount,
+            computed,
+            itemIds: itemIds.length,
+            movedOutItemIds: movedOutItemIds.length
+          })
+
+          // Only heal if projectId is available
+          const resolvedProjectId = projectId || transaction.projectId
+          if (!resolvedProjectId) {
+            console.log('⏭️ Skipped healing (missing projectId) for canonical transaction:', transactionId)
+            return
+          }
+
+          // Self-heal: update stored amount in background (non-blocking)
+          setIsHealingAmount(true)
+          try {
+            await transactionService.updateTransaction(
+              currentAccountId,
+              resolvedProjectId,
+              transactionId,
+              { amount: computed }
+            )
+            console.log('✅ Self-healed canonical transaction amount:', transactionId, computed)
+            // Update local transaction state
+            setTransaction(prev => prev ? { ...prev, amount: computed } : prev)
+          } catch (healError) {
+            console.warn('⚠️ Failed to self-heal canonical transaction amount:', healError)
+          } finally {
+            setIsHealingAmount(false)
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ Failed to compute canonical transaction total:', error)
+        // Don't set computedTotal on error - fall back to stored amount
+        setComputedTotal(null)
+      }
+    }
+
+    computeAndHealTotal()
+  }, [transaction, currentAccountId, transactionId, projectId])
 
   const { inTransaction: itemsInTransaction, movedOut: itemsMovedOut } = useMemo(() => {
     return splitItemsByMovement(items as DisplayTransactionItem[], transactionId)
@@ -1511,7 +1601,14 @@ export default function TransactionDetail() {
       <div className="bg-white shadow rounded-lg">
         <div className="px-6 py-6 border-b border-gray-200">
           <h1 className="text-2xl font-bold text-gray-900 leading-tight">
-            {getCanonicalTransactionTitle(transaction)} - {formatCurrency(transaction.amount)}
+            {getCanonicalTransactionTitle(transaction)} - {formatCurrency(
+              isCanonicalSaleOrPurchaseTransactionId(transactionId) && computedTotal !== null
+                ? computedTotal
+                : transaction.amount
+            )}
+            {isHealingAmount && (
+              <span className="ml-2 text-sm text-gray-500 font-normal">(updating...)</span>
+            )}
           </h1>
         </div>
 
@@ -1577,7 +1674,18 @@ export default function TransactionDetail() {
 
             <div>
               <dt className="text-sm font-medium text-gray-500">Amount</dt>
-              <dd className="mt-1 text-sm text-gray-900">{formatCurrency(transaction.amount)}</dd>
+              <dd className="mt-1 text-sm text-gray-900">
+                {formatCurrency(
+                  isCanonicalSaleOrPurchaseTransactionId(transactionId) && computedTotal !== null
+                    ? computedTotal
+                    : transaction.amount
+                )}
+                {isCanonicalSaleOrPurchaseTransactionId(transactionId) && computedTotal !== null && computedTotal !== parseFloat(transaction.amount || '0').toFixed(2) && (
+                  <span className="ml-2 text-xs text-gray-500">
+                    (was {formatCurrency(transaction.amount)})
+                  </span>
+                )}
+              </dd>
             </div>
 
 

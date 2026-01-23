@@ -308,6 +308,7 @@ export default function EditTransaction() {
                   id: item.itemId,
                   description: item?.description || '',
                   purchasePrice: item?.purchasePrice?.toString() || '',
+                  projectPrice: item?.projectPrice?.toString() || '',
                   sku: item?.sku || '',
                   marketValue: item?.marketValue?.toString() || '',
                   notes: item?.notes || '',
@@ -331,6 +332,7 @@ export default function EditTransaction() {
                 id: i.id,
                 description: i.description,
                 purchasePrice: i.purchasePrice,
+                projectPrice: i.projectPrice,
                 sku: i.sku,
                 marketValue: i.marketValue,
                 notes: i.notes
@@ -452,6 +454,7 @@ export default function EditTransaction() {
           if (!orig || orig.description !== item.description) updates.description = item.description
           // Normalize undefined/empty string comparisons for numeric fields stored as strings
           if (!orig || String(orig.purchasePrice || '') !== String(item.purchasePrice || '')) updates.purchasePrice = item.purchasePrice
+          if (!orig || String(orig.projectPrice || '') !== String(item.projectPrice || '')) updates.projectPrice = item.projectPrice
           if (!orig || String(orig.marketValue || '') !== String(item.marketValue || '')) updates.marketValue = item.marketValue
           if (!orig || (orig.sku || '') !== (item.sku || '')) updates.sku = item.sku
           if (!orig || (orig.notes || '') !== (item.notes || '')) updates.notes = item.notes
