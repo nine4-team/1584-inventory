@@ -190,6 +190,103 @@ const isCanonicalAmountTransactionId = (transactionId: string | null | undefined
   return isCanonicalSaleOrPurchaseTransactionId(transactionId)
 }
 
+/**
+ * Compute the canonical transaction total from associated items.
+ * Includes items that are moved out via lineage edges.
+ * 
+ * @param accountId - Account ID
+ * @param transactionId - Canonical transaction ID
+ * @param itemIds - Optional array of item IDs to use (if not provided, fetches from transaction.item_ids)
+ * @param lineageEdges - Optional array of lineage edges (if not provided, fetches edges from transaction)
+ * @returns Computed total as string with fixed 2 decimals on success, or null if compute fails
+ * 
+ * Returns null when:
+ * - Transaction row missing / cannot be fetched (when itemIds not provided)
+ * - Items query fails (Supabase error) for the union of itemIds + moved-out IDs
+ * 
+ * Still returns a number (not null) when:
+ * - Lineage edges fetch fails: treat moved-out set as empty and compute from current items
+ * - Empty item set: returns "0.00" (this is a valid computed total)
+ */
+export const computeCanonicalTransactionTotal = async (
+  accountId: string,
+  transactionId: string,
+  itemIds?: string[],
+  lineageEdges?: Array<{ itemId: string }>
+): Promise<string | null> => {
+  await ensureAuthenticatedForDatabase()
+
+  // Resolve item IDs if not provided
+  let resolvedItemIds: string[] = []
+  if (itemIds && itemIds.length > 0) {
+    resolvedItemIds = itemIds
+  } else {
+    // Fetch transaction to get item_ids
+    const { data: transaction, error: txError } = await supabase
+      .from('transactions')
+      .select('item_ids')
+      .eq('account_id', accountId)
+      .eq('transaction_id', transactionId)
+      .single()
+
+    if (txError || !transaction) {
+      console.warn('computeCanonicalTransactionTotal - transaction not found (compute failure):', transactionId)
+      return null
+    }
+
+    resolvedItemIds = Array.isArray(transaction.item_ids) ? transaction.item_ids : []
+  }
+
+  // Resolve lineage edges if not provided
+  let resolvedEdges: Array<{ itemId: string }> = []
+  if (lineageEdges) {
+    resolvedEdges = lineageEdges
+  } else {
+    try {
+      const edges = await lineageService.getEdgesFromTransaction(transactionId, accountId)
+      resolvedEdges = edges.map(edge => ({ itemId: edge.itemId }))
+    } catch (error) {
+      console.warn('computeCanonicalTransactionTotal - failed to fetch lineage edges (non-fatal):', error)
+      // Continue without moved-out items - this is NOT a compute failure
+      resolvedEdges = []
+    }
+  }
+
+  // Collect all item IDs (current + moved-out)
+  const allItemIds = new Set<string>(resolvedItemIds)
+  resolvedEdges.forEach(edge => allItemIds.add(edge.itemId))
+
+  // Empty item set is valid - return "0.00" (not null)
+  if (allItemIds.size === 0) {
+    return '0.00'
+  }
+
+  // Fetch all items
+  // This is a compute failure condition: if items query fails, return null
+  const { data: itemsData, error: itemsError } = await supabase
+    .from('items')
+    .select('purchase_price, project_price, market_value')
+    .eq('account_id', accountId)
+    .in('item_id', Array.from(allItemIds))
+
+  if (itemsError) {
+    console.warn('computeCanonicalTransactionTotal - failed to fetch items (compute failure):', itemsError)
+    return null
+  }
+
+  // Compute total using same logic as addItemToTransaction:
+  // prefer project_price, fall back to purchase_price, then market_value
+  const totalAmount = (itemsData || [])
+    .map(item => {
+      const price = item.project_price || item.purchase_price || item.market_value || '0.00'
+      return parseFloat(price || '0')
+    })
+    .reduce((sum: number, price: number) => sum + (isNaN(price) ? 0 : price), 0)
+
+  const formattedTotal = Math.max(0, totalAmount).toFixed(2)
+  return formattedTotal
+}
+
 const getCanonicalBudgetCategoryId = async (accountId: string): Promise<string | null> => {
   try {
     return await getDefaultCategory(accountId)
@@ -3869,6 +3966,110 @@ export const transactionService = {
 
     const transactions = (data || []).map(tx => _convertTransactionFromDb(tx))
     return await _enrichTransactionsWithProjectNames(accountId, transactions)
+  },
+
+  /**
+   * Reconciliation hook: recompute all canonical transaction totals.
+   * This is a safety net for missed reads or batch repairs.
+   * 
+   * @param accountId - Account ID
+   * @param projectId - Optional project ID to limit scope (if not provided, reconciles all canonical transactions)
+   * @returns Object with counts of transactions checked and repaired
+   */
+  async reconcileCanonicalTransactionTotals(
+    accountId: string,
+    projectId?: string | null
+  ): Promise<{ checked: number; repaired: number; skipped: number; errors: number }> {
+    await ensureAuthenticatedForDatabase()
+
+    let checked = 0
+    let repaired = 0
+    let skipped = 0
+    let errors = 0
+
+    try {
+      // Fetch all canonical transactions for the account (optionally filtered by project)
+      const query = supabase
+        .from('transactions')
+        .select('transaction_id, item_ids, amount, project_id')
+        .eq('account_id', accountId)
+        .or('transaction_id.like.INV_PURCHASE_%,transaction_id.like.INV_SALE_%')
+
+      if (projectId) {
+        query.eq('project_id', projectId)
+      }
+
+      const { data: transactions, error } = await query
+
+      if (error) {
+        console.error('❌ Failed to fetch canonical transactions for reconciliation:', error)
+        throw error
+      }
+
+      if (!transactions || transactions.length === 0) {
+        return { checked: 0, repaired: 0, skipped: 0, errors: 0 }
+      }
+
+      // Batch compute and repair totals
+      const repairPromises = transactions.map(async (tx) => {
+        checked++
+        try {
+          const computed = await computeCanonicalTransactionTotal(
+            accountId,
+            tx.transaction_id,
+            Array.isArray(tx.item_ids) ? tx.item_ids : undefined
+          )
+          
+          // Skip healing if compute failed (returns null)
+          if (computed === null) {
+            skipped++
+            console.log('⏭️ Skipped canonical transaction (compute failed):', tx.transaction_id)
+            return
+          }
+
+          const storedAmount = parseFloat(tx.amount || '0').toFixed(2)
+
+          // Only heal if computed total differs from stored amount
+          if (computed !== storedAmount) {
+            try {
+              // Only update if projectId is available
+              if (!tx.project_id) {
+                skipped++
+                console.log('⏭️ Skipped canonical transaction (missing projectId):', tx.transaction_id)
+                return
+              }
+
+              await supabase
+                .from('transactions')
+                .update({ amount: computed, updated_at: new Date().toISOString() })
+                .eq('account_id', accountId)
+                .eq('transaction_id', tx.transaction_id)
+
+              repaired++
+              console.log('✅ Reconciled canonical transaction:', tx.transaction_id, {
+                stored: storedAmount,
+                computed
+              })
+            } catch (updateError) {
+              errors++
+              console.warn('⚠️ Failed to repair canonical transaction:', tx.transaction_id, updateError)
+            }
+          }
+        } catch (computeError) {
+          errors++
+          console.warn('⚠️ Failed to compute total for canonical transaction:', tx.transaction_id, computeError)
+        }
+      })
+
+      await Promise.all(repairPromises)
+
+      console.log('✅ Reconciliation complete:', { checked, repaired, skipped, errors })
+    } catch (error) {
+      console.error('❌ Reconciliation failed:', error)
+      throw error
+    }
+
+    return { checked, repaired, skipped, errors }
   }
 }
 
