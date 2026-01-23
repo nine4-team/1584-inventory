@@ -148,6 +148,7 @@ const TRANSACTION_FILTER_MODES = ['all', 'we-owe', 'client-owes'] as const
 const RECEIPT_FILTER_MODES = ['all', 'yes', 'no'] as const
 const TRANSACTION_TYPE_FILTER_MODES = ['all', 'purchase', 'return'] as const
 const PURCHASE_METHOD_FILTER_MODES = ['all', 'client-card', 'design-business', 'missing'] as const
+const COMPLETENESS_FILTER_MODES = ['all', 'needs-review', 'complete'] as const
 const TRANSACTION_SORT_MODES = [
   'date-desc',
   'date-asc',
@@ -164,6 +165,8 @@ const DEFAULT_RECEIPT_FILTER = 'all'
 const DEFAULT_TRANSACTION_TYPE_FILTER = 'all'
 const DEFAULT_SORT_MODE = 'date-desc'
 const DEFAULT_PURCHASE_METHOD_FILTER = 'all'
+const DEFAULT_BUDGET_CATEGORY_FILTER = 'all'
+const DEFAULT_COMPLETENESS_FILTER = 'all'
 
 const parseFilterMode = (value: string | null) =>
   TRANSACTION_FILTER_MODES.includes(value as (typeof TRANSACTION_FILTER_MODES)[number])
@@ -190,6 +193,14 @@ const parsePurchaseMethodFilter = (value: string | null) =>
     ? (value as (typeof PURCHASE_METHOD_FILTER_MODES)[number])
     : DEFAULT_PURCHASE_METHOD_FILTER
 
+const parseCompletenessFilter = (value: string | null) =>
+  COMPLETENESS_FILTER_MODES.includes(value as (typeof COMPLETENESS_FILTER_MODES)[number])
+    ? (value as (typeof COMPLETENESS_FILTER_MODES)[number])
+    : DEFAULT_COMPLETENESS_FILTER
+
+const parseBudgetCategoryFilter = (value: string | null) =>
+  value && value !== DEFAULT_BUDGET_CATEGORY_FILTER ? value : DEFAULT_BUDGET_CATEGORY_FILTER
+
 export default function TransactionsList({ projectId: propProjectId, transactions: propTransactions }: TransactionsListProps) {
   const { id, projectId: routeProjectId } = useParams<{ id?: string; projectId?: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -211,7 +222,14 @@ export default function TransactionsList({ projectId: propProjectId, transaction
   const [searchQuery, setSearchQuery] = useState<string>(() => searchParams.get('txSearch') ?? '')
   const [showFilterMenu, setShowFilterMenu] = useState(false)
   const [filterMenuView, setFilterMenuView] = useState<
-    'main' | 'source' | 'purchase-method' | 'reimbursement-status' | 'transaction-type' | 'email-receipt'
+    'main'
+    | 'source'
+    | 'purchase-method'
+    | 'reimbursement-status'
+    | 'transaction-type'
+    | 'email-receipt'
+    | 'budget-category'
+    | 'completeness'
   >('main')
   const [filterMode, setFilterMode] = useState<'all' | 'we-owe' | 'client-owes'>(() =>
     parseFilterMode(searchParams.get('txFilter'))
@@ -225,6 +243,12 @@ export default function TransactionsList({ projectId: propProjectId, transaction
   )
   const [purchaseMethodFilter, setPurchaseMethodFilter] = useState<'all' | 'client-card' | 'design-business' | 'missing'>(() =>
     parsePurchaseMethodFilter(searchParams.get('txPurchaseMethod'))
+  )
+  const [budgetCategoryFilter, setBudgetCategoryFilter] = useState<string>(() =>
+    parseBudgetCategoryFilter(searchParams.get('txCategory'))
+  )
+  const [completenessFilter, setCompletenessFilter] = useState<'all' | 'needs-review' | 'complete'>(() =>
+    parseCompletenessFilter(searchParams.get('txCompleteness'))
   )
 
   // Sort state
@@ -265,6 +289,8 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     const nextTransactionTypeFilter = parseTransactionTypeFilter(searchParams.get('txType'))
     const nextSortMode = parseSortMode(searchParams.get('txSort'))
     const nextPurchaseMethodFilter = parsePurchaseMethodFilter(searchParams.get('txPurchaseMethod'))
+    const nextBudgetCategoryFilter = parseBudgetCategoryFilter(searchParams.get('txCategory'))
+    const nextCompletenessFilter = parseCompletenessFilter(searchParams.get('txCompleteness'))
 
     const hasChanges =
       searchQuery !== nextSearchQuery ||
@@ -273,7 +299,9 @@ export default function TransactionsList({ projectId: propProjectId, transaction
       receiptFilter !== nextReceiptFilter ||
       transactionTypeFilter !== nextTransactionTypeFilter ||
       sortMode !== nextSortMode ||
-      purchaseMethodFilter !== nextPurchaseMethodFilter
+      purchaseMethodFilter !== nextPurchaseMethodFilter ||
+      budgetCategoryFilter !== nextBudgetCategoryFilter ||
+      completenessFilter !== nextCompletenessFilter
 
     if (!hasChanges) return
 
@@ -285,6 +313,8 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     if (transactionTypeFilter !== nextTransactionTypeFilter) setTransactionTypeFilter(nextTransactionTypeFilter)
     if (sortMode !== nextSortMode) setSortMode(nextSortMode)
     if (purchaseMethodFilter !== nextPurchaseMethodFilter) setPurchaseMethodFilter(nextPurchaseMethodFilter)
+    if (budgetCategoryFilter !== nextBudgetCategoryFilter) setBudgetCategoryFilter(nextBudgetCategoryFilter)
+    if (completenessFilter !== nextCompletenessFilter) setCompletenessFilter(nextCompletenessFilter)
   }, [searchParams])
 
   useEffect(() => {
@@ -309,6 +339,8 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     setParam('txType', transactionTypeFilter, DEFAULT_TRANSACTION_TYPE_FILTER)
     setParam('txSort', sortMode, DEFAULT_SORT_MODE)
     setParam('txPurchaseMethod', purchaseMethodFilter, DEFAULT_PURCHASE_METHOD_FILTER)
+    setParam('txCategory', budgetCategoryFilter, DEFAULT_BUDGET_CATEGORY_FILTER)
+    setParam('txCompleteness', completenessFilter, DEFAULT_COMPLETENESS_FILTER)
 
     if (nextParams.toString() !== searchParams.toString()) {
       setSearchParams(nextParams, { replace: true, state: location.state })
@@ -316,6 +348,8 @@ export default function TransactionsList({ projectId: propProjectId, transaction
   }, [
     filterMode,
     location.state,
+    budgetCategoryFilter,
+    completenessFilter,
     purchaseMethodFilter,
     receiptFilter,
     searchQuery,
@@ -575,6 +609,11 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     return () => { mounted = false }
   }, [transactions, projectId, currentAccountId])
 
+  const selectedBudgetCategory = useMemo(
+    () => budgetCategories.find(category => category.id === budgetCategoryFilter),
+    [budgetCategories, budgetCategoryFilter]
+  )
+
   // Filter transactions based on search and filter mode
   const filteredTransactions = useMemo(() => {
     let filtered = transactions
@@ -616,6 +655,23 @@ export default function TransactionsList({ projectId: propProjectId, transaction
       })
     }
 
+    if (budgetCategoryFilter !== DEFAULT_BUDGET_CATEGORY_FILTER) {
+      const selectedCategoryName = selectedBudgetCategory?.name?.trim()
+      filtered = filtered.filter(t => {
+        if (t.categoryId) return t.categoryId === budgetCategoryFilter
+        if (!selectedCategoryName) return false
+        return (t.budgetCategory ?? '').trim() === selectedCategoryName
+      })
+    }
+
+    if (completenessFilter !== DEFAULT_COMPLETENESS_FILTER) {
+      if (completenessFilter === 'needs-review') {
+        filtered = filtered.filter(t => t.needsReview === true)
+      } else {
+        filtered = filtered.filter(t => t.needsReview !== true)
+      }
+    }
+
     // Apply search filter (source/title/type/notes/amount)
     if (searchQuery) {
       const query = searchQuery.toLowerCase().trim()
@@ -653,6 +709,10 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     sortMode,
     transactionTypeFilter,
     purchaseMethodFilter,
+    budgetCategoryFilter,
+    completenessFilter,
+    selectedBudgetCategory,
+    completenessById,
   ])
 
   const handleExportCsv = useCallback(() => {
@@ -885,7 +945,9 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                 sourceFilter === 'all' &&
                 receiptFilter === 'all' &&
                 transactionTypeFilter === 'all' &&
-                purchaseMethodFilter === 'all'
+                purchaseMethodFilter === 'all' &&
+                budgetCategoryFilter === 'all' &&
+                completenessFilter === 'all'
                   ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
                   : 'border-primary-500 text-primary-600 bg-primary-50 hover:bg-primary-100'
               }`}
@@ -907,6 +969,8 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                         setReceiptFilter('all')
                         setTransactionTypeFilter('all')
                         setPurchaseMethodFilter('all')
+                        setBudgetCategoryFilter('all')
+                        setCompletenessFilter('all')
                         setShowFilterMenu(false)
                       }}
                       className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
@@ -914,7 +978,9 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                         sourceFilter === 'all' &&
                         receiptFilter === 'all' &&
                         transactionTypeFilter === 'all' &&
-                        purchaseMethodFilter === 'all'
+                        purchaseMethodFilter === 'all' &&
+                        budgetCategoryFilter === 'all' &&
+                        completenessFilter === 'all'
                           ? 'bg-primary-50 text-primary-600'
                           : 'text-gray-700'
                       }`}
@@ -924,7 +990,9 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                       sourceFilter === 'all' &&
                       receiptFilter === 'all' &&
                       transactionTypeFilter === 'all' &&
-                      purchaseMethodFilter === 'all' ? (
+                      purchaseMethodFilter === 'all' &&
+                      budgetCategoryFilter === 'all' &&
+                      completenessFilter === 'all' ? (
                         <Check className="h-4 w-4" />
                       ) : null}
                     </button>
@@ -944,6 +1012,27 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                             : transactionTypeFilter === 'purchase'
                             ? 'Purchase'
                             : 'Return'}
+                        </span>
+                      </div>
+                    </button>
+
+                    <div className="my-1 border-t border-gray-100" />
+
+                    <button
+                      onClick={() => setFilterMenuView('completeness')}
+                      className={`w-full px-3 py-2 text-sm hover:bg-gray-50 ${
+                        completenessFilter !== 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                      aria-label="Completeness"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span>Completeness</span>
+                        <span className="text-xs text-gray-500 truncate max-w-[10rem]">
+                          {completenessFilter === 'all'
+                            ? 'All'
+                            : completenessFilter === 'needs-review'
+                            ? 'Needs Review'
+                            : 'Complete'}
                         </span>
                       </div>
                     </button>
@@ -984,6 +1073,25 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                             : purchaseMethodFilter === 'missing'
                             ? 'Not Set'
                             : 'Design Business'}
+                        </span>
+                      </div>
+                    </button>
+
+                    <div className="my-1 border-t border-gray-100" />
+
+                    <button
+                      onClick={() => setFilterMenuView('budget-category')}
+                      className={`w-full px-3 py-2 text-sm hover:bg-gray-50 ${
+                        budgetCategoryFilter !== 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                      aria-label="Budget category"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span>Budget Category</span>
+                        <span className="text-xs text-gray-500 truncate max-w-[10rem]">
+                          {budgetCategoryFilter === 'all'
+                            ? 'All'
+                            : selectedBudgetCategory?.name ?? 'Unknown'}
                         </span>
                       </div>
                     </button>
@@ -1233,6 +1341,102 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                       {transactionTypeFilter === 'return' ? <Check className="h-4 w-4" /> : null}
                     </button>
                   </div>
+                ) : filterMenuView === 'completeness' ? (
+                  <div className="py-1">
+                    <button
+                      onClick={() => setFilterMenuView('main')}
+                      className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      ← Back
+                    </button>
+
+                    <div className="my-1 border-t border-gray-100" />
+
+                    <button
+                      onClick={() => {
+                        setCompletenessFilter('all')
+                        setShowFilterMenu(false)
+                        setFilterMenuView('main')
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        completenessFilter === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>All</span>
+                      {completenessFilter === 'all' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setCompletenessFilter('needs-review')
+                        setShowFilterMenu(false)
+                        setFilterMenuView('main')
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        completenessFilter === 'needs-review' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>Needs Review</span>
+                      {completenessFilter === 'needs-review' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setCompletenessFilter('complete')
+                        setShowFilterMenu(false)
+                        setFilterMenuView('main')
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        completenessFilter === 'complete' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>Complete</span>
+                      {completenessFilter === 'complete' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+                  </div>
+                ) : filterMenuView === 'budget-category' ? (
+                  <div className="py-1">
+                    <button
+                      onClick={() => setFilterMenuView('main')}
+                      className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      ← Back
+                    </button>
+
+                    <div className="my-1 border-t border-gray-100" />
+
+                    <button
+                      onClick={() => {
+                        setBudgetCategoryFilter('all')
+                        setShowFilterMenu(false)
+                        setFilterMenuView('main')
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                        budgetCategoryFilter === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                      }`}
+                    >
+                      <span>All</span>
+                      {budgetCategoryFilter === 'all' ? <Check className="h-4 w-4" /> : null}
+                    </button>
+                    {budgetCategories.length === 0 ? (
+                      <div className="px-3 py-2 text-sm text-gray-500">No categories</div>
+                    ) : (
+                      budgetCategories.map(category => (
+                        <button
+                          key={category.id}
+                          onClick={() => {
+                            setBudgetCategoryFilter(category.id)
+                            setShowFilterMenu(false)
+                            setFilterMenuView('main')
+                          }}
+                          className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                            budgetCategoryFilter === category.id ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                          }`}
+                        >
+                          <span>{category.name}</span>
+                          {budgetCategoryFilter === category.id ? <Check className="h-4 w-4" /> : null}
+                        </button>
+                      ))
+                    )}
+                  </div>
                 ) : (
                   <div className="py-1">
                     <button
@@ -1318,7 +1522,9 @@ export default function TransactionsList({ projectId: propProjectId, transaction
             sourceFilter !== 'all' ||
             receiptFilter !== 'all' ||
             transactionTypeFilter !== 'all' ||
-            purchaseMethodFilter !== 'all'
+            purchaseMethodFilter !== 'all' ||
+            budgetCategoryFilter !== 'all' ||
+            completenessFilter !== 'all'
               ? 'Try adjusting your search or filter criteria.'
               : 'No transactions found.'
             }
