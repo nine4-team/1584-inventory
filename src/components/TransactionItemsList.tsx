@@ -385,6 +385,8 @@ export default function TransactionItemsList({
     return result
   }, [items, searchQuery, filterMode, sortMode, bookmarkedItemIds])
 
+  const lastItemId = filteredItems[filteredItems.length - 1]?.id
+
   // Group items by their grouping key for collapsed duplicate display
   const groupedItems = useMemo(() => {
     const groups = new Map<string, TransactionItemFormData[]>()
@@ -778,6 +780,7 @@ export default function TransactionItemsList({
         isSelected={selectedItemIds.has(item.id)}
         onSelect={toggleItemSelection}
         showCheckbox={showSelectionControls}
+        menuDirection={item.id === lastItemId ? 'top' : 'bottom'}
         onBookmark={enablePersistedControls ? handleBookmarkItem : undefined}
         onDuplicate={handleDuplicateItem}
         onEdit={(href) => handleEditItem(item.id)}

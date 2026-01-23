@@ -16,6 +16,7 @@ type ItemActionsMenuProps = {
   isPersisted: boolean
   currentProjectId?: string | null
   triggerSize?: 'sm' | 'md'
+  menuDirection?: 'auto' | 'top' | 'bottom'
   onEdit?: () => void
   onDuplicate?: (quantity: number) => void
   onAddToTransaction?: () => void
@@ -38,6 +39,7 @@ export default function ItemActionsMenu({
   isPersisted,
   currentProjectId,
   triggerSize = 'sm',
+  menuDirection = 'auto',
   onEdit,
   onDuplicate,
   onAddToTransaction,
@@ -115,6 +117,10 @@ export default function ItemActionsMenu({
   // Calculate menu position when it opens
   useEffect(() => {
     if (!isOpen || !triggerRef.current || !menuContentRef.current) return
+    if (menuDirection !== 'auto') {
+      setMenuPosition(menuDirection)
+      return
+    }
 
     const calculatePosition = () => {
       if (!triggerRef.current || !menuContentRef.current) return
@@ -151,7 +157,7 @@ export default function ItemActionsMenu({
       window.removeEventListener('scroll', calculatePosition, true)
       window.removeEventListener('resize', calculatePosition)
     }
-  }, [isOpen, openSubmenu])
+  }, [isOpen, menuDirection, openSubmenu])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {

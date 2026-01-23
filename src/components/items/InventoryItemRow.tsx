@@ -26,6 +26,7 @@ interface InventoryItemRowProps {
   itemNumber: number
   duplicateCount?: number
   duplicateIndex?: number
+  isLastItem?: boolean
 }
 
 export default function InventoryItemRow({
@@ -48,7 +49,8 @@ export default function InventoryItemRow({
   projectId,
   itemNumber,
   duplicateCount,
-  duplicateIndex
+  duplicateIndex,
+  isLastItem
 }: InventoryItemRowProps) {
   const { currentAccountId } = useAccount()
   const location = useLocation()
@@ -130,6 +132,7 @@ export default function InventoryItemRow({
         duplicateCount={duplicateCount}
         duplicateIndex={duplicateIndex}
         itemNumber={itemNumber}
+        menuDirection={isLastItem ? 'top' : 'bottom'}
         transactionDisplayInfo={transactionDisplayInfo}
         transactionRoute={transactionRoute}
         isLoadingTransaction={isLoadingTransaction}

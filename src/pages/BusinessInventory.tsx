@@ -564,6 +564,8 @@ export default function BusinessInventory() {
     return filtered
   }, [items, inventorySearchQuery, filters.status, filterMode, sortMode])
 
+  const lastItemId = filteredItems[filteredItems.length - 1]?.itemId
+
   // Group filtered items by their grouping key
   const groupedItems = useMemo(() => {
     const groups = new Map<string, Item[]>()
@@ -1554,6 +1556,7 @@ export default function BusinessInventory() {
                             key={item.itemId}
                             item={item}
                             isSelected={selectedItems.has(item.itemId)}
+                            isLastItem={item.itemId === lastItemId}
                             onSelect={handleSelectItem}
                             onBookmark={toggleBookmark}
                             onDuplicate={duplicateItem}
@@ -1696,6 +1699,7 @@ export default function BusinessInventory() {
                                   key={item.itemId}
                                   item={item}
                                   isSelected={selectedItems.has(item.itemId)}
+                                  isLastItem={item.itemId === lastItemId}
                                   onSelect={handleSelectItem}
                                   onBookmark={toggleBookmark}
                                   onDuplicate={duplicateItem}
