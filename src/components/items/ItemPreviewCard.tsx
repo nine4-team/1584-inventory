@@ -276,7 +276,7 @@ export default function ItemPreviewCard({
 
           {/* Action buttons on the right */}
           {(hasActions || hasHeaderAction) && (
-            <div className="flex items-center space-x-2 ml-auto">
+            <div className="flex items-center gap-0.5 ml-auto">
               {duplicateCount && duplicateCount > 1 && duplicateIndex ? (
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
                   {duplicateIndex}/{duplicateCount}
@@ -295,7 +295,7 @@ export default function ItemPreviewCard({
                     e.stopPropagation()
                     onBookmark(itemId)
                   }}
-                  className={`inline-flex items-center justify-center p-1.5 text-sm font-medium transition-colors ${
+                  className={`inline-flex items-center justify-center p-1 text-sm font-medium transition-colors ${
                     item.bookmark
                       ? 'text-red-700 bg-transparent'
                       : 'text-primary-600 bg-transparent'
