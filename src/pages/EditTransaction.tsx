@@ -29,6 +29,10 @@ import { projectTransactionDetail, projectTransactions } from '@/utils/routes'
 import { getReturnToFromLocation, navigateToReturnToOrFallback } from '@/utils/navigationReturnTo'
 import { hydrateTransactionCache, loadTransactionItemsWithReconcile } from '@/utils/hydrationHelpers'
 import { getGlobalQueryClient } from '@/utils/queryClient'
+import { budgetCategoriesService } from '@/services/budgetCategoriesService'
+import { BudgetCategory } from '@/types'
+import { getItemizationEnabled } from '@/utils/categoryItemization'
+import { AlertCircle } from 'lucide-react'
 
 export default function EditTransaction() {
   const { id, projectId: routeProjectId, transactionId } = useParams<{ id?: string; projectId?: string; transactionId: string }>()
@@ -134,6 +138,38 @@ export default function EditTransaction() {
   const [isCustomSource, setIsCustomSource] = useState(false)
   const [availableVendors, setAvailableVendors] = useState<string[]>([])
   const availableVendorsRef = useRef<string[]>([])
+  const [categories, setCategories] = useState<BudgetCategory[]>([])
+
+  // Load budget categories on mount
+  useEffect(() => {
+    if (!currentAccountId) return
+    let cancelled = false
+
+    const loadCategories = async () => {
+      try {
+        const loadedCategories = await budgetCategoriesService.getCategories(currentAccountId, false)
+        if (!cancelled) {
+          setCategories(loadedCategories)
+        }
+      } catch (error) {
+        console.error('Error loading budget categories:', error)
+        if (!cancelled) {
+          setCategories([])
+        }
+      }
+    }
+
+    loadCategories()
+
+    return () => {
+      cancelled = true
+    }
+  }, [currentAccountId])
+
+  // Get selected category and check itemization enabled
+  const selectedCategory = categories.find(c => c.id === formData.categoryId)
+  const itemizationEnabled = getItemizationEnabled(selectedCategory)
+  const hasExistingItems = items.length > 0 && items.some(item => !item.id.startsWith('temp-'))
 
   // Load vendor defaults on mount
   useEffect(() => {
@@ -1180,35 +1216,55 @@ export default function EditTransaction() {
           </div>
 
           {/* Transaction Items */}
-          <div>
-            <TransactionItemsList
-              items={items}
-              onItemsChange={(newItems) => {
-                setItems(newItems)
-                // Clear items error if items are added
-                if (errors.items && newItems.length > 0) {
-                  setErrors(prev => ({ ...prev, items: undefined }))
-                }
-              }}
-              projectId={projectId}
-              projectName={projectName}
-              onRemoveFromTransaction={async (itemId, item) => {
-                const isDraft = itemId.toString().startsWith('item-')
-                if (isDraft) {
+          {itemizationEnabled || hasExistingItems ? (
+            <div>
+              {!itemizationEnabled && hasExistingItems && (
+                <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+                  <div className="flex items-start">
+                    <AlertCircle className="h-5 w-5 text-yellow-600 mr-2 flex-shrink-0 mt-0.5" />
+                    <div className="text-sm text-yellow-800">
+                      <strong>Itemization is disabled for this category.</strong> This transaction has existing items. You can view and manage them, but itemization is disabled for new transactions in this category.
+                      <div className="mt-2">
+                        <ContextLink
+                          to="/settings"
+                          className="inline-flex items-center text-sm font-medium text-yellow-800 underline hover:text-yellow-900"
+                        >
+                          Enable itemization in Settings
+                        </ContextLink>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <TransactionItemsList
+                items={items}
+                onItemsChange={(newItems) => {
+                  setItems(newItems)
+                  // Clear items error if items are added
+                  if (errors.items && newItems.length > 0) {
+                    setErrors(prev => ({ ...prev, items: undefined }))
+                  }
+                }}
+                projectId={projectId}
+                projectName={projectName}
+                onRemoveFromTransaction={async (itemId, item) => {
+                  const isDraft = itemId.toString().startsWith('item-')
+                  if (isDraft) {
+                    setItems(prev => prev.filter(i => i.id !== itemId))
+                    return
+                  }
+                  if (!currentAccountId) return
+                  await unifiedItemsService.unlinkItemFromTransaction(currentAccountId, transactionId, itemId, {
+                    itemCurrentTransactionId: transactionId
+                  })
                   setItems(prev => prev.filter(i => i.id !== itemId))
-                  return
-                }
-                if (!currentAccountId) return
-                await unifiedItemsService.unlinkItemFromTransaction(currentAccountId, transactionId, itemId, {
-                  itemCurrentTransactionId: transactionId
-                })
-                setItems(prev => prev.filter(i => i.id !== itemId))
-              }}
-            />
-            {errors.items && (
-              <p className="mt-1 text-sm text-red-600">{errors.items}</p>
-            )}
-          </div>
+                }}
+              />
+              {errors.items && (
+                <p className="mt-1 text-sm text-red-600">{errors.items}</p>
+              )}
+            </div>
+          ) : null}
 
           {/* Receipts */}
           <div>

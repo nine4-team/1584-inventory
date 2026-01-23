@@ -1,4 +1,4 @@
-import { ArrowLeft, Trash2, Image as ImageIcon, Package, RefreshCw, X } from 'lucide-react'
+import { ArrowLeft, Trash2, Image as ImageIcon, Package, RefreshCw, X, AlertCircle } from 'lucide-react'
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import ImageGallery from '@/components/ui/ImageGallery'
 import { TransactionImagePreview } from '@/components/ui/ImagePreview'
@@ -19,6 +19,7 @@ import {
 } from '@/services/inventoryService'
 import { budgetCategoriesService } from '@/services/budgetCategoriesService'
 import { lineageService } from '@/services/lineageService'
+import { getItemizationEnabled } from '@/utils/categoryItemization'
 import { ImageUploadService } from '@/services/imageService'
 import { OfflineAwareImageService } from '@/services/offlineAwareImageService'
 import { offlineMediaService } from '@/services/offlineMediaService'
@@ -62,7 +63,7 @@ const getCanonicalTransactionTitle = (transaction: Transaction): string => {
   return transaction.source
 }
 
-// Get budget category display name from transaction (handles both legacy and new fields)
+  // Get budget category display name from transaction (handles both legacy and new fields)
 const getBudgetCategoryDisplayName = (transaction: Transaction, categories: BudgetCategory[]): string | undefined => {
   // First try the new categoryId field
   if (transaction.categoryId) {
@@ -71,6 +72,14 @@ const getBudgetCategoryDisplayName = (transaction: Transaction, categories: Budg
   }
   // Fall back to legacy budgetCategory field
   return transaction.budgetCategory
+}
+
+// Get category for transaction
+const getTransactionCategory = (transaction: Transaction, categories: BudgetCategory[]): BudgetCategory | undefined => {
+  if (transaction.categoryId) {
+    return categories.find(c => c.id === transaction.categoryId)
+  }
+  return undefined
 }
 
 const buildDisplayItems = (items: Item[], movedOutItemIds: Set<string>): DisplayTransactionItem[] => {
@@ -2491,20 +2500,50 @@ export default function TransactionDetail() {
         )}
 
         {/* Transaction Items */}
-        <div ref={transactionItemsContainerRef} className="px-6 py-6 border-t border-gray-200" id="transaction-items-container">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-medium text-gray-900 flex items-center">
-              <Package className="h-5 w-5 mr-2" />
-              Transaction Items
-            </h3>
-          </div>
+        {(() => {
+          const transactionCategory = transaction ? getTransactionCategory(transaction, budgetCategories) : undefined
+          const itemizationEnabled = getItemizationEnabled(transactionCategory)
+          const hasExistingItems = items.length > 0
 
-          {isLoadingItems ? (
-            <div className="flex justify-center items-center h-16">
-              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600"></div>
-              <span className="ml-2 text-sm text-gray-600">Loading items...</span>
-            </div>
-          ) : items.length > 0 ? (
+          // Show items if itemization is enabled OR if items already exist (with warning)
+          if (!itemizationEnabled && !hasExistingItems) {
+            return null
+          }
+
+          return (
+            <div ref={transactionItemsContainerRef} className="px-6 py-6 border-t border-gray-200" id="transaction-items-container">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-medium text-gray-900 flex items-center">
+                  <Package className="h-5 w-5 mr-2" />
+                  Transaction Items
+                </h3>
+              </div>
+
+              {!itemizationEnabled && hasExistingItems && (
+                <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+                  <div className="flex items-start">
+                    <AlertCircle className="h-5 w-5 text-yellow-600 mr-2 flex-shrink-0 mt-0.5" />
+                    <div className="text-sm text-yellow-800">
+                      <strong>Itemization is disabled for this category.</strong> This transaction has existing items. You can view and manage them, but itemization is disabled for new transactions in this category.
+                      <div className="mt-2">
+                        <ContextLink
+                          to="/settings"
+                          className="inline-flex items-center text-sm font-medium text-yellow-800 underline hover:text-yellow-900"
+                        >
+                          Enable itemization in Settings
+                        </ContextLink>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {isLoadingItems ? (
+                <div className="flex justify-center items-center h-16">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600"></div>
+                  <span className="ml-2 text-sm text-gray-600">Loading items...</span>
+                </div>
+              ) : items.length > 0 ? (
             <div className="space-y-6">
               {/* Current items in this transaction */}
               {itemsInTransaction.length > 0 && (
@@ -2564,21 +2603,37 @@ export default function TransactionDetail() {
               projectName={project ? project.name : ''}
               onImageFilesChange={handleImageFilesChange}
             />
-          )}
-          {/* Sentinel element to detect when container is scrolled past */}
-          <div id="transaction-items-sentinel" className="h-1" />
-        </div>
+              )}
+              {/* Sentinel element to detect when container is scrolled past */}
+              <div id="transaction-items-sentinel" className="h-1" />
+            </div>
+          )
+        })()}
 
         {/* Transaction Audit */}
-        {transaction && (projectId || transaction.projectId) && getCanonicalTransactionTitle(transaction) !== COMPANY_INVENTORY_SALE && getCanonicalTransactionTitle(transaction) !== COMPANY_INVENTORY_PURCHASE && (
-          <div className="px-6 py-6 border-t border-gray-200">
-            <TransactionAudit
-              transaction={transaction}
-              projectId={projectId || transaction.projectId || ''}
-              transactionItems={auditItems}
-            />
-          </div>
-        )}
+        {(() => {
+          if (!transaction) return null
+          if (!(projectId || transaction.projectId)) return null
+          if (getCanonicalTransactionTitle(transaction) === COMPANY_INVENTORY_SALE || getCanonicalTransactionTitle(transaction) === COMPANY_INVENTORY_PURCHASE) return null
+
+          const transactionCategory = getTransactionCategory(transaction, budgetCategories)
+          const itemizationEnabled = getItemizationEnabled(transactionCategory)
+
+          // Hide audit section when itemization is disabled
+          if (!itemizationEnabled) {
+            return null
+          }
+
+          return (
+            <div className="px-6 py-6 border-t border-gray-200">
+              <TransactionAudit
+                transaction={transaction}
+                projectId={projectId || transaction.projectId || ''}
+                transactionItems={auditItems}
+              />
+            </div>
+          )
+        })()}
 
         {/* Metadata */}
         <div className="px-6 py-4 bg-gray-50 border-t border-gray-200">

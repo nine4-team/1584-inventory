@@ -15,9 +15,17 @@ vi.mock('../databaseService', () => ({
   convertTimestamps: vi.fn((data) => data)
 }))
 
+// Mock budgetCategoriesService
+vi.mock('../budgetCategoriesService', () => ({
+  budgetCategoriesService: {
+    getCategory: vi.fn()
+  }
+}))
+
 // Import after mocks are set up
 import { projectService, transactionService, unifiedItemsService, auditService } from '../inventoryService'
 import * as supabaseModule from '../supabase'
+import { budgetCategoriesService } from '../budgetCategoriesService'
 
 describe('projectService', () => {
   beforeEach(() => {
@@ -240,6 +248,87 @@ describe('transactionService', () => {
       await (transactionService as any)._recomputeNeedsReview('test-account', 'project-1', 'INV_PURCHASE_project-1')
 
       expect(capturedNeedsReview).toBe(false)
+    })
+
+    it('forces needsReview=false when itemization is disabled', async () => {
+      const mockQueryBuilder = createMockSupabaseClient().from('transactions')
+      let capturedNeedsReview: boolean | undefined
+      vi.mocked(supabaseModule.supabase.from).mockReturnValue({
+        ...mockQueryBuilder,
+        update: vi.fn((data: any) => {
+          capturedNeedsReview = data.needs_review
+          return {
+            eq: vi.fn().mockReturnThis(),
+            then: vi.fn((onResolve) => {
+              return Promise.resolve({ data: null, error: null }).then(onResolve)
+            })
+          }
+        })
+      } as any)
+
+      vi.spyOn(transactionService, 'getTransaction').mockResolvedValue({ categoryId: 'cat-1' } as any)
+      vi.mocked(budgetCategoriesService.getCategory).mockResolvedValue({
+        id: 'cat-1',
+        accountId: 'test-account',
+        name: 'Install',
+        slug: 'install',
+        isArchived: false,
+        metadata: { itemizationEnabled: false },
+        createdAt: new Date(),
+        updatedAt: new Date()
+      })
+      const completenessSpy = vi
+        .spyOn(transactionService, 'getTransactionCompleteness')
+        .mockResolvedValue({ completenessStatus: 'incomplete' } as any)
+
+      await (transactionService as any)._recomputeNeedsReview('test-account', 'project-1', 'TX-1')
+
+      expect(capturedNeedsReview).toBe(false)
+      expect(completenessSpy).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('updateTransaction', () => {
+    it('prevents needsReview when itemization is disabled', async () => {
+      const updateBuilder = createMockQueryBuilder(null)
+      let capturedUpdate: any = null
+      updateBuilder.update = vi.fn((data: any) => {
+        capturedUpdate = data
+        return updateBuilder
+      })
+
+      const categoryBuilder = createMockQueryBuilder({
+        id: 'cat-1',
+        account_id: 'acct-1'
+      })
+
+      vi.mocked(supabaseModule.supabase.from).mockImplementation((table: string) => {
+        if (table === 'vw_budget_categories') {
+          return categoryBuilder as any
+        }
+        if (table === 'transactions') {
+          return updateBuilder as any
+        }
+        return createMockQueryBuilder() as any
+      })
+
+      vi.mocked(budgetCategoriesService.getCategory).mockResolvedValue({
+        id: 'cat-1',
+        accountId: 'acct-1',
+        name: 'Install',
+        slug: 'install',
+        isArchived: false,
+        metadata: { itemizationEnabled: false },
+        createdAt: new Date(),
+        updatedAt: new Date()
+      })
+
+      await transactionService.updateTransaction('acct-1', 'project-1', 'tx-1', {
+        categoryId: 'cat-1',
+        needsReview: true
+      })
+
+      expect(capturedUpdate.needs_review).toBe(false)
     })
   })
 
