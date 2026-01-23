@@ -28,7 +28,9 @@ vi.mock('../networkStatusService', () => ({
 
 // Mock accountPresetsService
 vi.mock('../accountPresetsService', () => ({
-  getBudgetCategoryOrder: vi.fn().mockResolvedValue([])
+  getBudgetCategoryOrder: vi.fn().mockResolvedValue([]),
+  getDefaultCategory: vi.fn().mockResolvedValue(null),
+  setDefaultCategory: vi.fn().mockResolvedValue(undefined)
 }))
 
 // Mock offlineMetadataService
@@ -501,6 +503,35 @@ describe('budgetCategoriesService', () => {
       expect(result.successful).toContain('cat-2')
       expect(result.failed.length).toBeGreaterThan(0)
       expect(result.failed.some(f => f.categoryId === 'cat-1')).toBe(true)
+    })
+  })
+
+  describe('ensureDefaultBudgetCategories', () => {
+    it('sets itemization defaults on seeded categories', async () => {
+      vi.spyOn(budgetCategoriesService, 'getCategories').mockResolvedValue([])
+      const createSpy = vi
+        .spyOn(budgetCategoriesService, 'createCategory')
+        .mockResolvedValue({
+          id: 'cat-id',
+          accountId: 'test-account-id',
+          name: 'Furnishings',
+          slug: 'furnishings',
+          isArchived: false,
+          metadata: null,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        } as any)
+
+      await budgetCategoriesService.ensureDefaultBudgetCategories('test-account-id')
+
+      const metadataCalls = createSpy.mock.calls.map((call) => call[2])
+      expect(metadataCalls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ itemizationEnabled: true }),
+          expect.objectContaining({ itemizationEnabled: false })
+        ])
+      )
+      expect(createSpy).toHaveBeenCalledTimes(4)
     })
   })
 })

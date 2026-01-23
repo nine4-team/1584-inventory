@@ -113,6 +113,31 @@ describe('AddTransaction - Category Selection', () => {
     expect((categorySelect as HTMLSelectElement).value).toBe('cat-1')
   })
 
+  it('hides transaction items when itemization is disabled', async () => {
+    const user = userEvent.setup()
+    const disabledCategories = [
+      { ...mockCategories[0], metadata: { itemizationEnabled: false } }
+    ]
+    vi.mocked(budgetCategoriesService.getCategories).mockResolvedValue(disabledCategories)
+
+    render(
+      <Wrapper>
+        <AddTransaction />
+      </Wrapper>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Budget Category/)).toBeInTheDocument()
+    })
+
+    const categorySelect = screen.getByLabelText(/Budget Category/)
+    await user.selectOptions(categorySelect, disabledCategories[0].id)
+
+    await waitFor(() => {
+      expect(screen.queryByText('Transaction Items')).not.toBeInTheDocument()
+    })
+  })
+
   it('should validate category belongs to account', async () => {
     // This test verifies that the service enforces account scoping
     // The actual validation happens in the service layer

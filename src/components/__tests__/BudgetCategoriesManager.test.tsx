@@ -148,6 +148,36 @@ describe('BudgetCategoriesManager', () => {
     })
   })
 
+  it('should toggle itemization setting', async () => {
+    const user = userEvent.setup()
+    const updatedCategory = {
+      ...mockCategories[0],
+      metadata: { itemizationEnabled: false }
+    }
+
+    vi.mocked(budgetCategoriesService.updateCategory).mockResolvedValue(updatedCategory)
+    vi.mocked(budgetCategoriesService.getCategories).mockResolvedValue(mockCategories.filter(c => !c.isArchived))
+
+    render(<BudgetCategoriesManager />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Design Fee')).toBeInTheDocument()
+    })
+
+    const toggles = screen.getAllByRole('checkbox')
+    await user.click(toggles[0])
+
+    await waitFor(() => {
+      expect(budgetCategoriesService.updateCategory).toHaveBeenCalledWith(
+        'account-1',
+        'cat-1',
+        expect.objectContaining({
+          metadata: expect.objectContaining({ itemizationEnabled: false })
+        })
+      )
+    })
+  })
+
   it('should archive a category', async () => {
     const user = userEvent.setup()
     const archivedCategory = { ...mockCategories[0], isArchived: true }
