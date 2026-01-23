@@ -1337,6 +1337,19 @@ export default function TransactionItemsList({
               />
             </div>
           </div>
+          {items.length > 0 && showSelectionControls && (
+            <div className="mt-2 flex justify-start">
+              <label className="flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 h-4 w-4"
+                  onChange={() => toggleSelectAll()}
+                  checked={selectedItemIds.size === filteredItems.length && filteredItems.length > 0}
+                />
+                <span className="ml-2 text-sm font-medium text-gray-700">Select all</span>
+              </label>
+            </div>
+          )}
           {bulkDeleteError && (
             <p className="mt-2 text-sm text-red-600">{bulkDeleteError}</p>
           )}
@@ -1463,7 +1476,7 @@ export default function TransactionItemsList({
             <div className="text-sm text-gray-600">
               Total Items: {filteredItems.length}{filteredItems.length !== items.length ? ` of ${items.length}` : ''}
             </div>
-            <div className="text-lg font-semibold text-gray-900">
+            <div className="text-sm font-semibold text-gray-900">
               Calculated Subtotal: {formatCurrency(
                 totalAmount || filteredItems.reduce((sum, item) => {
                   const price = item.projectPrice || item.purchasePrice || item.marketValue || '0'
@@ -1472,20 +1485,6 @@ export default function TransactionItemsList({
                 }, 0).toString()
               )}
             </div>
-          </div>
-        )}
-
-        {items.length > 0 && showSelectionControls && (
-          <div className="flex justify-end pt-3">
-            <label className="flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 h-4 w-4"
-                onChange={() => toggleSelectAll()}
-                checked={selectedItemIds.size === filteredItems.length && filteredItems.length > 0}
-              />
-              <span className="ml-2 text-sm font-medium text-gray-700">Select all</span>
-            </label>
           </div>
         )}
       </div>
