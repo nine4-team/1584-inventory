@@ -457,12 +457,12 @@ export const budgetCategoriesService = {
       // Get existing non-archived categories
       const existingCategories = await this.getCategories(accountId, false, { mode: 'auto' })
       
-      // Define the four required default categories
+      // Define the four required default categories with itemization settings
       const defaultCategories = [
-        { name: 'Furnishings', slug: 'furnishings' },
-        { name: 'Install', slug: 'install' },
-        { name: 'Design Fee', slug: 'design-fee' },
-        { name: 'Storage & Receiving', slug: 'storage-receiving' }
+        { name: 'Furnishings', slug: 'furnishings', itemizationEnabled: true },
+        { name: 'Install', slug: 'install', itemizationEnabled: false },
+        { name: 'Design Fee', slug: 'design-fee', itemizationEnabled: false },
+        { name: 'Storage & Receiving', slug: 'storage-receiving', itemizationEnabled: false }
       ]
 
       // Check which defaults are missing
@@ -484,7 +484,10 @@ export const budgetCategoriesService = {
             const created = await this.createCategory(
               accountId,
               category.name,
-              { is_default: true }
+              { 
+                is_default: true,
+                itemizationEnabled: category.itemizationEnabled !== undefined ? category.itemizationEnabled : true
+              }
             )
             
             // Track furnishings category ID for setting as default

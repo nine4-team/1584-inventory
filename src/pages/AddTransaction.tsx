@@ -31,6 +31,10 @@ import { useNetworkState } from '@/hooks/useNetworkState'
 import { getCachedTaxPresets, getCachedVendorDefaults } from '@/services/offlineMetadataService'
 import { loadTransactionItemsWithReconcile } from '@/utils/hydrationHelpers'
 import { getGlobalQueryClient } from '@/utils/queryClient'
+import { budgetCategoriesService } from '@/services/budgetCategoriesService'
+import { BudgetCategory } from '@/types'
+import { getItemizationEnabled } from '@/utils/categoryItemization'
+import { AlertCircle } from 'lucide-react'
 
 export default function AddTransaction() {
   const { id, projectId: routeProjectId } = useParams<{ id?: string; projectId?: string }>()
@@ -154,6 +158,37 @@ export default function AddTransaction() {
 
   const [isCustomSource, setIsCustomSource] = useState(false)
   const [availableVendors, setAvailableVendors] = useState<string[]>([])
+  const [categories, setCategories] = useState<BudgetCategory[]>([])
+
+  // Load budget categories on mount
+  useEffect(() => {
+    if (!currentAccountId) return
+    let cancelled = false
+
+    const loadCategories = async () => {
+      try {
+        const loadedCategories = await budgetCategoriesService.getCategories(currentAccountId, false)
+        if (!cancelled) {
+          setCategories(loadedCategories)
+        }
+      } catch (error) {
+        console.error('Error loading budget categories:', error)
+        if (!cancelled) {
+          setCategories([])
+        }
+      }
+    }
+
+    loadCategories()
+
+    return () => {
+      cancelled = true
+    }
+  }, [currentAccountId])
+
+  // Get selected category and check itemization enabled
+  const selectedCategory = categories.find(c => c.id === formData.categoryId)
+  const itemizationEnabled = getItemizationEnabled(selectedCategory)
 
   // Load vendor defaults on mount
   useEffect(() => {
@@ -1018,28 +1053,30 @@ export default function AddTransaction() {
           </div>
 
           {/* Transaction Items */}
-          <div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">Transaction Items</h3>
-            <p className="text-sm text-gray-600 mb-4">
-              Add the items from your receipt now or later.
-            </p>
-            <TransactionItemsList
-              items={items}
-              onItemsChange={(newItems) => {
-                setItems(newItems)
-                // Clear items error if items are added
-                if (errors.items && newItems.length > 0) {
-                  setErrors(prev => ({ ...prev, items: undefined }))
-                }
-              }}
-              projectId={projectId}
-              projectName={projectName}
-              onImageFilesChange={handleImageFilesChange}
-            />
-            {errors.items && (
-              <p className="mt-1 text-sm text-red-600">{errors.items}</p>
-            )}
-          </div>
+          {itemizationEnabled ? (
+            <div>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">Transaction Items</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                Add the items from your receipt now or later.
+              </p>
+              <TransactionItemsList
+                items={items}
+                onItemsChange={(newItems) => {
+                  setItems(newItems)
+                  // Clear items error if items are added
+                  if (errors.items && newItems.length > 0) {
+                    setErrors(prev => ({ ...prev, items: undefined }))
+                  }
+                }}
+                projectId={projectId}
+                projectName={projectName}
+                onImageFilesChange={handleImageFilesChange}
+              />
+              {errors.items && (
+                <p className="mt-1 text-sm text-red-600">{errors.items}</p>
+              )}
+            </div>
+          ) : null}
 
           {/* Receipts */}
           <div>

@@ -2241,12 +2241,9 @@ export const transactionService = {
       console.debug('getTransactionCompleteness - failed to fetch lineage edges:', edgeErr)
     }
 
-    // Calculate items net total using the same logic as the UI's calculated subtotal:
-    // prefer projectPrice (if set) and fall back to purchasePrice.
+    // Calculate items net total using purchase price for audit consistency.
     const resolveItemPrice = (item: Item) => {
-      const candidate = item.projectPrice && item.projectPrice.trim() !== ''
-        ? item.projectPrice
-        : item.purchasePrice
+      const candidate = item.purchasePrice
       const parsed = parseFloat(candidate || '0')
       return isNaN(parsed) ? 0 : parsed
     }
@@ -2257,9 +2254,7 @@ export const transactionService = {
 
     const itemsCount = combinedItems.length
     const itemsMissingPriceCount = combinedItems.filter(item => {
-      const candidate = item.projectPrice && item.projectPrice.trim() !== ''
-        ? item.projectPrice
-        : item.purchasePrice
+      const candidate = item.purchasePrice
       if (!candidate || candidate.trim() === '') return true
       const parsed = parseFloat(candidate)
       return isNaN(parsed) || parsed === 0
@@ -2369,9 +2364,31 @@ export const transactionService = {
         // Canonical transactions are never flagged for review
         needs = false
       } else {
-        // Use canonical completeness computation for regular transactions
-        const completeness = await this.getTransactionCompleteness(accountId, projectId || '', transactionId)
-        needs = completeness.completenessStatus !== 'complete'
+        // Check if itemization is disabled for this transaction's category
+        // If disabled, never set needsReview to true
+        let itemizationEnabled = true // Default to enabled for backward compatibility
+        try {
+          const transaction = await this.getTransaction(accountId, projectId || '', transactionId)
+          if (transaction?.categoryId) {
+            const { budgetCategoriesService } = await import('./budgetCategoriesService')
+            const category = await budgetCategoriesService.getCategory(accountId, transaction.categoryId)
+            if (category?.metadata && category.metadata.itemizationEnabled !== undefined) {
+              itemizationEnabled = category.metadata.itemizationEnabled === true
+            }
+          }
+        } catch (categoryError) {
+          // Non-fatal: if category lookup fails, default to enabled
+          console.debug('Failed to check category itemization setting:', categoryError)
+        }
+
+        if (!itemizationEnabled) {
+          // Itemization is disabled for this category - never set needsReview to true
+          needs = false
+        } else {
+          // Use canonical completeness computation for regular transactions
+          const completeness = await this.getTransactionCompleteness(accountId, projectId || '', transactionId)
+          needs = completeness.completenessStatus !== 'complete'
+        }
       }
 
       // When offline, queue the needsReview update so it syncs later instead of hitting Supabase.
@@ -3015,6 +3032,25 @@ export const transactionService = {
           finalUpdates.taxRatePct = preset.rate
           // Remove subtotal when using presets
           finalUpdates.subtotal = undefined
+        }
+      }
+
+      // Guard: Never set needsReview=true if itemization is disabled for the category
+      if (finalUpdates.needsReview === true) {
+        // Get the category ID from updates or existing transaction
+        const categoryIdToCheck = finalUpdates.categoryId || (await this.getTransaction(accountId, _projectId, transactionId))?.categoryId
+        if (categoryIdToCheck) {
+          try {
+            const { budgetCategoriesService } = await import('./budgetCategoriesService')
+            const category = await budgetCategoriesService.getCategory(accountId, categoryIdToCheck)
+            if (category?.metadata && category.metadata.itemizationEnabled === false) {
+              // Itemization is disabled - force needsReview to false
+              finalUpdates.needsReview = false
+            }
+          } catch (categoryError) {
+            // Non-fatal: if category lookup fails, allow the update to proceed
+            console.debug('Failed to check category itemization setting in updateTransaction:', categoryError)
+          }
         }
       }
 
