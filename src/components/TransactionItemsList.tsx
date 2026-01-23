@@ -1457,7 +1457,11 @@ export default function TransactionItemsList({
             </div>
             <div className="text-lg font-semibold text-gray-900">
               Calculated Subtotal: {formatCurrency(
-                totalAmount || filteredItems.reduce((sum, item) => sum + (parseFloat(item.projectPrice || item.purchasePrice || '0') || 0), 0).toString()
+                totalAmount || filteredItems.reduce((sum, item) => {
+                  const price = item.projectPrice || item.purchasePrice || item.marketValue || '0'
+                  const parsed = Number.parseFloat(price)
+                  return sum + (Number.isFinite(parsed) ? parsed : 0)
+                }, 0).toString()
               )}
             </div>
           </div>

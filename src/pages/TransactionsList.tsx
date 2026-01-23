@@ -5,7 +5,7 @@ import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Transaction, TransactionCompleteness, BudgetCategory } from '@/types'
-import { transactionService } from '@/services/inventoryService'
+import { transactionService, isCanonicalSaleOrPurchaseTransactionId, computeCanonicalTransactionTotal } from '@/services/inventoryService'
 import type { Transaction as TransactionType } from '@/types'
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { useAccount } from '@/contexts/AccountContext'
@@ -204,6 +204,8 @@ export default function TransactionsList({ projectId: propProjectId, transaction
   const [isLoading, setIsLoading] = useState(!propTransactions)
   const [completenessById, setCompletenessById] = useState<Record<string, TransactionCompleteness | null>>({})
   const [budgetCategories, setBudgetCategories] = useState<BudgetCategory[]>([])
+  // Cache for computed totals: transactionId -> computed total string
+  const [computedTotalByTxId, setComputedTotalByTxId] = useState<Record<string, string>>({})
 
   // Search and filter state
   const [searchQuery, setSearchQuery] = useState<string>(() => searchParams.get('txSearch') ?? '')
@@ -429,6 +431,116 @@ export default function TransactionsList({ projectId: propProjectId, transaction
       }
     }
   }, [projectId, currentAccountId, propTransactions])
+
+  // Batch compute and self-heal canonical transaction totals
+  useEffect(() => {
+    const batchComputeAndHealTotals = async () => {
+      if (!currentAccountId || transactions.length === 0) return
+
+      // Identify canonical transactions
+      const canonicalTransactions = transactions.filter(tx =>
+        isCanonicalSaleOrPurchaseTransactionId(tx.transactionId)
+      )
+
+      if (canonicalTransactions.length === 0) return
+
+      // Batch compute totals for canonical transactions
+      const computePromises = canonicalTransactions.map(async (tx) => {
+        try {
+          const computed = await computeCanonicalTransactionTotal(
+            currentAccountId,
+            tx.transactionId,
+            Array.isArray(tx.itemIds) ? tx.itemIds : undefined
+          )
+          
+          // Only proceed if compute succeeded (non-null)
+          if (computed === null) {
+            console.log('⏭️ Skipped healing (compute failed) for canonical transaction:', tx.transactionId)
+            setComputedTotalByTxId(prev => {
+              if (!(tx.transactionId in prev)) return prev
+              const next = { ...prev }
+              delete next[tx.transactionId]
+              return next
+            })
+            return
+          }
+
+          // Store computed total in cache for immediate display
+          setComputedTotalByTxId(prev => ({
+            ...prev,
+            [tx.transactionId]: computed
+          }))
+
+          const storedAmount = parseFloat(tx.amount || '0').toFixed(2)
+          
+          // Only heal if computed total differs from stored amount
+          if (computed !== storedAmount) {
+            console.log('🔧 Canonical transaction total mismatch in list:', {
+              transactionId: tx.transactionId,
+              stored: storedAmount,
+              computed
+            })
+            
+            // Only heal if projectId is available
+            const resolvedProjectId = projectId || tx.projectId
+            if (!resolvedProjectId) {
+              console.log('⏭️ Skipped healing (missing projectId) for canonical transaction:', tx.transactionId)
+              return
+            }
+            
+            // Batch update stored amount (non-blocking)
+            try {
+              await transactionService.updateTransaction(
+                currentAccountId,
+                resolvedProjectId,
+                tx.transactionId,
+                { amount: computed }
+              )
+              console.log('✅ Self-healed canonical transaction amount in list:', tx.transactionId, computed)
+              
+              // Update local state
+              setTransactions(prev => prev.map(t =>
+                t.transactionId === tx.transactionId
+                  ? { ...t, amount: computed }
+                  : t
+              ))
+              
+              // Clear cache entry once stored amount matches computed value
+              setComputedTotalByTxId(prev => {
+                const next = { ...prev }
+                delete next[tx.transactionId]
+                return next
+              })
+            } catch (healError) {
+              console.warn('⚠️ Failed to self-heal canonical transaction amount in list:', tx.transactionId, healError)
+            }
+          } else {
+            // Stored amount matches computed - clear cache entry
+            setComputedTotalByTxId(prev => {
+              const next = { ...prev }
+              delete next[tx.transactionId]
+              return next
+            })
+          }
+        } catch (error) {
+          console.warn('⚠️ Failed to compute canonical transaction total in list:', tx.transactionId, error)
+          setComputedTotalByTxId(prev => {
+            if (!(tx.transactionId in prev)) return prev
+            const next = { ...prev }
+            delete next[tx.transactionId]
+            return next
+          })
+        }
+      })
+
+      // Run computations in parallel but don't block UI
+      Promise.all(computePromises).catch(err => {
+        console.warn('⚠️ Batch canonical total computation failed:', err)
+      })
+    }
+
+    batchComputeAndHealTotals()
+  }, [transactions, currentAccountId, projectId])
 
   // Load completeness metrics for each transaction to show "Missing items" badge
   useEffect(() => {
@@ -1252,7 +1364,13 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                     <div className="space-y-2">
                       {/* Details row - Price, payment method, date */}
                       <div className="flex items-center flex-wrap gap-x-4 gap-y-1 text-sm text-gray-500">
-                        <span className="font-medium text-gray-700">{formatCurrency(transaction.amount)}</span>
+                        <span className="font-medium text-gray-700">
+                          {formatCurrency(
+                            isCanonicalSaleOrPurchaseTransactionId(transaction.transactionId) && computedTotalByTxId[transaction.transactionId]
+                              ? computedTotalByTxId[transaction.transactionId]
+                              : transaction.amount
+                          )}
+                        </span>
                         <span className="hidden sm:inline">•</span>
                         <span className="font-medium text-gray-700 capitalize">{transaction.paymentMethod}</span>
                         <span className="hidden sm:inline">•</span>
