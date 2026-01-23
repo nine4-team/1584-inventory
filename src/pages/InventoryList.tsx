@@ -1416,8 +1416,8 @@ export default function InventoryList({ projectId, projectName, items: propItems
         </div>
       ) : (
         !isLoading && !error && (
-          <div ref={itemListContainerRef} className="bg-white shadow overflow-visible sm:overflow-hidden sm:rounded-md" style={{ paddingBottom: selectedItems.size > 0 ? '80px' : '0' }}>
-            <ul className="space-y-3">
+          <div ref={itemListContainerRef} className="bg-white overflow-visible sm:overflow-hidden sm:rounded-md" style={{ paddingBottom: selectedItems.size > 0 ? '80px' : '0' }}>
+            <ul className="space-y-3 pb-3">
               {groupedItems.map(({ groupKey, items: groupItems }, groupIndex) => {
                 // Single item - render directly
                 if (groupItems.length === 1) {

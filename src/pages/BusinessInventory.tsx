@@ -1978,8 +1978,8 @@ export default function BusinessInventory() {
                   </p>
                 </div>
               ) : (
-                <div className="bg-white shadow overflow-hidden sm:rounded-md">
-                  <ul className="divide-y divide-gray-200">
+                <div className="bg-white overflow-hidden sm:rounded-md -mx-6">
+                  <ul className="space-y-3 pb-3">
                     {filteredTransactions.map((transaction) => (
                       <li key={transaction.transactionId} className="relative">
                         <a
@@ -1999,7 +1999,7 @@ export default function BusinessInventory() {
                             handleTransactionNavigate(transaction.transactionId)
                           }}
                         >
-                          <div className="block bg-gray-50 transition-colors duration-200 hover:bg-gray-100">
+                          <div className="block bg-gray-50 border border-gray-200 rounded-lg transition-colors duration-200 hover:bg-gray-100">
                             <div className="px-4 py-4 sm:px-6">
                             {/* Top row: Header with source and status */}
                             <div className="flex items-center justify-between mb-3">
