@@ -1145,7 +1145,7 @@ export default function TransactionItemsList({
           </div>
         </div>
       )}
-      {items.length > 0 && showSelectionControls && (
+      {showSelectionControls && (
         <div className={`z-10 bg-white border-b border-gray-200 py-3 mb-4 ${shouldStick ? 'sticky top-0' : ''}`}>
           <div className="flex flex-wrap items-center gap-3">
             {/* Add Item Button */}
