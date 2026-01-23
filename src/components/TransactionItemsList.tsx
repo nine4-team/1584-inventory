@@ -1427,11 +1427,6 @@ export default function TransactionItemsList({
                           <span className="font-medium">SKU: {firstItem.sku}</span>
                         </div>
                       )}
-                      {firstItem.marketValue && (
-                        <div>
-                          <span className="font-medium">Market Value:</span> ${firstItem.marketValue}
-                        </div>
-                      )}
                     </div>
 
                     {firstItem.notes && (
