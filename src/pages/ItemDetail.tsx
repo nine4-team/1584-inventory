@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { ArrowLeft, Bookmark, QrCode, FileText, ImagePlus, X, RefreshCw } from 'lucide-react'
-import { useParams, useSearchParams } from 'react-router-dom'
+import { ArrowLeft, Bookmark, QrCode, FileText, ImagePlus, X, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import ContextBackLink from '@/components/ContextBackLink'
 import { Item, ItemImage, ItemDisposition, Transaction, Project } from '@/types'
@@ -38,6 +38,7 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
   const { id, projectId: routeProjectId, itemId } = useParams<{ id?: string; projectId?: string; itemId?: string }>()
   const ENABLE_QR = import.meta.env.VITE_ENABLE_QR === 'true'
   const navigate = useStackedNavigate()
+  const rawNavigate = useNavigate()
   const { currentAccountId } = useAccount()
   const [searchParams] = useSearchParams()
   const [item, setItem] = useState<Item | null>(null)
@@ -593,7 +594,7 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
     return itemProjectId
   }, [projectId, itemProjectId])
 
-  const { refreshCollections: refreshRealtimeCollections } = useProjectRealtime(derivedRealtimeProjectId)
+  const { refreshCollections: refreshRealtimeCollections, items: realtimeItems } = useProjectRealtime(derivedRealtimeProjectId)
   const refreshRealtimeAfterWrite = useCallback(
     () => {
       if (!derivedRealtimeProjectId) return Promise.resolve()
@@ -604,6 +605,169 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
     },
     [derivedRealtimeProjectId, refreshRealtimeCollections]
   )
+
+  // Navigation state for next/previous items
+  const [allItems, setAllItems] = useState<Item[]>([])
+  const [currentIndex, setCurrentIndex] = useState<number>(-1)
+  const [isLoadingNavigation, setIsLoadingNavigation] = useState(false)
+
+  // Parse filter and sort from URL params (matching InventoryList logic)
+  const filterMode = useMemo(() => {
+    const param = searchParams.get('itemFilter')
+    const validModes = ['all', 'bookmarked', 'from-inventory', 'to-return', 'returned', 'no-sku', 'no-description', 'no-project-price', 'no-image', 'no-transaction']
+    return validModes.includes(param || '') ? param as typeof validModes[number] : 'all'
+  }, [searchParams])
+  
+  const sortMode = useMemo(() => {
+    const param = searchParams.get('itemSort')
+    return param === 'alphabetical' ? 'alphabetical' : 'creationDate'
+  }, [searchParams])
+  
+  const searchQuery = useMemo(() => {
+    return searchParams.get('itemSearch') || ''
+  }, [searchParams])
+
+  // Helper function to check if a money string is non-empty (matching InventoryList logic)
+  const hasNonEmptyMoneyString = (value: string | null | undefined): boolean => {
+    if (!value) return false
+    const trimmed = value.trim()
+    if (!trimmed) return false
+    const parsed = parseFloat(trimmed)
+    return !isNaN(parsed) && parsed !== 0
+  }
+
+  // Apply same filtering and sorting as InventoryList
+  const filteredAndSortedItems = useMemo(() => {
+    return allItems.filter(item => {
+      // Apply search filter
+      const query = searchQuery.toLowerCase().trim()
+      const normalizedQuery = query.replace(/[^a-z0-9]/g, '')
+      const matchesSearch = !query ||
+        (item.description || '').toLowerCase().includes(query) ||
+        (item.source || '').toLowerCase().includes(query) ||
+        (item.sku || '').toLowerCase().includes(query) ||
+        (normalizedQuery && (item.sku || '').toLowerCase().replace(/[^a-z0-9]/g, '').includes(normalizedQuery)) ||
+        (item.paymentMethod || '').toLowerCase().includes(query) ||
+        (item.space || '').toLowerCase().includes(query)
+
+      // Apply filter based on filterMode
+      let matchesFilter = false
+      switch (filterMode) {
+        case 'all':
+          matchesFilter = true
+          break
+        case 'bookmarked':
+          matchesFilter = item.bookmark
+          break
+        case 'no-sku':
+          matchesFilter = !item.sku?.trim()
+          break
+        case 'no-description':
+          matchesFilter = !item.description?.trim()
+          break
+        case 'no-project-price':
+          matchesFilter = !hasNonEmptyMoneyString(item.projectPrice)
+          break
+        case 'no-image':
+          matchesFilter = !item.images || item.images.length === 0
+          break
+        case 'no-transaction':
+          matchesFilter = !item.transactionId
+          break
+        case 'from-inventory':
+          matchesFilter = item.source === 'Inventory'
+          break
+        case 'to-return':
+          matchesFilter = item.disposition === 'to return'
+          break
+        case 'returned':
+          matchesFilter = item.disposition === 'returned'
+          break
+        default:
+          matchesFilter = true
+      }
+
+      return matchesSearch && matchesFilter
+    }).sort((a, b) => {
+      if (sortMode === 'alphabetical') {
+        const aDesc = a.description || ''
+        const bDesc = b.description || ''
+        return aDesc.localeCompare(bDesc)
+      } else if (sortMode === 'creationDate') {
+        const aDate = new Date(a.dateCreated || 0).getTime()
+        const bDate = new Date(b.dateCreated || 0).getTime()
+        return bDate - aDate // Most recent first
+      }
+      return 0
+    })
+  }, [allItems, filterMode, sortMode, searchQuery])
+
+  // Update current index based on filtered/sorted items
+  useEffect(() => {
+    if (filteredAndSortedItems.length > 0 && actualItemId) {
+      const index = filteredAndSortedItems.findIndex(i => i.itemId === actualItemId)
+      setCurrentIndex(index)
+    }
+  }, [filteredAndSortedItems, actualItemId])
+
+  // Fetch items list for navigation
+  useEffect(() => {
+    if (!currentAccountId || !item) return
+    if (isBusinessInventoryItem) {
+      // For business inventory, we'd need to fetch from business inventory context
+      // For now, skip navigation for business inventory items in this component
+      return
+    }
+
+    const fetchItemsForNavigation = async () => {
+      if (!projectId && !item.projectId) return
+      const effectiveProjectId = projectId || item.projectId
+      if (!effectiveProjectId) return
+
+      setIsLoadingNavigation(true)
+      try {
+        const items = await unifiedItemsService.getItemsByProject(currentAccountId, effectiveProjectId)
+        setAllItems(items)
+      } catch (error) {
+        console.error('Failed to fetch items for navigation:', error)
+      } finally {
+        setIsLoadingNavigation(false)
+      }
+    }
+
+    fetchItemsForNavigation()
+  }, [currentAccountId, item, projectId, isBusinessInventoryItem])
+
+  // Also use realtime items if available
+  useEffect(() => {
+    if (realtimeItems && realtimeItems.length > 0 && projectId) {
+      setAllItems(realtimeItems)
+    }
+  }, [realtimeItems, projectId])
+
+  const nextItem = currentIndex >= 0 && currentIndex < filteredAndSortedItems.length - 1 ? filteredAndSortedItems[currentIndex + 1] : null
+  const previousItem = currentIndex > 0 ? filteredAndSortedItems[currentIndex - 1] : null
+
+  const handleNavigateToItem = (targetItem: Item) => {
+    if (!targetItem) return
+    const targetProjectId = targetItem.projectId || projectId
+    if (targetProjectId) {
+      // Preserve filter/sort/search params when navigating between items
+      const preservedParams: Record<string, string> = {}
+      const returnTo = searchParams.get('returnTo')
+      const itemFilter = searchParams.get('itemFilter')
+      const itemSort = searchParams.get('itemSort')
+      const itemSearch = searchParams.get('itemSearch')
+      if (returnTo) preservedParams.returnTo = returnTo
+      if (itemFilter) preservedParams.itemFilter = itemFilter
+      if (itemSort) preservedParams.itemSort = itemSort
+      if (itemSearch) preservedParams.itemSearch = itemSearch
+      
+      // Use replace: true so next/previous navigation doesn't add to history stack
+      // This way the back button goes back to the project list, not through all items
+      rawNavigate(buildContextUrl(projectItemDetail(targetProjectId, targetItem.itemId), preservedParams), { replace: true })
+    }
+  }
 
   const handleRefreshItem = useCallback(async () => {
     if (isRefreshing) return
@@ -1491,6 +1655,56 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
             </div>
           </div>
           {content}
+          
+          {/* Sticky bottom navigation bar */}
+          {!onCloseHandler && item && (nextItem || previousItem) && (
+            <div className="sticky bottom-0 bg-white border-t border-gray-200 z-10 px-4 py-1.5 shadow-md">
+              <div className="max-w-7xl mx-auto">
+                {(filterMode !== 'all' || sortMode !== 'creationDate' || searchQuery.trim()) && (
+                  <div className="text-[10px] text-gray-500 mb-1 text-center">
+                    {[
+                      searchQuery.trim() ? `Search: "${searchQuery.trim()}"` : null,
+                      filterMode !== 'all' ? `Filter: ${filterMode}` : null,
+                      sortMode !== 'creationDate' ? `Sort: ${sortMode}` : null
+                    ].filter(Boolean).join(' / ')}
+                  </div>
+                )}
+                <div className="flex items-center justify-between">
+                <button
+                  onClick={() => previousItem && handleNavigateToItem(previousItem)}
+                  disabled={!previousItem}
+                  className={`inline-flex items-center px-3 py-1 text-xs font-medium rounded transition-colors ${
+                    previousItem
+                      ? 'text-gray-700 bg-gray-100 hover:bg-gray-200'
+                      : 'text-gray-400 bg-gray-50 cursor-not-allowed'
+                  }`}
+                >
+                  <ChevronLeft className="h-3.5 w-3.5 mr-0.5" />
+                  Previous
+                </button>
+                
+                <span className="text-xs text-gray-500">
+                  {currentIndex >= 0 && filteredAndSortedItems.length > 0
+                    ? `${currentIndex + 1} of ${filteredAndSortedItems.length}`
+                    : ''}
+                </span>
+                
+                <button
+                  onClick={() => nextItem && handleNavigateToItem(nextItem)}
+                  disabled={!nextItem}
+                  className={`inline-flex items-center px-3 py-1 text-xs font-medium rounded transition-colors ${
+                    nextItem
+                      ? 'text-gray-700 bg-gray-100 hover:bg-gray-200'
+                      : 'text-gray-400 bg-gray-50 cursor-not-allowed'
+                  }`}
+                >
+                  Next
+                  <ChevronRight className="h-3.5 w-3.5 ml-0.5" />
+                </button>
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

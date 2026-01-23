@@ -50,8 +50,11 @@ export default function ItemActionsMenu({
   onDelete
 }: ItemActionsMenuProps) {
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const menuContentRef = useRef<HTMLDivElement | null>(null)
   const [isOpen, setIsOpen] = useState(false)
   const [openSubmenu, setOpenSubmenu] = useState<SubmenuKey | null>(null)
+  const [menuPosition, setMenuPosition] = useState<'bottom' | 'top'>('bottom')
   const { isOnline } = useNetworkState()
 
   const isInBusinessInventory = !itemProjectId
@@ -108,6 +111,47 @@ export default function ItemActionsMenu({
     if (!isTiedToTransaction) return 'Item is not tied to a transaction.'
     return null
   }, [onRemoveFromTransaction, isTiedToTransaction])
+
+  // Calculate menu position when it opens
+  useEffect(() => {
+    if (!isOpen || !triggerRef.current || !menuContentRef.current) return
+
+    const calculatePosition = () => {
+      if (!triggerRef.current || !menuContentRef.current) return
+      
+      const triggerRect = triggerRef.current.getBoundingClientRect()
+      const menuHeight = menuContentRef.current.offsetHeight || 300 // fallback estimate
+      const viewportHeight = window.innerHeight
+      const spaceBelow = viewportHeight - triggerRect.bottom
+      const spaceAbove = triggerRect.top
+      const buffer = 16 // Add small buffer for better UX
+
+      // If there's not enough space below but enough above, position menu above
+      // Also check if space above is significantly more than space below
+      if ((spaceBelow < menuHeight + buffer && spaceAbove > menuHeight + buffer) ||
+          (spaceAbove > spaceBelow && spaceAbove > menuHeight + buffer)) {
+        setMenuPosition('top')
+      } else {
+        setMenuPosition('bottom')
+      }
+    }
+
+    // Calculate position after menu is rendered
+    // Use requestAnimationFrame to ensure DOM is updated
+    const rafId = requestAnimationFrame(() => {
+      calculatePosition()
+    })
+    
+    // Recalculate on scroll/resize
+    window.addEventListener('scroll', calculatePosition, true)
+    window.addEventListener('resize', calculatePosition)
+
+    return () => {
+      cancelAnimationFrame(rafId)
+      window.removeEventListener('scroll', calculatePosition, true)
+      window.removeEventListener('resize', calculatePosition)
+    }
+  }, [isOpen, openSubmenu])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -388,6 +432,7 @@ export default function ItemActionsMenu({
   return (
     <div className="relative" ref={menuRef}>
       <button
+        ref={triggerRef}
         type="button"
         onClick={(e) => {
           e.preventDefault()
@@ -405,7 +450,12 @@ export default function ItemActionsMenu({
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-200 rounded-md shadow-lg z-50">
+        <div
+          ref={menuContentRef}
+          className={`absolute right-0 w-56 bg-white border border-gray-200 rounded-md shadow-lg z-50 ${
+            menuPosition === 'top' ? 'bottom-full mb-2' : 'top-full mt-2'
+          }`}
+        >
           {menuItems}
         </div>
       )}

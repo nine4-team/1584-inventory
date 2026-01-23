@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
 import ContextLink from '@/components/ContextLink'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
-import { ArrowLeft, Package, ImagePlus, FileText, RefreshCw, Bookmark } from 'lucide-react'
+import { ArrowLeft, Package, ImagePlus, FileText, RefreshCw, Bookmark, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Item, Project, ItemDisposition, Transaction } from '@/types'
 import { unifiedItemsService, projectService, transactionService } from '@/services/inventoryService'
 import { formatDate } from '@/utils/dateUtils'
@@ -27,7 +27,9 @@ import { supabase } from '@/services/supabase'
 
 export default function BusinessInventoryItemDetail() {
   const { id } = useParams<{ id: string }>()
+  const [searchParams] = useSearchParams()
   const navigate = useStackedNavigate()
+  const rawNavigate = useNavigate()
   const { currentAccountId } = useAccount()
   const { items: snapshotItems, isLoading: realtimeLoading, refreshCollections } = useBusinessInventoryRealtime()
   const { buildContextUrl } = useNavigationContext()
@@ -37,6 +39,117 @@ export default function BusinessInventoryItemDetail() {
     if (!id) return null
     return snapshotItems.find(item => item.itemId === id) ?? null
   }, [id, snapshotItems])
+
+  // Parse filter and sort from URL params (matching BusinessInventory.tsx logic)
+  const filterMode = useMemo(() => {
+    const param = searchParams.get('bizItemFilter')
+    const validModes = ['all', 'bookmarked', 'no-sku', 'no-description', 'no-project-price', 'no-image', 'no-transaction']
+    return validModes.includes(param || '') ? param as typeof validModes[number] : 'all'
+  }, [searchParams])
+  
+  const sortMode = useMemo(() => {
+    const param = searchParams.get('bizItemSort')
+    return param === 'alphabetical' ? 'alphabetical' : 'creationDate'
+  }, [searchParams])
+  
+  const inventorySearchQuery = useMemo(() => {
+    return searchParams.get('bizItemSearch') || ''
+  }, [searchParams])
+
+  // Helper function to check if a money string is non-empty
+  const hasNonEmptyMoneyString = (value?: string | number | null) => {
+    if (value === undefined || value === null) return false
+    if (typeof value === 'number') return Number.isFinite(value)
+    if (typeof value !== 'string') return false
+    return value.trim().length > 0 && Number.isFinite(Number.parseFloat(value))
+  }
+
+  // Apply same filtering and sorting as BusinessInventory.tsx
+  const filteredAndSortedItems = useMemo(() => {
+    return snapshotItems.filter(item => {
+      // Apply search filter
+      const query = (inventorySearchQuery || '').toLowerCase().trim()
+      const matchesSearch = !query ||
+        (item.description || '').toLowerCase().includes(query) ||
+        (item.sku || '').toLowerCase().includes(query) ||
+        (item.source || '').toLowerCase().includes(query) ||
+        (item.paymentMethod || '').toLowerCase().includes(query) ||
+        (item.businessInventoryLocation || '').toLowerCase().includes(query)
+
+      // Apply filter based on filterMode
+      let matchesFilter = false
+      switch (filterMode) {
+        case 'all':
+          matchesFilter = true
+          break
+        case 'bookmarked':
+          matchesFilter = !!item.bookmark
+          break
+        case 'no-sku':
+          matchesFilter = !item.sku?.trim()
+          break
+        case 'no-description':
+          matchesFilter = !item.description?.trim()
+          break
+        case 'no-project-price':
+          matchesFilter = !hasNonEmptyMoneyString(item.projectPrice)
+          break
+        case 'no-image':
+          matchesFilter = !item.images || item.images.length === 0
+          break
+        case 'no-transaction':
+          matchesFilter = !item.transactionId
+          break
+        default:
+          matchesFilter = true
+      }
+
+      return matchesSearch && matchesFilter
+    }).sort((a, b) => {
+      if (sortMode === 'alphabetical') {
+        const aDesc = a.description || ''
+        const bDesc = b.description || ''
+        return aDesc.localeCompare(bDesc)
+      } else if (sortMode === 'creationDate') {
+        const aDate = new Date(a.dateCreated || 0).getTime()
+        const bDate = new Date(b.dateCreated || 0).getTime()
+        return bDate - aDate // Most recent first
+      }
+      return 0
+    })
+  }, [snapshotItems, filterMode, sortMode, inventorySearchQuery])
+
+  // Navigation state for next/previous items
+  const [currentIndex, setCurrentIndex] = useState<number>(-1)
+
+  // Update current index when filtered/sorted items or id changes
+  useEffect(() => {
+    if (filteredAndSortedItems.length > 0 && id) {
+      const index = filteredAndSortedItems.findIndex(i => i.itemId === id)
+      setCurrentIndex(index)
+    }
+  }, [filteredAndSortedItems, id])
+
+  const nextItem = currentIndex >= 0 && currentIndex < filteredAndSortedItems.length - 1 ? filteredAndSortedItems[currentIndex + 1] : null
+  const previousItem = currentIndex > 0 ? filteredAndSortedItems[currentIndex - 1] : null
+
+  const handleNavigateToItem = (targetItem: Item) => {
+    if (!targetItem) return
+    // Preserve filter/sort/search params when navigating between items
+    const preservedParams: Record<string, string> = {}
+    const returnTo = searchParams.get('returnTo')
+    const bizItemFilter = searchParams.get('bizItemFilter')
+    const bizItemSort = searchParams.get('bizItemSort')
+    const bizItemSearch = searchParams.get('bizItemSearch')
+    if (returnTo) preservedParams.returnTo = returnTo
+    if (bizItemFilter) preservedParams.bizItemFilter = bizItemFilter
+    if (bizItemSort) preservedParams.bizItemSort = bizItemSort
+    if (bizItemSearch) preservedParams.bizItemSearch = bizItemSearch
+    
+    // Use replace: true so next/previous navigation doesn't add to history stack
+    // This way the back button goes back to the business inventory list, not through all items
+    rawNavigate(buildContextUrl(`/business-inventory/${targetItem.itemId}`, preservedParams), { replace: true })
+  }
   const [item, setItem] = useState<Item | null>(null)
   const [isUpdating, setIsUpdating] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -972,6 +1085,56 @@ export default function BusinessInventoryItemDetail() {
                   {isUpdating ? 'Allocating...' : 'Allocate Item'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sticky bottom navigation bar */}
+      {item && (nextItem || previousItem) && (
+        <div className="sticky bottom-0 bg-white border-t border-gray-200 z-10 px-4 py-1.5 shadow-md">
+          <div className="max-w-7xl mx-auto">
+            {(filterMode !== 'all' || sortMode !== 'creationDate' || inventorySearchQuery.trim()) && (
+              <div className="text-[10px] text-gray-500 mb-1 text-center">
+                {[
+                  inventorySearchQuery.trim() ? `Search: "${inventorySearchQuery.trim()}"` : null,
+                  filterMode !== 'all' ? `Filter: ${filterMode}` : null,
+                  sortMode !== 'creationDate' ? `Sort: ${sortMode}` : null
+                ].filter(Boolean).join(' / ')}
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+            <button
+              onClick={() => previousItem && handleNavigateToItem(previousItem)}
+              disabled={!previousItem}
+              className={`inline-flex items-center px-3 py-1 text-xs font-medium rounded transition-colors ${
+                previousItem
+                  ? 'text-gray-700 bg-gray-100 hover:bg-gray-200'
+                  : 'text-gray-400 bg-gray-50 cursor-not-allowed'
+              }`}
+            >
+              <ChevronLeft className="h-3.5 w-3.5 mr-0.5" />
+              Previous
+            </button>
+            
+            <span className="text-xs text-gray-500">
+              {currentIndex >= 0 && filteredAndSortedItems.length > 0
+                ? `${currentIndex + 1} of ${filteredAndSortedItems.length}`
+                : ''}
+            </span>
+            
+            <button
+              onClick={() => nextItem && handleNavigateToItem(nextItem)}
+              disabled={!nextItem}
+              className={`inline-flex items-center px-3 py-1 text-xs font-medium rounded transition-colors ${
+                nextItem
+                  ? 'text-gray-700 bg-gray-100 hover:bg-gray-200'
+                  : 'text-gray-400 bg-gray-50 cursor-not-allowed'
+              }`}
+            >
+              Next
+              <ChevronRight className="h-3.5 w-3.5 ml-0.5" />
+            </button>
             </div>
           </div>
         </div>
