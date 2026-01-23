@@ -177,7 +177,7 @@ export default function TransactionActionsMenu({
           <div className="py-1 pl-3">
             {canMoveToBusinessInventory && (
               renderMenuItem({
-                label: 'Move To Business Inventory',
+                label: 'Move to Business Inventory',
                 onClick: onMoveToBusinessInventory,
                 disabled: Boolean(moveToBusinessInventoryDisabledReason),
                 disabledReason: moveToBusinessInventoryDisabledReason
@@ -187,7 +187,7 @@ export default function TransactionActionsMenu({
               <>
                 {canMoveToBusinessInventory && <div className="my-1 border-t border-gray-200" />}
                 {renderMenuItem({
-                  label: 'Move To Project…',
+                  label: 'Move to Project…',
                   onClick: onMoveToProject,
                   disabled: Boolean(moveToProjectDisabledReason),
                   disabledReason: moveToProjectDisabledReason
