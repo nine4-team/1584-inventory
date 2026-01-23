@@ -21,10 +21,6 @@ export default function TransactionAudit({
   const [completeness, setCompleteness] = useState<TransactionCompleteness | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
-  // Filter out transaction types that don't require item attribution
-  const shouldShowAudit = transaction.transactionType !== 'Return' &&
-                          transaction.transactionType !== 'Internal Transfer'
-
   // Load completeness metrics
   useEffect(() => {
     const loadCompleteness = async () => {
@@ -61,10 +57,6 @@ export default function TransactionAudit({
 
     loadCompleteness()
   }, [currentAccountId, projectId, transaction.transactionId, transactionItems, transaction.amount, transaction.taxRatePct, transaction.subtotal])
-
-  if (!shouldShowAudit) {
-    return null
-  }
 
   if (isLoading || !completeness) {
     return (
