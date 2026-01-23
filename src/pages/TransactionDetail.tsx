@@ -29,7 +29,6 @@ import { useOfflineMediaTracker } from '@/hooks/useOfflineMediaTracker'
 import { formatDate, formatCurrency } from '@/utils/dateUtils'
 import { useToast } from '@/components/ui/ToastContext'
 import UploadActivityIndicator from '@/components/ui/UploadActivityIndicator'
-import TransactionItemForm from '@/components/TransactionItemForm'
 import TransactionItemsList from '@/components/TransactionItemsList'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
@@ -427,7 +426,6 @@ export default function TransactionDetail() {
     const inTransactionItemIds = new Set(itemsInTransaction.map(item => item.id))
     return itemRecords.filter(item => inTransactionItemIds.has(item.itemId))
   }, [itemRecords, itemsInTransaction])
-  const [isAddingItem, setIsAddingItem] = useState(false)
   const { showError, showSuccess } = useToast()
   const { showOfflineSaved } = useOfflineFeedback()
   const { isOnline } = useNetworkState()
@@ -1974,7 +1972,6 @@ export default function TransactionDetail() {
 
       await refreshTransactionItems()
       await refreshRealtimeAfterWrite()
-      setIsAddingItem(false)
       
       if (createResult.mode === 'offline') {
         showOfflineSaved(createResult.operationId)
@@ -2054,11 +2051,6 @@ export default function TransactionDetail() {
       console.error('Error updating item:', error)
       showError('Failed to update item. Please try again.')
     }
-  }
-
-  const handleCancelAddItem = () => {
-    setIsAddingItem(false)
-    setImageFilesMap(new Map())
   }
 
   // Convert transaction attachments to ItemImage format for the gallery (images only).
@@ -2543,41 +2535,15 @@ export default function TransactionDetail() {
                   <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600"></div>
                   <span className="ml-2 text-sm text-gray-600">Loading items...</span>
                 </div>
-              ) : items.length > 0 ? (
-            <div className="space-y-6">
-              {/* Current items in this transaction */}
-              {itemsInTransaction.length > 0 && (
-                <div>
-                  <TransactionItemsList
-                    items={itemsInTransaction}
-                    onItemsChange={() => {}}
-                    onAddItem={handleCreateItem}
-                      onAddExistingItems={() => setShowExistingItemsModal(true)}
-                    onUpdateItem={handleUpdateItem}
-                    onDuplicateItem={handleDuplicateTransactionItem}
-                    projectId={projectId}
-                    projectName={project?.name}
-                    onImageFilesChange={handleImageFilesChange}
-                    onDeleteItems={handleDeletePersistedItems}
-                    onRemoveFromTransaction={handleRemoveItemFromThisTransaction}
-                    onSellToBusiness={handleSellItemToBusinessInventory}
-                    onSellToProject={(itemId) => openItemProjectDialog(itemId, 'sell')}
-                    onMoveToBusiness={handleMoveItemToBusinessInventory}
-                    onMoveToProject={(itemId) => openItemProjectDialog(itemId, 'move')}
-                    containerId="transaction-items-container"
-                  />
-                </div>
-              )}
-
-              {/* Moved items section */}
-              {itemsMovedOut.length > 0 && (
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900 mb-3">Moved items</h3>
-                  <div className="opacity-60">
+              ) : (
+                <div className="space-y-6">
+                  {/* Current items in this transaction */}
+                  <div>
                     <TransactionItemsList
-                      items={itemsMovedOut}
+                      items={itemsInTransaction}
                       onItemsChange={() => {}}
                       onAddItem={handleCreateItem}
+                      onAddExistingItems={() => setShowExistingItemsModal(true)}
                       onUpdateItem={handleUpdateItem}
                       onDuplicateItem={handleDuplicateTransactionItem}
                       projectId={projectId}
@@ -2589,20 +2555,36 @@ export default function TransactionDetail() {
                       onSellToProject={(itemId) => openItemProjectDialog(itemId, 'sell')}
                       onMoveToBusiness={handleMoveItemToBusinessInventory}
                       onMoveToProject={(itemId) => openItemProjectDialog(itemId, 'move')}
-                      showSelectionControls={false}
+                      containerId="transaction-items-container"
                     />
                   </div>
+
+                  {/* Moved items section */}
+                  {itemsMovedOut.length > 0 && (
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-3">Moved items</h3>
+                      <div className="opacity-60">
+                        <TransactionItemsList
+                          items={itemsMovedOut}
+                          onItemsChange={() => {}}
+                          onAddItem={handleCreateItem}
+                          onUpdateItem={handleUpdateItem}
+                          onDuplicateItem={handleDuplicateTransactionItem}
+                          projectId={projectId}
+                          projectName={project?.name}
+                          onImageFilesChange={handleImageFilesChange}
+                          onDeleteItems={handleDeletePersistedItems}
+                          onRemoveFromTransaction={handleRemoveItemFromThisTransaction}
+                          onSellToBusiness={handleSellItemToBusinessInventory}
+                          onSellToProject={(itemId) => openItemProjectDialog(itemId, 'sell')}
+                          onMoveToBusiness={handleMoveItemToBusinessInventory}
+                          onMoveToProject={(itemId) => openItemProjectDialog(itemId, 'move')}
+                          showSelectionControls={false}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          ) : !isAddingItem ? null : (
-            <TransactionItemForm
-              onSave={handleCreateItem}
-              onCancel={handleCancelAddItem}
-              projectId={projectId}
-              projectName={project ? project.name : ''}
-              onImageFilesChange={handleImageFilesChange}
-            />
               )}
               {/* Sentinel element to detect when container is scrolled past */}
               <div id="transaction-items-sentinel" className="h-1" />
