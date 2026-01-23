@@ -2,6 +2,7 @@ import { ArrowLeft, Trash2, Image as ImageIcon, Package, RefreshCw } from 'lucid
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import ImageGallery from '@/components/ui/ImageGallery'
 import { TransactionImagePreview } from '@/components/ui/ImagePreview'
+import PinnedImageViewer from '@/components/ui/PinnedImageViewer'
 import { useParams } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
 import ContextLink from '@/components/ContextLink'
@@ -11,8 +12,11 @@ import {
   transactionService,
   projectService,
   unifiedItemsService,
+  integrationService,
+  isCanonicalTransactionId,
   isCanonicalSaleOrPurchaseTransactionId,
-  computeCanonicalTransactionTotal
+  computeCanonicalTransactionTotal,
+  SellItemToProjectError
 } from '@/services/inventoryService'
 import { budgetCategoriesService } from '@/services/budgetCategoriesService'
 import { lineageService } from '@/services/lineageService'
@@ -73,6 +77,7 @@ const getBudgetCategoryDisplayName = (transaction: Transaction, categories: Budg
 const buildDisplayItems = (items: Item[], movedOutItemIds: Set<string>): DisplayTransactionItem[] => {
   return items.map(item => ({
     id: item.itemId,
+    transactionId: item.transactionId ?? item.latestTransactionId ?? undefined,
     description: item.description || '',
     purchasePrice: item.purchasePrice?.toString() || '',
     projectPrice: item.projectPrice?.toString() || '',
@@ -121,6 +126,11 @@ export default function TransactionDetail() {
   const [selectedProjectId, setSelectedProjectId] = useState('')
   const [isUpdatingProject, setIsUpdatingProject] = useState(false)
   const [showProjectDialog, setShowProjectDialog] = useState(false)
+  const [showItemProjectDialog, setShowItemProjectDialog] = useState(false)
+  const [itemProjectDialogMode, setItemProjectDialogMode] = useState<'move' | 'sell'>('move')
+  const [itemProjectTargetId, setItemProjectTargetId] = useState<string | null>(null)
+  const [itemProjectSelectedId, setItemProjectSelectedId] = useState('')
+  const [isUpdatingItemProject, setIsUpdatingItemProject] = useState(false)
   const transactionRef = useRef<Transaction | null>(null)
   const derivedRealtimeProjectId = projectId || transaction?.projectId || null
   const { refreshCollections: refreshRealtimeCollections, items: realtimeProjectItems } = useProjectRealtime(derivedRealtimeProjectId)
@@ -183,6 +193,9 @@ export default function TransactionDetail() {
   const [showGallery, setShowGallery] = useState(false)
   const [galleryInitialIndex, setGalleryInitialIndex] = useState(0)
   const [showExistingItemsModal, setShowExistingItemsModal] = useState(false)
+  const [isImagePinned, setIsImagePinned] = useState(false)
+  const [pinnedImagePosition, setPinnedImagePosition] = useState({ x: 100, y: 100 })
+  const [pinnedImageSize, setPinnedImageSize] = useState({ width: 400, height: 600 })
   const [receiptUploadsInFlight, setReceiptUploadsInFlight] = useState(0)
   const [otherUploadsInFlight, setOtherUploadsInFlight] = useState(0)
   const isUploadingReceiptImages = receiptUploadsInFlight > 0
@@ -739,6 +752,24 @@ export default function TransactionDetail() {
     })),
     [projects, transaction?.projectId]
   )
+  const itemTargetRecord = useMemo(
+    () => itemRecords.find(item => item.itemId === itemProjectTargetId) ?? null,
+    [itemProjectTargetId, itemRecords]
+  )
+  const itemProjectOptions = useMemo(
+    () => projects.map(project => ({
+      id: project.id,
+      label: project.name,
+      disabled: project.id === itemTargetRecord?.projectId
+    })),
+    [projects, itemTargetRecord?.projectId]
+  )
+  const itemAssociateDisabledReason = itemTargetRecord?.transactionId
+    ? (isCanonicalTransactionId(itemTargetRecord.transactionId)
+      ? 'This item is tied to a Design Business Inventory transaction. You can’t change its project directly.'
+      : 'This item is tied to a transaction. Move the transaction to another project instead.')
+    : null
+  const itemAssociateDisabled = Boolean(itemAssociateDisabledReason) || loadingProjects || isUpdatingItemProject
 
   const canMoveToBusinessInventory = Boolean(transaction?.projectId)
   const canMoveToProject = projectOptions.length > 0
@@ -748,6 +779,159 @@ export default function TransactionDetail() {
     setSelectedProjectId(transaction.projectId || '')
     setShowProjectDialog(true)
   }, [transaction])
+
+  const openItemProjectDialog = useCallback((itemId: string, mode: 'move' | 'sell') => {
+    const item = itemRecords.find(record => record.itemId === itemId)
+    if (!item) {
+      showError('Item not found. Refresh and try again.')
+      return
+    }
+    setItemProjectTargetId(itemId)
+    setItemProjectDialogMode(mode)
+    setItemProjectSelectedId(item.projectId ?? '')
+    setShowItemProjectDialog(true)
+  }, [itemRecords, showError])
+
+  const handleMoveItemToBusinessInventory = useCallback(async (itemId: string) => {
+    if (!currentAccountId) return
+    const item = itemRecords.find(record => record.itemId === itemId)
+    if (!item || !item.projectId) return
+    if (item.transactionId) {
+      showError('This item is tied to a transaction. Move the transaction instead.')
+      return
+    }
+    try {
+      await integrationService.moveItemToBusinessInventory(currentAccountId, item.itemId, item.projectId)
+      await refreshTransactionItems()
+      await refreshRealtimeAfterWrite()
+      showSuccess('Moved to business inventory.')
+    } catch (error) {
+      console.error('Failed to move item to business inventory:', error)
+      showError('Failed to move item to business inventory. Please try again.')
+    }
+  }, [currentAccountId, itemRecords, refreshRealtimeAfterWrite, refreshTransactionItems, showError, showSuccess])
+
+  const handleSellItemToBusinessInventory = useCallback(async (itemId: string) => {
+    if (!currentAccountId) return
+    const item = itemRecords.find(record => record.itemId === itemId)
+    if (!item || !item.projectId) return
+    try {
+      const wasOffline = !isOnline
+      await integrationService.handleItemDeallocation(currentAccountId, item.itemId, item.projectId, 'inventory')
+      if (wasOffline) {
+        showOfflineSaved()
+        return
+      }
+      await refreshTransactionItems()
+      await refreshRealtimeAfterWrite()
+      showSuccess('Moved to business inventory.')
+    } catch (error) {
+      console.error('Failed to sell item to business inventory:', error)
+      showError('Failed to sell item to business inventory. Please try again.')
+    }
+  }, [currentAccountId, itemRecords, isOnline, refreshRealtimeAfterWrite, refreshTransactionItems, showError, showOfflineSaved, showSuccess])
+
+  const handleMoveItemToProject = useCallback(async () => {
+    if (!currentAccountId || !itemTargetRecord) return
+    if (!itemProjectSelectedId || itemProjectSelectedId === itemTargetRecord.projectId) {
+      setShowItemProjectDialog(false)
+      return
+    }
+    if (itemTargetRecord.transactionId) {
+      showError('This item is tied to a transaction. Move the transaction to another project instead.')
+      setShowItemProjectDialog(false)
+      return
+    }
+    setIsUpdatingItemProject(true)
+    try {
+      await unifiedItemsService.updateItem(currentAccountId, itemTargetRecord.itemId, {
+        projectId: itemProjectSelectedId
+      })
+      await refreshTransactionItems()
+      await refreshRealtimeAfterWrite()
+      showSuccess('Project association updated.')
+    } catch (error) {
+      console.error('Failed to move item to project:', error)
+      showError('Failed to move item to project. Please try again.')
+    } finally {
+      setIsUpdatingItemProject(false)
+      setShowItemProjectDialog(false)
+    }
+  }, [
+    currentAccountId,
+    itemProjectSelectedId,
+    itemTargetRecord,
+    refreshRealtimeAfterWrite,
+    refreshTransactionItems,
+    showError,
+    showSuccess
+  ])
+
+  const handleSellItemToProject = useCallback(async () => {
+    if (!currentAccountId || !itemTargetRecord || !itemTargetRecord.projectId) return
+    if (!itemProjectSelectedId || itemProjectSelectedId === itemTargetRecord.projectId) {
+      setShowItemProjectDialog(false)
+      return
+    }
+    setIsUpdatingItemProject(true)
+    try {
+      const wasOffline = !isOnline
+      await integrationService.sellItemToProject(
+        currentAccountId,
+        itemTargetRecord.itemId,
+        itemTargetRecord.projectId,
+        itemProjectSelectedId
+      )
+      if (wasOffline) {
+        showOfflineSaved()
+        return
+      }
+      await refreshTransactionItems()
+      await refreshRealtimeAfterWrite()
+      showSuccess('Sold to project.')
+    } catch (error) {
+      if (error instanceof SellItemToProjectError) {
+        switch (error.code) {
+          case 'ITEM_NOT_FOUND':
+            showError('Item not found. Refresh and try again.')
+            break
+          case 'SOURCE_PROJECT_MISMATCH':
+          case 'CONFLICT':
+            showError('This item changed since you opened it. Refresh and try again.')
+            break
+          case 'NON_CANONICAL_TRANSACTION':
+            showError('This item is tied to a transaction. Move the transaction instead.')
+            break
+          case 'TARGET_SAME_AS_SOURCE':
+            showError('Select a different project to sell to.')
+            break
+          case 'PARTIAL_COMPLETION':
+            showError('Item was moved to business inventory. Allocate it to the target project from there.')
+            await refreshTransactionItems()
+            await refreshRealtimeAfterWrite()
+            break
+          default:
+            showError('Failed to sell item to project. Please try again.')
+        }
+      } else {
+        console.error('Failed to sell item to project:', error)
+        showError('Failed to sell item to project. Please try again.')
+      }
+    } finally {
+      setIsUpdatingItemProject(false)
+      setShowItemProjectDialog(false)
+    }
+  }, [
+    currentAccountId,
+    itemProjectSelectedId,
+    itemTargetRecord,
+    isOnline,
+    refreshRealtimeAfterWrite,
+    refreshTransactionItems,
+    showError,
+    showOfflineSaved,
+    showSuccess
+  ])
 
   const handleMoveProject = useCallback(async () => {
     if (!transaction || !currentAccountId) return
@@ -951,6 +1135,25 @@ export default function TransactionDetail() {
   const handleImageClick = (index: number) => {
     setGalleryInitialIndex(index)
     setShowGallery(true)
+  }
+
+  const handlePinToggle = () => {
+    setIsImagePinned(prev => {
+      if (!prev) {
+        // When pinning, close gallery and set initial position and size
+        setShowGallery(false)
+        const initialX = Math.max(20, window.innerWidth - 420)
+        const initialY = 20
+        setPinnedImagePosition({ x: initialX, y: initialY })
+        setPinnedImageSize({ width: 400, height: 600 })
+        // Keep current image index
+      }
+      return !prev
+    })
+  }
+
+  const handleUnpin = () => {
+    setIsImagePinned(false)
   }
 
   const handleGalleryClose = () => {
@@ -1909,6 +2112,10 @@ export default function TransactionDetail() {
                     onImageFilesChange={handleImageFilesChange}
                     onDeleteItems={handleDeletePersistedItems}
                     onRemoveFromTransaction={handleRemoveItemFromThisTransaction}
+                    onSellToBusiness={handleSellItemToBusinessInventory}
+                    onSellToProject={(itemId) => openItemProjectDialog(itemId, 'sell')}
+                    onMoveToBusiness={handleMoveItemToBusinessInventory}
+                    onMoveToProject={(itemId) => openItemProjectDialog(itemId, 'move')}
                     containerId="transaction-items-container"
                   />
                 </div>
@@ -1930,6 +2137,10 @@ export default function TransactionDetail() {
                       onImageFilesChange={handleImageFilesChange}
                       onDeleteItems={handleDeletePersistedItems}
                       onRemoveFromTransaction={handleRemoveItemFromThisTransaction}
+                      onSellToBusiness={handleSellItemToBusinessInventory}
+                      onSellToProject={(itemId) => openItemProjectDialog(itemId, 'sell')}
+                      onMoveToBusiness={handleMoveItemToBusinessInventory}
+                      onMoveToProject={(itemId) => openItemProjectDialog(itemId, 'move')}
                       showSelectionControls={false}
                     />
                   </div>
@@ -1996,6 +2207,20 @@ export default function TransactionDetail() {
           images={itemImages}
           initialIndex={galleryInitialIndex}
           onClose={handleGalleryClose}
+          onPinToggle={handlePinToggle}
+        />
+      )}
+
+      {/* Pinned image viewer - resizable and draggable */}
+      {isImagePinned && itemImages.length > 0 && (
+        <PinnedImageViewer
+          images={itemImages}
+          position={pinnedImagePosition}
+          size={pinnedImageSize}
+          onPositionChange={setPinnedImagePosition}
+          onSizeChange={setPinnedImageSize}
+          onClose={handleUnpin}
+          initialIndex={galleryInitialIndex}
         />
       )}
 
@@ -2036,6 +2261,59 @@ export default function TransactionDetail() {
                 className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isUpdatingProject ? 'Moving...' : 'Move'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Item Move/Sell to Project Dialog */}
+      {showItemProjectDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-medium text-gray-900">
+                {itemProjectDialogMode === 'sell' ? 'Sell To Project' : 'Move To Project'}
+              </h3>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              <Combobox
+                label="Select Project"
+                value={itemProjectSelectedId}
+                onChange={setItemProjectSelectedId}
+                disabled={loadingProjects || isUpdatingItemProject}
+                loading={loadingProjects}
+                placeholder={loadingProjects ? 'Loading projects...' : 'Select a project'}
+                options={itemProjectOptions}
+              />
+              {itemProjectDialogMode === 'move' && itemAssociateDisabledReason && (
+                <p className="text-xs text-gray-500">{itemAssociateDisabledReason}</p>
+              )}
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  if (isUpdatingItemProject) return
+                  setShowItemProjectDialog(false)
+                  setItemProjectTargetId(null)
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                disabled={isUpdatingItemProject}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={itemProjectDialogMode === 'sell' ? handleSellItemToProject : handleMoveItemToProject}
+                disabled={!itemProjectSelectedId || isUpdatingItemProject || (itemAssociateDisabled && itemProjectDialogMode === 'move')}
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isUpdatingItemProject
+                  ? itemProjectDialogMode === 'sell'
+                    ? 'Selling...'
+                    : 'Moving...'
+                  : itemProjectDialogMode === 'sell'
+                    ? 'Sell'
+                    : 'Move'}
               </button>
             </div>
           </div>
