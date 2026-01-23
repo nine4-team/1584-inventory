@@ -194,6 +194,44 @@ export default function TransactionDetail() {
   const [showExistingItemsModal, setShowExistingItemsModal] = useState(false)
   const [isImagePinned, setIsImagePinned] = useState(false)
   const [pinnedImage, setPinnedImage] = useState<ItemImage | null>(null)
+  // Pin panel gesture state
+  const [pinZoom, setPinZoom] = useState(1)
+  const [pinPanX, setPinPanX] = useState(0)
+  const [pinPanY, setPinPanY] = useState(0)
+  const pinImageContainerRef = useRef<HTMLDivElement>(null)
+  const pinImageRef = useRef<HTMLImageElement>(null)
+  const pinZoomRef = useRef(1)
+  const pinPanXRef = useRef(0)
+  const pinPanYRef = useRef(0)
+  const pinSuppressClickRef = useRef(false)
+  const pinPointerStartRef = useRef<Map<number, { x: number; y: number }>>(new Map())
+  const pinLastTapRef = useRef<{ t: number; x: number; y: number } | null>(null)
+  const pinPointersRef = useRef<Map<number, { x: number; y: number }>>(new Map())
+  
+  type PinGestureState =
+    | {
+        kind: 'pan'
+        pointerId: number
+        startClientX: number
+        startClientY: number
+        startPanX: number
+        startPanY: number
+      }
+    | {
+        kind: 'pinch'
+        pointerIdA: number
+        pointerIdB: number
+        startDistance: number
+        startZoom: number
+        startPanX: number
+        startPanY: number
+        containerCenterX: number
+        containerCenterY: number
+        startPinchCenterX: number
+        startPinchCenterY: number
+      }
+  
+  const pinGestureRef = useRef<PinGestureState | null>(null)
   const [receiptUploadsInFlight, setReceiptUploadsInFlight] = useState(0)
   const [otherUploadsInFlight, setOtherUploadsInFlight] = useState(0)
   const isUploadingReceiptImages = receiptUploadsInFlight > 0
@@ -1140,11 +1178,299 @@ export default function TransactionDetail() {
       setPinnedImage(image)
       setIsImagePinned(true)
       setShowGallery(false)
+      // Reset zoom/pan when pinning a new image
+      setPinZoom(1)
+      setPinPanX(0)
+      setPinPanY(0)
       return
     }
     setIsImagePinned(false)
     setPinnedImage(null)
+    // Reset zoom/pan when unpinning
+    setPinZoom(1)
+    setPinPanX(0)
+    setPinPanY(0)
   }
+
+  const handlePinTransactionImage = (transactionImage: TransactionImage) => {
+    // Convert TransactionImage to ItemImage format
+    const itemImage: ItemImage = {
+      url: transactionImage.url,
+      alt: transactionImage.fileName || '',
+      fileName: transactionImage.fileName || '',
+      uploadedAt: transactionImage.uploadedAt || new Date(),
+      size: transactionImage.size || 0,
+      mimeType: transactionImage.mimeType || 'image/jpeg',
+      isPrimary: false
+    }
+    handlePinToggle(itemImage)
+  }
+
+  // Pin panel gesture helpers
+  const pinClamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
+
+  const pinGetContainerRect = (): DOMRect | null => pinImageContainerRef.current?.getBoundingClientRect() ?? null
+
+  const pinGetBaseImageSize = (): { width: number; height: number } | null => {
+    const rect = pinImageRef.current?.getBoundingClientRect()
+    if (!rect) return null
+    const baseWidth = rect.width / Math.max(pinZoomRef.current, 0.0001)
+    const baseHeight = rect.height / Math.max(pinZoomRef.current, 0.0001)
+    if (!Number.isFinite(baseWidth) || !Number.isFinite(baseHeight) || baseWidth <= 0 || baseHeight <= 0) return null
+    return { width: baseWidth, height: baseHeight }
+  }
+
+  const pinClampPanToBounds = (nextPanX: number, nextPanY: number, nextZoom: number): { x: number; y: number } => {
+    const container = pinGetContainerRect()
+    const base = pinGetBaseImageSize()
+    if (!container || !base) return { x: nextPanX, y: nextPanY }
+
+    const scaledW = base.width * nextZoom
+    const scaledH = base.height * nextZoom
+
+    const maxX = Math.max(0, (scaledW - container.width) / 2)
+    const maxY = Math.max(0, (scaledH - container.height) / 2)
+
+    return {
+      x: pinClamp(nextPanX, -maxX, maxX),
+      y: pinClamp(nextPanY, -maxY, maxY)
+    }
+  }
+
+  const pinResetView = () => {
+    setPinZoom(1)
+    setPinPanX(0)
+    setPinPanY(0)
+  }
+
+  const pinSetZoomAroundPoint = (nextZoom: number, clientX: number, clientY: number) => {
+    const container = pinGetContainerRect()
+    if (!container) {
+      setPinZoom(nextZoom)
+      if (nextZoom === 1) {
+        setPinPanX(0)
+        setPinPanY(0)
+      }
+      return
+    }
+
+    const containerCenterX = container.left + container.width / 2
+    const containerCenterY = container.top + container.height / 2
+
+    const dx = (clientX - containerCenterX - pinPanXRef.current) / Math.max(pinZoomRef.current, 0.0001)
+    const dy = (clientY - containerCenterY - pinPanYRef.current) / Math.max(pinZoomRef.current, 0.0001)
+
+    const unclampedPanX = clientX - containerCenterX - dx * nextZoom
+    const unclampedPanY = clientY - containerCenterY - dy * nextZoom
+    const clamped = pinClampPanToBounds(unclampedPanX, unclampedPanY, nextZoom)
+
+    setPinZoom(nextZoom)
+    setPinPanX(clamped.x)
+    setPinPanY(clamped.y)
+  }
+
+  // Update refs when state changes
+  useEffect(() => {
+    pinZoomRef.current = pinZoom
+  }, [pinZoom])
+
+  useEffect(() => {
+    pinPanXRef.current = pinPanX
+    pinPanYRef.current = pinPanY
+  }, [pinPanX, pinPanY])
+
+  // Reset zoom/pan when pinned image changes
+  useEffect(() => {
+    if (pinnedImage) {
+      pinResetView()
+    }
+  }, [pinnedImage])
+
+  const pinZoomStep = 0.5
+  const pinMinZoom = 1
+  const pinMaxZoom = 5
+
+  const pinBeginPanGesture = (pointerId: number, clientX: number, clientY: number) => {
+    pinGestureRef.current = {
+      kind: 'pan',
+      pointerId,
+      startClientX: clientX,
+      startClientY: clientY,
+      startPanX: pinPanXRef.current,
+      startPanY: pinPanYRef.current
+    }
+  }
+
+  const pinTryBeginPinchGesture = () => {
+    const entries = Array.from(pinPointersRef.current.entries())
+    if (entries.length < 2) return
+    const [a, b] = entries.slice(0, 2)
+    const pointerIdA = a[0]
+    const pointerIdB = b[0]
+    const ax = a[1].x
+    const ay = a[1].y
+    const bx = b[1].x
+    const by = b[1].y
+
+    const container = pinGetContainerRect()
+    if (!container) return
+
+    const startDistance = Math.hypot(bx - ax, by - ay)
+    const startPinchCenterX = (ax + bx) / 2
+    const startPinchCenterY = (ay + by) / 2
+
+    pinGestureRef.current = {
+      kind: 'pinch',
+      pointerIdA,
+      pointerIdB,
+      startDistance: Math.max(startDistance, 0.0001),
+      startZoom: pinZoom,
+      startPanX: pinPanX,
+      startPanY: pinPanY,
+      containerCenterX: container.left + container.width / 2,
+      containerCenterY: container.top + container.height / 2,
+      startPinchCenterX,
+      startPinchCenterY
+    }
+  }
+
+  const pinHandlePointerDown = (e: React.PointerEvent) => {
+    pinPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    pinPointerStartRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+
+    try {
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {
+      // ignore
+    }
+
+    if (pinPointersRef.current.size === 1 && pinZoom > 1.01) {
+      pinBeginPanGesture(e.pointerId, e.clientX, e.clientY)
+    }
+
+    if (pinPointersRef.current.size >= 2) {
+      pinTryBeginPinchGesture()
+    }
+  }
+
+  const pinHandlePointerMove = (e: React.PointerEvent) => {
+    if (!pinPointersRef.current.has(e.pointerId)) return
+    pinPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+
+    const start = pinPointerStartRef.current.get(e.pointerId)
+    if (start) {
+      const moved = Math.hypot(e.clientX - start.x, e.clientY - start.y)
+      if (moved > 6) pinSuppressClickRef.current = true
+    }
+
+    const g = pinGestureRef.current
+    if (!g) return
+
+    if (g.kind === 'pan') {
+      if (e.pointerId !== g.pointerId) return
+      if (pinZoom <= 1.01) return
+      e.preventDefault()
+
+      const dx = e.clientX - g.startClientX
+      const dy = e.clientY - g.startClientY
+      const unclampedX = g.startPanX + dx
+      const unclampedY = g.startPanY + dy
+      const clamped = pinClampPanToBounds(unclampedX, unclampedY, pinZoom)
+      setPinPanX(clamped.x)
+      setPinPanY(clamped.y)
+      return
+    }
+
+    // Pinch
+    const a = pinPointersRef.current.get(g.pointerIdA)
+    const b = pinPointersRef.current.get(g.pointerIdB)
+    if (!a || !b) return
+
+    e.preventDefault()
+
+    const currentDistance = Math.hypot(b.x - a.x, b.y - a.y)
+    const pinchScale = currentDistance / Math.max(g.startDistance, 0.0001)
+    const nextZoom = pinClamp(g.startZoom * pinchScale, pinMinZoom, pinMaxZoom)
+
+    const currentCenterX = (a.x + b.x) / 2
+    const currentCenterY = (a.y + b.y) / 2
+
+    const startDx = (g.startPinchCenterX - g.containerCenterX - g.startPanX) / Math.max(g.startZoom, 0.0001)
+    const startDy = (g.startPinchCenterY - g.containerCenterY - g.startPanY) / Math.max(g.startZoom, 0.0001)
+
+    const unclampedPanX = currentCenterX - g.containerCenterX - startDx * nextZoom
+    const unclampedPanY = currentCenterY - g.containerCenterY - startDy * nextZoom
+    const clamped = pinClampPanToBounds(unclampedPanX, unclampedPanY, nextZoom)
+
+    setPinZoom(nextZoom)
+    setPinPanX(clamped.x)
+    setPinPanY(clamped.y)
+  }
+
+  const pinHandlePointerUpOrCancel = (e: React.PointerEvent) => {
+    const pointerStart = pinPointerStartRef.current.get(e.pointerId)
+    pinPointersRef.current.delete(e.pointerId)
+    pinPointerStartRef.current.delete(e.pointerId)
+    if (pinPointersRef.current.size < 2 && pinGestureRef.current?.kind === 'pinch') {
+      pinGestureRef.current = null
+    }
+    if (pinPointersRef.current.size === 0 && pinGestureRef.current?.kind === 'pan') {
+      pinGestureRef.current = null
+    }
+
+    if (pinPointersRef.current.size === 1 && pinZoom > 1.01) {
+      const [only] = Array.from(pinPointersRef.current.entries())
+      pinBeginPanGesture(only[0], only[1].x, only[1].y)
+    }
+
+    // Double-tap (touch) toggles zoom at tap point
+    if (e.pointerType === 'touch' && pinPointersRef.current.size === 0) {
+      const now = Date.now()
+      const prev = pinLastTapRef.current
+      const start = { x: e.clientX, y: e.clientY }
+
+      if (prev && now - prev.t < 320 && Math.hypot(start.x - prev.x, start.y - prev.y) < 26) {
+        pinSuppressClickRef.current = true
+        pinLastTapRef.current = null
+        if (pinZoomRef.current > 1.01) {
+          pinResetView()
+        } else {
+          pinSetZoomAroundPoint(2, e.clientX, e.clientY)
+        }
+        return
+      }
+
+      if (!pointerStart || Math.hypot(start.x - pointerStart.x, start.y - pointerStart.y) < 10) {
+        pinLastTapRef.current = { t: now, x: start.x, y: start.y }
+      }
+    }
+  }
+
+  const pinHandleDoubleClick = (e: React.MouseEvent) => {
+    e.preventDefault()
+    if (pinZoom > 1.01) {
+      pinResetView()
+      return
+    }
+    pinSetZoomAroundPoint(2, e.clientX, e.clientY)
+  }
+
+  // Wheel zoom handler for pinned panel
+  useEffect(() => {
+    const el = pinImageContainerRef.current
+    if (!el || !isImagePinned) return
+
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      const delta = event.deltaY > 0 ? -0.2 : 0.2
+      const nextZoom = pinClamp(pinZoomRef.current + delta, pinMinZoom, pinMaxZoom)
+      if (Math.abs(nextZoom - pinZoomRef.current) < 0.0001) return
+      pinSetZoomAroundPoint(nextZoom, event.clientX, event.clientY)
+    }
+
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel as EventListener)
+  }, [isImagePinned])
 
   const handleGalleryClose = () => {
     setShowGallery(false)
@@ -1748,11 +2074,27 @@ export default function TransactionDetail() {
               >
                 <X className="h-4 w-4 text-gray-700" />
               </button>
-              <div className="w-full h-full flex items-center justify-center">
+              <div
+                ref={pinImageContainerRef}
+                className="w-full h-full flex items-center justify-center overflow-hidden"
+                style={{ touchAction: 'none' }}
+                onPointerDown={pinHandlePointerDown}
+                onPointerMove={pinHandlePointerMove}
+                onPointerUp={pinHandlePointerUpOrCancel}
+                onPointerCancel={pinHandlePointerUpOrCancel}
+                onDoubleClick={pinHandleDoubleClick}
+              >
                 <img
+                  ref={pinImageRef}
                   src={pinnedImage.url}
                   alt={pinnedImage.alt || pinnedImage.fileName}
-                  className="max-h-full max-w-full object-contain"
+                  className="max-h-full max-w-full object-contain select-none"
+                  style={{
+                    transform: `translate3d(${pinPanX}px, ${pinPanY}px, 0) scale(${pinZoom})`,
+                    transformOrigin: 'center center',
+                    cursor: pinZoom > 1.01 ? 'grab' : 'default'
+                  }}
+                  draggable={false}
                 />
               </div>
             </div>
@@ -2006,6 +2348,7 @@ export default function TransactionDetail() {
             <TransactionImagePreview
               images={transaction.receiptImages}
               onRemoveImage={handleDeleteReceiptImage}
+              onPinImage={handlePinTransactionImage}
               onImageClick={(imageUrl) => {
                 const idx = galleryTransactionImages.findIndex(img => img.url === imageUrl)
                 if (idx >= 0) handleImageClick(idx)
@@ -2081,6 +2424,7 @@ export default function TransactionDetail() {
             <TransactionImagePreview
               images={transaction.otherImages}
               onRemoveImage={handleDeleteOtherImage}
+              onPinImage={handlePinTransactionImage}
               onImageClick={(imageUrl) => {
                 const idx = galleryTransactionImages.findIndex(img => img.url === imageUrl)
                 if (idx >= 0) handleImageClick(idx)
