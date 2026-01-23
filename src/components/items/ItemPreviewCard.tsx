@@ -158,7 +158,6 @@ export default function ItemPreviewCard({
   const showDuplicate = (context === 'project' || context === 'businessInventory' || context === 'transaction') && !!onDuplicate
   const showLocation = true // Always show location if available
   const showNotes = context === 'transaction' // Show notes in transaction context
-  const showMarketValue = context !== 'project' && context !== 'businessInventory'
   const { currentAccountId } = useAccount()
   const { buildContextUrl } = useNavigationContext()
   
@@ -426,7 +425,6 @@ export default function ItemPreviewCard({
             isLoadingTransaction={isLoadingTransaction}
             locationValue={showLocation ? locationValue : undefined}
             showNotes={showNotes}
-            showMarketValue={showMarketValue}
             formatCurrency={formatCurrency}
             buildContextUrl={buildContextUrl}
           />
@@ -487,7 +485,6 @@ function ItemContent({
   isLoadingTransaction,
   locationValue,
   showNotes,
-  showMarketValue,
   formatCurrency,
   buildContextUrl
 }: {
@@ -498,7 +495,6 @@ function ItemContent({
   isLoadingTransaction?: boolean
   locationValue?: string
   showNotes: boolean
-  showMarketValue: boolean
   formatCurrency: (amount?: string | number | null) => string
   buildContextUrl: (path: string, params?: { project?: string }) => string
 }) {
@@ -514,7 +510,9 @@ function ItemContent({
         {/* SKU and conditional transaction/source display */}
         <div>
           {item.sku && <span className="font-medium">SKU: {item.sku}</span>}
-          {(item.sku || (showTransactionLink && item.transactionId) || item.source) && <span className="mx-2 text-gray-400">•</span>}
+          {item.sku && ((showTransactionLink && item.transactionId) || item.source) && (
+            <span className="mx-2 text-gray-400">•</span>
+          )}
           {showTransactionLink && item.transactionId ? (
             // Always show transaction area when transactionId exists
             transactionDisplayInfo ? (
@@ -547,11 +545,6 @@ function ItemContent({
             item.source && <span className="text-xs font-medium text-gray-600">{item.source}</span>
           )}
         </div>
-        {showMarketValue && item.marketValue && (
-          <div>
-            <span className="font-medium">Market Value:</span> {formatCurrency(item.marketValue)}
-          </div>
-        )}
       </div>
 
       {locationValue && (

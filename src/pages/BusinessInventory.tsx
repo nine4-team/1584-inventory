@@ -1637,7 +1637,9 @@ export default function BusinessInventory() {
                                   {/* SKU and conditional transaction/source display */}
                                   <div>
                                     {firstItem.sku && <span className="font-medium">SKU: {firstItem.sku}</span>}
-                                    {(firstItem.sku || transactionDisplayInfo || firstItem.source) && <span className="mx-2 text-gray-400">•</span>}
+                                  {firstItem.sku && (transactionDisplayInfo || firstItem.source) && (
+                                    <span className="mx-2 text-gray-400">•</span>
+                                  )}
                                     {transactionDisplayInfo ? (
                                       <span
                                         className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors cursor-pointer hover:underline"
@@ -1659,11 +1661,6 @@ export default function BusinessInventory() {
                                       firstItem.source && <span className="text-xs font-medium text-gray-600">{firstItem.source}</span>
                                     )}
                                   </div>
-                                  {firstItem.marketValue && (
-                                    <div>
-                                      <span className="font-medium">Market Value:</span> {formatCurrency(parseFloat(firstItem.marketValue.toString()))}
-                                    </div>
-                                  )}
                                 </div>
                               </div>
                             </div>
