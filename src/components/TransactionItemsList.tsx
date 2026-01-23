@@ -35,6 +35,10 @@ interface TransactionItemsListProps {
   onDeleteItem?: (itemId: string, item: TransactionItemFormData) => Promise<boolean | void> | boolean | void
   onDeleteItems?: (itemIds: string[], items: TransactionItemFormData[]) => Promise<boolean | void> | boolean | void
   onRemoveFromTransaction?: (itemId: string, item: TransactionItemFormData) => Promise<void> | void
+  onSellToBusiness?: (itemId: string) => Promise<void> | void
+  onSellToProject?: (itemId: string) => Promise<void> | void
+  onMoveToBusiness?: (itemId: string) => Promise<void> | void
+  onMoveToProject?: (itemId: string) => Promise<void> | void
   enablePersistedItemFeatures?: boolean // Whether to enable bookmark/disposition features that require persisted items
   containerId?: string // ID of the container element to track for sticky behavior
 }
@@ -54,6 +58,10 @@ export default function TransactionItemsList({
   onDeleteItem,
   onDeleteItems,
   onRemoveFromTransaction,
+  onSellToBusiness,
+  onSellToProject,
+  onMoveToBusiness,
+  onMoveToProject,
   enablePersistedItemFeatures = true,
   containerId
 }: TransactionItemsListProps) {
@@ -776,6 +784,11 @@ export default function TransactionItemsList({
         onClick={isPersisted ? () => setViewingItemId(item.id) : undefined}
         onChangeStatus={enablePersistedControls ? updateDisposition : undefined}
         onAddToTransaction={enablePersistedControls ? () => openTransactionDialog(item.id) : undefined}
+        onSellToBusiness={onSellToBusiness}
+        onSellToProject={onSellToProject}
+        onMoveToBusiness={onMoveToBusiness}
+        onMoveToProject={onMoveToProject}
+        onDelete={handleDeleteItem}
         uploadingImages={new Set()}
         context="transaction"
         projectId={projectId}
