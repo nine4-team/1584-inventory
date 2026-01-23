@@ -1,3 +1,4 @@
+import { useLocation } from 'react-router-dom'
 import { Item } from '@/types'
 import type { ItemDisposition } from '@/types'
 import ItemPreviewCard, { type ItemPreviewData } from './ItemPreviewCard'
@@ -50,6 +51,7 @@ export default function InventoryItemRow({
   duplicateIndex
 }: InventoryItemRowProps) {
   const { currentAccountId } = useAccount()
+  const location = useLocation()
   const { displayInfo: transactionDisplayInfo, route: transactionRoute, isLoading: isLoadingTransaction } = useTransactionDisplayInfo(
     currentAccountId,
     item.transactionId,
@@ -58,10 +60,18 @@ export default function InventoryItemRow({
 
   // Determine the link destination based on context
   const getItemLink = () => {
+    const searchParams = new URLSearchParams(location.search)
     if (context === 'project' && projectId) {
-      return `/item/${item.itemId}?project=${projectId}`
+      searchParams.set('project', projectId)
+      const query = searchParams.toString()
+      return query
+        ? `/item/${item.itemId}?${query}`
+        : `/item/${item.itemId}`
     } else if (context === 'businessInventory') {
-      return `/business-inventory/${item.itemId}`
+      const query = searchParams.toString()
+      return query
+        ? `/business-inventory/${item.itemId}?${query}`
+        : `/business-inventory/${item.itemId}`
     }
     return `/item/${item.itemId}`
   }
