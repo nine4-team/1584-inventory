@@ -1637,7 +1637,9 @@ export default function BusinessInventory() {
                                   {/* SKU and conditional transaction/source display */}
                                   <div>
                                     {firstItem.sku && <span className="font-medium">SKU: {firstItem.sku}</span>}
-                                    {(firstItem.sku || transactionDisplayInfo || firstItem.source) && <span className="mx-2 text-gray-400">•</span>}
+                                  {firstItem.sku && (transactionDisplayInfo || firstItem.source) && (
+                                    <span className="mx-2 text-gray-400">•</span>
+                                  )}
                                     {transactionDisplayInfo ? (
                                       <span
                                         className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors cursor-pointer hover:underline"
@@ -1659,11 +1661,6 @@ export default function BusinessInventory() {
                                       firstItem.source && <span className="text-xs font-medium text-gray-600">{firstItem.source}</span>
                                     )}
                                   </div>
-                                  {firstItem.marketValue && (
-                                    <div>
-                                      <span className="font-medium">Market Value:</span> {formatCurrency(parseFloat(firstItem.marketValue.toString()))}
-                                    </div>
-                                  )}
                                 </div>
                               </div>
                             </div>
@@ -1981,8 +1978,8 @@ export default function BusinessInventory() {
                   </p>
                 </div>
               ) : (
-                <div className="bg-white shadow overflow-hidden sm:rounded-md">
-                  <ul className="divide-y divide-gray-200">
+                <div className="bg-white overflow-hidden sm:rounded-md -mx-6">
+                  <ul className="space-y-3 pb-3">
                     {filteredTransactions.map((transaction) => (
                       <li key={transaction.transactionId} className="relative">
                         <a
@@ -2002,7 +1999,7 @@ export default function BusinessInventory() {
                             handleTransactionNavigate(transaction.transactionId)
                           }}
                         >
-                          <div className="block bg-gray-50 transition-colors duration-200 hover:bg-gray-100">
+                          <div className="block bg-gray-50 border border-gray-200 rounded-lg transition-colors duration-200 hover:bg-gray-100">
                             <div className="px-4 py-4 sm:px-6">
                             {/* Top row: Header with source and status */}
                             <div className="flex items-center justify-between mb-3">

@@ -1325,8 +1325,8 @@ export default function TransactionsList({ projectId: propProjectId, transaction
           </p>
         </div>
       ) : (
-        <div className="bg-white shadow overflow-hidden sm:rounded-md">
-          <ul className="divide-y divide-gray-200">
+        <div className="bg-white overflow-hidden sm:rounded-md">
+          <ul className="space-y-3 pb-3">
             {filteredTransactions.map((transaction) => (
               <li key={transaction.transactionId} className="relative">
                 <a
@@ -1348,7 +1348,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                     event.preventDefault()
                     handleTransactionNavigate(transaction.transactionId)
                   }}
-                  className="block bg-gray-50 transition-colors duration-200 hover:bg-gray-100"
+                  className="block bg-gray-50 border border-gray-200 rounded-lg transition-colors duration-200 hover:bg-gray-100"
                 >
                   <div className="px-4 py-4 sm:px-6">
                     {/* Top row: Header with canonical title and type */}

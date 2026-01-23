@@ -1416,8 +1416,8 @@ export default function InventoryList({ projectId, projectName, items: propItems
         </div>
       ) : (
         !isLoading && !error && (
-          <div ref={itemListContainerRef} className="bg-white shadow overflow-visible sm:overflow-hidden sm:rounded-md" style={{ paddingBottom: selectedItems.size > 0 ? '80px' : '0' }}>
-            <ul className="space-y-3">
+          <div ref={itemListContainerRef} className="bg-white overflow-visible sm:overflow-hidden sm:rounded-md" style={{ paddingBottom: selectedItems.size > 0 ? '80px' : '0' }}>
+            <ul className="space-y-3 pb-3">
               {groupedItems.map(({ groupKey, items: groupItems }, groupIndex) => {
                 // Single item - render directly
                 if (groupItems.length === 1) {
@@ -1497,7 +1497,9 @@ export default function InventoryList({ projectId, projectName, items: propItems
                             {/* SKU and conditional transaction/source display */}
                             <div>
                               {firstItem.sku && <span className="font-medium">SKU: {firstItem.sku}</span>}
-                              {(firstItem.sku || firstItem.transactionId || firstItem.source) && <span className="mx-2 text-gray-400">•</span>}
+                              {firstItem.sku && (firstItem.transactionId || firstItem.source) && (
+                                <span className="mx-2 text-gray-400">•</span>
+                              )}
                               {firstItem.transactionId ? (
                                 // Always show transaction area when transactionId exists
                                 transactionDisplayInfo ? (
@@ -1531,11 +1533,6 @@ export default function InventoryList({ projectId, projectName, items: propItems
                                 firstItem.source && <span className="text-xs font-medium text-gray-600">{firstItem.source}</span>
                               )}
                             </div>
-                            {firstItem.marketValue && (
-                              <div>
-                                <span className="font-medium">Market Value:</span> {formatCurrency(firstItem.marketValue)}
-                              </div>
-                            )}
                           </div>
                         </div>
                       </div>
