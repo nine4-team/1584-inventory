@@ -6,7 +6,7 @@ interface ImageGalleryProps {
   images: ItemImage[]
   initialIndex?: number
   onClose: () => void
-  onPinToggle?: () => void
+  onPinToggle?: (image: ItemImage) => void
 }
 
 export default function ImageGallery({ images, initialIndex = 0, onClose, onPinToggle }: ImageGalleryProps) {
@@ -556,7 +556,7 @@ export default function ImageGallery({ images, initialIndex = 0, onClose, onPinT
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
-                    onPinToggle()
+                    onPinToggle(currentImage)
                   }}
                   className="p-2 bg-black bg-opacity-50 text-white hover:bg-opacity-70 transition-colors rounded"
                   aria-label="Pin image"
