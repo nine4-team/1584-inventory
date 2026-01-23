@@ -62,13 +62,19 @@ export default function Login({ onSuccess }: LoginProps) {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-lg w-full">
         <div className="-mt-8">
-          <div className="mx-auto h-56 w-56 flex items-center justify-center">
-            <img src="/logo.png" alt="Ledger logo" className="h-full w-full object-contain" />
+          <div className="flex justify-center mb-6">
+            <span className="inline-flex items-center justify-center p-2.5 rounded-[30px] bg-white border border-black/[0.06] shadow-[0_12px_28px_rgba(0,0,0,0.14)]">
+              <img 
+                src="/ledger_logo.png" 
+                alt="Ledger logo" 
+                className="w-[clamp(100px,9vw,180px)] h-auto rounded-[20px] block" 
+              />
+            </span>
           </div>
-          <h2 className="text-center text-4xl font-extrabold text-gray-900">
-            <span className="text-primary-600">Ledger</span> Inventory Assistant
-          </h2>
-          <p className="mt-2 text-center text-lg text-gray-600">
+          {/* <h2 className="text-center text-4xl font-extrabold text-gray-900">
+            <span className="text-primary-600">Ledger</span>
+          </h2> */}
+          <p className="mt-2 text-center text-gray-600" style={{ fontSize: 'clamp(0.9375rem, 2.5vw, 1.25rem)' }}>
           For <strong className="font-semibold">Interior Designers</strong> by <strong className="font-semibold">Interior Designers</strong>
           </p>
         </div>

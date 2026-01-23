@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { X, ChevronLeft, ChevronRight, Download, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react'
+import { X, ChevronLeft, ChevronRight, Download, ZoomIn, ZoomOut, RotateCcw, Pin } from 'lucide-react'
 import { ItemImage } from '@/types'
 
 interface ImageGalleryProps {
   images: ItemImage[]
   initialIndex?: number
   onClose: () => void
+  onPinToggle?: (image: ItemImage) => void
 }
 
-export default function ImageGallery({ images, initialIndex = 0, onClose }: ImageGalleryProps) {
+export default function ImageGallery({ images, initialIndex = 0, onClose, onPinToggle }: ImageGalleryProps) {
   const [currentIndex, setCurrentIndex] = useState(initialIndex)
   const [isLoaded, setIsLoaded] = useState(false)
   const [zoom, setZoom] = useState(1)
@@ -551,6 +552,19 @@ export default function ImageGallery({ images, initialIndex = 0, onClose }: Imag
             )}
 
             <div className="absolute top-4 left-4 z-20 flex flex-col gap-2">
+              {onPinToggle && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onPinToggle(currentImage)
+                  }}
+                  className="p-2 bg-black bg-opacity-50 text-white hover:bg-opacity-70 transition-colors rounded"
+                  aria-label="Pin image"
+                  title="Pin image to view while working"
+                >
+                  <Pin className="h-5 w-5" />
+                </button>
+              )}
               <button
                 onClick={(e) => {
                   e.stopPropagation()

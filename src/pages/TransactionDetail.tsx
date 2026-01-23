@@ -1,4 +1,4 @@
-import { ArrowLeft, Trash2, Image as ImageIcon, Package, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Trash2, Image as ImageIcon, Package, RefreshCw, X } from 'lucide-react'
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import ImageGallery from '@/components/ui/ImageGallery'
 import { TransactionImagePreview } from '@/components/ui/ImagePreview'
@@ -11,8 +11,11 @@ import {
   transactionService,
   projectService,
   unifiedItemsService,
+  integrationService,
+  isCanonicalTransactionId,
   isCanonicalSaleOrPurchaseTransactionId,
-  computeCanonicalTransactionTotal
+  computeCanonicalTransactionTotal,
+  SellItemToProjectError
 } from '@/services/inventoryService'
 import { budgetCategoriesService } from '@/services/budgetCategoriesService'
 import { lineageService } from '@/services/lineageService'
@@ -73,6 +76,7 @@ const getBudgetCategoryDisplayName = (transaction: Transaction, categories: Budg
 const buildDisplayItems = (items: Item[], movedOutItemIds: Set<string>): DisplayTransactionItem[] => {
   return items.map(item => ({
     id: item.itemId,
+    transactionId: item.transactionId ?? item.latestTransactionId ?? undefined,
     description: item.description || '',
     purchasePrice: item.purchasePrice?.toString() || '',
     projectPrice: item.projectPrice?.toString() || '',
@@ -121,6 +125,11 @@ export default function TransactionDetail() {
   const [selectedProjectId, setSelectedProjectId] = useState('')
   const [isUpdatingProject, setIsUpdatingProject] = useState(false)
   const [showProjectDialog, setShowProjectDialog] = useState(false)
+  const [showItemProjectDialog, setShowItemProjectDialog] = useState(false)
+  const [itemProjectDialogMode, setItemProjectDialogMode] = useState<'move' | 'sell'>('move')
+  const [itemProjectTargetId, setItemProjectTargetId] = useState<string | null>(null)
+  const [itemProjectSelectedId, setItemProjectSelectedId] = useState('')
+  const [isUpdatingItemProject, setIsUpdatingItemProject] = useState(false)
   const transactionRef = useRef<Transaction | null>(null)
   const derivedRealtimeProjectId = projectId || transaction?.projectId || null
   const { refreshCollections: refreshRealtimeCollections, items: realtimeProjectItems } = useProjectRealtime(derivedRealtimeProjectId)
@@ -183,6 +192,48 @@ export default function TransactionDetail() {
   const [showGallery, setShowGallery] = useState(false)
   const [galleryInitialIndex, setGalleryInitialIndex] = useState(0)
   const [showExistingItemsModal, setShowExistingItemsModal] = useState(false)
+  const [modalPosition, setModalPosition] = useState<{ top: number; left: number; width: number; containerLeft: number } | null>(null)
+  const transactionItemsContainerRef = useRef<HTMLDivElement>(null)
+  const [isImagePinned, setIsImagePinned] = useState(false)
+  const [pinnedImage, setPinnedImage] = useState<ItemImage | null>(null)
+  // Pin panel gesture state
+  const [pinZoom, setPinZoom] = useState(1)
+  const [pinPanX, setPinPanX] = useState(0)
+  const [pinPanY, setPinPanY] = useState(0)
+  const pinImageContainerRef = useRef<HTMLDivElement>(null)
+  const pinImageRef = useRef<HTMLImageElement>(null)
+  const pinZoomRef = useRef(1)
+  const pinPanXRef = useRef(0)
+  const pinPanYRef = useRef(0)
+  const pinSuppressClickRef = useRef(false)
+  const pinPointerStartRef = useRef<Map<number, { x: number; y: number }>>(new Map())
+  const pinLastTapRef = useRef<{ t: number; x: number; y: number } | null>(null)
+  const pinPointersRef = useRef<Map<number, { x: number; y: number }>>(new Map())
+  
+  type PinGestureState =
+    | {
+        kind: 'pan'
+        pointerId: number
+        startClientX: number
+        startClientY: number
+        startPanX: number
+        startPanY: number
+      }
+    | {
+        kind: 'pinch'
+        pointerIdA: number
+        pointerIdB: number
+        startDistance: number
+        startZoom: number
+        startPanX: number
+        startPanY: number
+        containerCenterX: number
+        containerCenterY: number
+        startPinchCenterX: number
+        startPinchCenterY: number
+      }
+  
+  const pinGestureRef = useRef<PinGestureState | null>(null)
   const [receiptUploadsInFlight, setReceiptUploadsInFlight] = useState(0)
   const [otherUploadsInFlight, setOtherUploadsInFlight] = useState(0)
   const isUploadingReceiptImages = receiptUploadsInFlight > 0
@@ -739,6 +790,24 @@ export default function TransactionDetail() {
     })),
     [projects, transaction?.projectId]
   )
+  const itemTargetRecord = useMemo(
+    () => itemRecords.find(item => item.itemId === itemProjectTargetId) ?? null,
+    [itemProjectTargetId, itemRecords]
+  )
+  const itemProjectOptions = useMemo(
+    () => projects.map(project => ({
+      id: project.id,
+      label: project.name,
+      disabled: project.id === itemTargetRecord?.projectId
+    })),
+    [projects, itemTargetRecord?.projectId]
+  )
+  const itemAssociateDisabledReason = itemTargetRecord?.transactionId
+    ? (isCanonicalTransactionId(itemTargetRecord.transactionId)
+      ? 'This item is tied to a Design Business Inventory transaction. You can’t change its project directly.'
+      : 'This item is tied to a transaction. Move the transaction to another project instead.')
+    : null
+  const itemAssociateDisabled = Boolean(itemAssociateDisabledReason) || loadingProjects || isUpdatingItemProject
 
   const canMoveToBusinessInventory = Boolean(transaction?.projectId)
   const canMoveToProject = projectOptions.length > 0
@@ -748,6 +817,159 @@ export default function TransactionDetail() {
     setSelectedProjectId(transaction.projectId || '')
     setShowProjectDialog(true)
   }, [transaction])
+
+  const openItemProjectDialog = useCallback((itemId: string, mode: 'move' | 'sell') => {
+    const item = itemRecords.find(record => record.itemId === itemId)
+    if (!item) {
+      showError('Item not found. Refresh and try again.')
+      return
+    }
+    setItemProjectTargetId(itemId)
+    setItemProjectDialogMode(mode)
+    setItemProjectSelectedId(item.projectId ?? '')
+    setShowItemProjectDialog(true)
+  }, [itemRecords, showError])
+
+  const handleMoveItemToBusinessInventory = useCallback(async (itemId: string) => {
+    if (!currentAccountId) return
+    const item = itemRecords.find(record => record.itemId === itemId)
+    if (!item || !item.projectId) return
+    if (item.transactionId) {
+      showError('This item is tied to a transaction. Move the transaction instead.')
+      return
+    }
+    try {
+      await integrationService.moveItemToBusinessInventory(currentAccountId, item.itemId, item.projectId)
+      await refreshTransactionItems()
+      await refreshRealtimeAfterWrite()
+      showSuccess('Moved to business inventory.')
+    } catch (error) {
+      console.error('Failed to move item to business inventory:', error)
+      showError('Failed to move item to business inventory. Please try again.')
+    }
+  }, [currentAccountId, itemRecords, refreshRealtimeAfterWrite, refreshTransactionItems, showError, showSuccess])
+
+  const handleSellItemToBusinessInventory = useCallback(async (itemId: string) => {
+    if (!currentAccountId) return
+    const item = itemRecords.find(record => record.itemId === itemId)
+    if (!item || !item.projectId) return
+    try {
+      const wasOffline = !isOnline
+      await integrationService.handleItemDeallocation(currentAccountId, item.itemId, item.projectId, 'inventory')
+      if (wasOffline) {
+        showOfflineSaved()
+        return
+      }
+      await refreshTransactionItems()
+      await refreshRealtimeAfterWrite()
+      showSuccess('Moved to business inventory.')
+    } catch (error) {
+      console.error('Failed to sell item to business inventory:', error)
+      showError('Failed to sell item to business inventory. Please try again.')
+    }
+  }, [currentAccountId, itemRecords, isOnline, refreshRealtimeAfterWrite, refreshTransactionItems, showError, showOfflineSaved, showSuccess])
+
+  const handleMoveItemToProject = useCallback(async () => {
+    if (!currentAccountId || !itemTargetRecord) return
+    if (!itemProjectSelectedId || itemProjectSelectedId === itemTargetRecord.projectId) {
+      setShowItemProjectDialog(false)
+      return
+    }
+    if (itemTargetRecord.transactionId) {
+      showError('This item is tied to a transaction. Move the transaction to another project instead.')
+      setShowItemProjectDialog(false)
+      return
+    }
+    setIsUpdatingItemProject(true)
+    try {
+      await unifiedItemsService.updateItem(currentAccountId, itemTargetRecord.itemId, {
+        projectId: itemProjectSelectedId
+      })
+      await refreshTransactionItems()
+      await refreshRealtimeAfterWrite()
+      showSuccess('Project association updated.')
+    } catch (error) {
+      console.error('Failed to move item to project:', error)
+      showError('Failed to move item to project. Please try again.')
+    } finally {
+      setIsUpdatingItemProject(false)
+      setShowItemProjectDialog(false)
+    }
+  }, [
+    currentAccountId,
+    itemProjectSelectedId,
+    itemTargetRecord,
+    refreshRealtimeAfterWrite,
+    refreshTransactionItems,
+    showError,
+    showSuccess
+  ])
+
+  const handleSellItemToProject = useCallback(async () => {
+    if (!currentAccountId || !itemTargetRecord || !itemTargetRecord.projectId) return
+    if (!itemProjectSelectedId || itemProjectSelectedId === itemTargetRecord.projectId) {
+      setShowItemProjectDialog(false)
+      return
+    }
+    setIsUpdatingItemProject(true)
+    try {
+      const wasOffline = !isOnline
+      await integrationService.sellItemToProject(
+        currentAccountId,
+        itemTargetRecord.itemId,
+        itemTargetRecord.projectId,
+        itemProjectSelectedId
+      )
+      if (wasOffline) {
+        showOfflineSaved()
+        return
+      }
+      await refreshTransactionItems()
+      await refreshRealtimeAfterWrite()
+      showSuccess('Sold to project.')
+    } catch (error) {
+      if (error instanceof SellItemToProjectError) {
+        switch (error.code) {
+          case 'ITEM_NOT_FOUND':
+            showError('Item not found. Refresh and try again.')
+            break
+          case 'SOURCE_PROJECT_MISMATCH':
+          case 'CONFLICT':
+            showError('This item changed since you opened it. Refresh and try again.')
+            break
+          case 'NON_CANONICAL_TRANSACTION':
+            showError('This item is tied to a transaction. Move the transaction instead.')
+            break
+          case 'TARGET_SAME_AS_SOURCE':
+            showError('Select a different project to sell to.')
+            break
+          case 'PARTIAL_COMPLETION':
+            showError('Item was moved to business inventory. Allocate it to the target project from there.')
+            await refreshTransactionItems()
+            await refreshRealtimeAfterWrite()
+            break
+          default:
+            showError('Failed to sell item to project. Please try again.')
+        }
+      } else {
+        console.error('Failed to sell item to project:', error)
+        showError('Failed to sell item to project. Please try again.')
+      }
+    } finally {
+      setIsUpdatingItemProject(false)
+      setShowItemProjectDialog(false)
+    }
+  }, [
+    currentAccountId,
+    itemProjectSelectedId,
+    itemTargetRecord,
+    isOnline,
+    refreshRealtimeAfterWrite,
+    refreshTransactionItems,
+    showError,
+    showOfflineSaved,
+    showSuccess
+  ])
 
   const handleMoveProject = useCallback(async () => {
     if (!transaction || !currentAccountId) return
@@ -952,6 +1174,351 @@ export default function TransactionDetail() {
     setGalleryInitialIndex(index)
     setShowGallery(true)
   }
+
+  const handlePinToggle = (image?: ItemImage) => {
+    if (image) {
+      setPinnedImage(image)
+      setIsImagePinned(true)
+      setShowGallery(false)
+      // Reset zoom/pan when pinning a new image
+      setPinZoom(1)
+      setPinPanX(0)
+      setPinPanY(0)
+      return
+    }
+    setIsImagePinned(false)
+    setPinnedImage(null)
+    // Reset zoom/pan when unpinning
+    setPinZoom(1)
+    setPinPanX(0)
+    setPinPanY(0)
+  }
+
+  const handlePinTransactionImage = (transactionImage: TransactionImage) => {
+    // Convert TransactionImage to ItemImage format
+    const itemImage: ItemImage = {
+      url: transactionImage.url,
+      alt: transactionImage.fileName || '',
+      fileName: transactionImage.fileName || '',
+      uploadedAt: transactionImage.uploadedAt || new Date(),
+      size: transactionImage.size || 0,
+      mimeType: transactionImage.mimeType || 'image/jpeg',
+      isPrimary: false
+    }
+    handlePinToggle(itemImage)
+  }
+
+  // Pin panel gesture helpers
+  const pinClamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
+
+  const pinGetContainerRect = (): DOMRect | null => pinImageContainerRef.current?.getBoundingClientRect() ?? null
+
+  const pinGetBaseImageSize = (): { width: number; height: number } | null => {
+    const rect = pinImageRef.current?.getBoundingClientRect()
+    if (!rect) return null
+    const baseWidth = rect.width / Math.max(pinZoomRef.current, 0.0001)
+    const baseHeight = rect.height / Math.max(pinZoomRef.current, 0.0001)
+    if (!Number.isFinite(baseWidth) || !Number.isFinite(baseHeight) || baseWidth <= 0 || baseHeight <= 0) return null
+    return { width: baseWidth, height: baseHeight }
+  }
+
+  const pinClampPanToBounds = (nextPanX: number, nextPanY: number, nextZoom: number): { x: number; y: number } => {
+    const container = pinGetContainerRect()
+    const base = pinGetBaseImageSize()
+    if (!container || !base) return { x: nextPanX, y: nextPanY }
+
+    const scaledW = base.width * nextZoom
+    const scaledH = base.height * nextZoom
+
+    const maxX = Math.max(0, (scaledW - container.width) / 2)
+    const maxY = Math.max(0, (scaledH - container.height) / 2)
+
+    return {
+      x: pinClamp(nextPanX, -maxX, maxX),
+      y: pinClamp(nextPanY, -maxY, maxY)
+    }
+  }
+
+  const pinResetView = () => {
+    setPinZoom(1)
+    setPinPanX(0)
+    setPinPanY(0)
+  }
+
+  const pinSetZoomAroundPoint = (nextZoom: number, clientX: number, clientY: number) => {
+    const container = pinGetContainerRect()
+    if (!container) {
+      setPinZoom(nextZoom)
+      if (nextZoom === 1) {
+        setPinPanX(0)
+        setPinPanY(0)
+      }
+      return
+    }
+
+    const containerCenterX = container.left + container.width / 2
+    const containerCenterY = container.top + container.height / 2
+
+    const dx = (clientX - containerCenterX - pinPanXRef.current) / Math.max(pinZoomRef.current, 0.0001)
+    const dy = (clientY - containerCenterY - pinPanYRef.current) / Math.max(pinZoomRef.current, 0.0001)
+
+    const unclampedPanX = clientX - containerCenterX - dx * nextZoom
+    const unclampedPanY = clientY - containerCenterY - dy * nextZoom
+    const clamped = pinClampPanToBounds(unclampedPanX, unclampedPanY, nextZoom)
+
+    setPinZoom(nextZoom)
+    setPinPanX(clamped.x)
+    setPinPanY(clamped.y)
+  }
+
+  // Update refs when state changes
+  useEffect(() => {
+    pinZoomRef.current = pinZoom
+  }, [pinZoom])
+
+  useEffect(() => {
+    pinPanXRef.current = pinPanX
+    pinPanYRef.current = pinPanY
+  }, [pinPanX, pinPanY])
+
+  // Reset zoom/pan when pinned image changes
+  useEffect(() => {
+    if (pinnedImage) {
+      pinResetView()
+    }
+  }, [pinnedImage])
+
+  // Calculate modal position relative to transaction items container
+  useEffect(() => {
+    if (!showExistingItemsModal) {
+      setModalPosition(null)
+      return
+    }
+
+    const calculatePosition = () => {
+      const container = transactionItemsContainerRef.current
+      if (!container) {
+        // Fallback to full screen if container not found
+        setModalPosition(null)
+        return
+      }
+
+      const isDesktop = window.innerWidth >= 1024 // lg breakpoint
+      
+      // On mobile, use full screen overlay
+      if (!isDesktop) {
+        setModalPosition(null)
+        return
+      }
+
+      const rect = container.getBoundingClientRect()
+
+      // Get container width and align horizontally with it
+      const width = rect.width
+      const left = rect.left
+      const containerLeft = rect.left
+
+      const top = 16
+
+      setModalPosition({ top, left, width, containerLeft })
+    }
+
+    // Calculate immediately
+    calculatePosition()
+
+    // Recalculate on resize
+    window.addEventListener('resize', calculatePosition)
+
+    return () => {
+      window.removeEventListener('resize', calculatePosition)
+    }
+  }, [showExistingItemsModal, isImagePinned])
+
+  const pinZoomStep = 0.5
+  const pinMinZoom = 1
+  const pinMaxZoom = 5
+
+  const pinBeginPanGesture = (pointerId: number, clientX: number, clientY: number) => {
+    pinGestureRef.current = {
+      kind: 'pan',
+      pointerId,
+      startClientX: clientX,
+      startClientY: clientY,
+      startPanX: pinPanXRef.current,
+      startPanY: pinPanYRef.current
+    }
+  }
+
+  const pinTryBeginPinchGesture = () => {
+    const entries = Array.from(pinPointersRef.current.entries())
+    if (entries.length < 2) return
+    const [a, b] = entries.slice(0, 2)
+    const pointerIdA = a[0]
+    const pointerIdB = b[0]
+    const ax = a[1].x
+    const ay = a[1].y
+    const bx = b[1].x
+    const by = b[1].y
+
+    const container = pinGetContainerRect()
+    if (!container) return
+
+    const startDistance = Math.hypot(bx - ax, by - ay)
+    const startPinchCenterX = (ax + bx) / 2
+    const startPinchCenterY = (ay + by) / 2
+
+    pinGestureRef.current = {
+      kind: 'pinch',
+      pointerIdA,
+      pointerIdB,
+      startDistance: Math.max(startDistance, 0.0001),
+      startZoom: pinZoom,
+      startPanX: pinPanX,
+      startPanY: pinPanY,
+      containerCenterX: container.left + container.width / 2,
+      containerCenterY: container.top + container.height / 2,
+      startPinchCenterX,
+      startPinchCenterY
+    }
+  }
+
+  const pinHandlePointerDown = (e: React.PointerEvent) => {
+    pinPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    pinPointerStartRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+
+    try {
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {
+      // ignore
+    }
+
+    if (pinPointersRef.current.size === 1 && pinZoom > 1.01) {
+      pinBeginPanGesture(e.pointerId, e.clientX, e.clientY)
+    }
+
+    if (pinPointersRef.current.size >= 2) {
+      pinTryBeginPinchGesture()
+    }
+  }
+
+  const pinHandlePointerMove = (e: React.PointerEvent) => {
+    if (!pinPointersRef.current.has(e.pointerId)) return
+    pinPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+
+    const start = pinPointerStartRef.current.get(e.pointerId)
+    if (start) {
+      const moved = Math.hypot(e.clientX - start.x, e.clientY - start.y)
+      if (moved > 6) pinSuppressClickRef.current = true
+    }
+
+    const g = pinGestureRef.current
+    if (!g) return
+
+    if (g.kind === 'pan') {
+      if (e.pointerId !== g.pointerId) return
+      if (pinZoom <= 1.01) return
+      e.preventDefault()
+
+      const dx = e.clientX - g.startClientX
+      const dy = e.clientY - g.startClientY
+      const unclampedX = g.startPanX + dx
+      const unclampedY = g.startPanY + dy
+      const clamped = pinClampPanToBounds(unclampedX, unclampedY, pinZoom)
+      setPinPanX(clamped.x)
+      setPinPanY(clamped.y)
+      return
+    }
+
+    // Pinch
+    const a = pinPointersRef.current.get(g.pointerIdA)
+    const b = pinPointersRef.current.get(g.pointerIdB)
+    if (!a || !b) return
+
+    e.preventDefault()
+
+    const currentDistance = Math.hypot(b.x - a.x, b.y - a.y)
+    const pinchScale = currentDistance / Math.max(g.startDistance, 0.0001)
+    const nextZoom = pinClamp(g.startZoom * pinchScale, pinMinZoom, pinMaxZoom)
+
+    const currentCenterX = (a.x + b.x) / 2
+    const currentCenterY = (a.y + b.y) / 2
+
+    const startDx = (g.startPinchCenterX - g.containerCenterX - g.startPanX) / Math.max(g.startZoom, 0.0001)
+    const startDy = (g.startPinchCenterY - g.containerCenterY - g.startPanY) / Math.max(g.startZoom, 0.0001)
+
+    const unclampedPanX = currentCenterX - g.containerCenterX - startDx * nextZoom
+    const unclampedPanY = currentCenterY - g.containerCenterY - startDy * nextZoom
+    const clamped = pinClampPanToBounds(unclampedPanX, unclampedPanY, nextZoom)
+
+    setPinZoom(nextZoom)
+    setPinPanX(clamped.x)
+    setPinPanY(clamped.y)
+  }
+
+  const pinHandlePointerUpOrCancel = (e: React.PointerEvent) => {
+    const pointerStart = pinPointerStartRef.current.get(e.pointerId)
+    pinPointersRef.current.delete(e.pointerId)
+    pinPointerStartRef.current.delete(e.pointerId)
+    if (pinPointersRef.current.size < 2 && pinGestureRef.current?.kind === 'pinch') {
+      pinGestureRef.current = null
+    }
+    if (pinPointersRef.current.size === 0 && pinGestureRef.current?.kind === 'pan') {
+      pinGestureRef.current = null
+    }
+
+    if (pinPointersRef.current.size === 1 && pinZoom > 1.01) {
+      const [only] = Array.from(pinPointersRef.current.entries())
+      pinBeginPanGesture(only[0], only[1].x, only[1].y)
+    }
+
+    // Double-tap (touch) toggles zoom at tap point
+    if (e.pointerType === 'touch' && pinPointersRef.current.size === 0) {
+      const now = Date.now()
+      const prev = pinLastTapRef.current
+      const start = { x: e.clientX, y: e.clientY }
+
+      if (prev && now - prev.t < 320 && Math.hypot(start.x - prev.x, start.y - prev.y) < 26) {
+        pinSuppressClickRef.current = true
+        pinLastTapRef.current = null
+        if (pinZoomRef.current > 1.01) {
+          pinResetView()
+        } else {
+          pinSetZoomAroundPoint(2, e.clientX, e.clientY)
+        }
+        return
+      }
+
+      if (!pointerStart || Math.hypot(start.x - pointerStart.x, start.y - pointerStart.y) < 10) {
+        pinLastTapRef.current = { t: now, x: start.x, y: start.y }
+      }
+    }
+  }
+
+  const pinHandleDoubleClick = (e: React.MouseEvent) => {
+    e.preventDefault()
+    if (pinZoom > 1.01) {
+      pinResetView()
+      return
+    }
+    pinSetZoomAroundPoint(2, e.clientX, e.clientY)
+  }
+
+  // Wheel zoom handler for pinned panel
+  useEffect(() => {
+    const el = pinImageContainerRef.current
+    if (!el || !isImagePinned) return
+
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      const delta = event.deltaY > 0 ? -0.2 : 0.2
+      const nextZoom = pinClamp(pinZoomRef.current + delta, pinMinZoom, pinMaxZoom)
+      if (Math.abs(nextZoom - pinZoomRef.current) < 0.0001) return
+      pinSetZoomAroundPoint(nextZoom, event.clientX, event.clientY)
+    }
+
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel as EventListener)
+  }, [isImagePinned])
 
   const handleGalleryClose = () => {
     setShowGallery(false)
@@ -1543,6 +2110,45 @@ export default function TransactionDetail() {
 
   return (
     <div className="space-y-6">
+      <div className={isImagePinned ? 'lg:flex lg:gap-6' : ''}>
+        {isImagePinned && pinnedImage && (
+          <div className="fixed top-0 left-0 right-0 h-[33vh] bg-white border-b border-gray-200 z-40 lg:sticky lg:top-4 lg:h-screen lg:w-96 lg:rounded-lg lg:border lg:shadow-sm lg:flex-shrink-0">
+            <div className="relative w-full h-full p-3">
+              <button
+                onClick={() => handlePinToggle()}
+                className="absolute top-3 right-3 z-10 p-2 bg-white/90 border border-gray-200 rounded-full shadow hover:bg-white"
+                aria-label="Unpin image"
+                title="Unpin image"
+              >
+                <X className="h-4 w-4 text-gray-700" />
+              </button>
+              <div
+                ref={pinImageContainerRef}
+                className="w-full h-full flex items-center justify-center overflow-hidden"
+                style={{ touchAction: 'none' }}
+                onPointerDown={pinHandlePointerDown}
+                onPointerMove={pinHandlePointerMove}
+                onPointerUp={pinHandlePointerUpOrCancel}
+                onPointerCancel={pinHandlePointerUpOrCancel}
+                onDoubleClick={pinHandleDoubleClick}
+              >
+                <img
+                  ref={pinImageRef}
+                  src={pinnedImage.url}
+                  alt={pinnedImage.alt || pinnedImage.fileName}
+                  className="max-h-full max-w-full object-contain select-none"
+                  style={{
+                    transform: `translate3d(${pinPanX}px, ${pinPanY}px, 0) scale(${pinZoom})`,
+                    transformOrigin: 'center center',
+                    cursor: pinZoom > 1.01 ? 'grab' : 'default'
+                  }}
+                  draggable={false}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+        <div className={isImagePinned ? 'pt-[50vh] lg:pt-0 lg:flex-1' : ''}>
       {/* Header */}
       <div className="space-y-4">
         {/* Back button row */}
@@ -1566,19 +2172,6 @@ export default function TransactionDetail() {
             </button>
           </div>
           <div className="flex items-center space-x-3">
-            {transaction && (
-              <TransactionActionsMenu
-                transactionId={transaction.transactionId}
-                projectId={transaction.projectId}
-                onEdit={handleEdit}
-                onMoveToProject={openProjectDialog}
-                onMoveToBusinessInventory={handleMoveToBusinessInventory}
-                onDelete={handleDelete}
-                canMoveToBusinessInventory={canMoveToBusinessInventory}
-                canMoveToProject={canMoveToProject}
-                triggerSize="md"
-              />
-            )}
             {hasSyncError && <RetrySyncButton size="sm" variant="secondary" />}
           </div>
         </div>
@@ -1600,16 +2193,33 @@ export default function TransactionDetail() {
       {/* Transaction Details */}
       <div className="bg-white shadow rounded-lg">
         <div className="px-6 py-6 border-b border-gray-200">
-          <h1 className="text-2xl font-bold text-gray-900 leading-tight">
-            {getCanonicalTransactionTitle(transaction)} - {formatCurrency(
-              isCanonicalSaleOrPurchaseTransactionId(transactionId) && computedTotal !== null
-                ? computedTotal
-                : transaction.amount
+          <div className="flex items-start justify-between gap-4">
+            <h1 className="text-2xl font-bold text-gray-900 leading-tight">
+              {getCanonicalTransactionTitle(transaction)} - {formatCurrency(
+                isCanonicalSaleOrPurchaseTransactionId(transactionId) && computedTotal !== null
+                  ? computedTotal
+                  : transaction.amount
+              )}
+              {isHealingAmount && (
+                <span className="ml-2 text-sm text-gray-500 font-normal">(updating...)</span>
+              )}
+            </h1>
+            {transaction && (
+              <div className="shrink-0">
+                <TransactionActionsMenu
+                  transactionId={transaction.transactionId}
+                  projectId={transaction.projectId}
+                  onEdit={handleEdit}
+                  onMoveToProject={openProjectDialog}
+                  onMoveToBusinessInventory={handleMoveToBusinessInventory}
+                  onDelete={handleDelete}
+                  canMoveToBusinessInventory={canMoveToBusinessInventory}
+                  canMoveToProject={canMoveToProject}
+                  triggerSize="md"
+                />
+              </div>
             )}
-            {isHealingAmount && (
-              <span className="ml-2 text-sm text-gray-500 font-normal">(updating...)</span>
-            )}
-          </h1>
+          </div>
         </div>
 
 
@@ -1790,6 +2400,7 @@ export default function TransactionDetail() {
             <TransactionImagePreview
               images={transaction.receiptImages}
               onRemoveImage={handleDeleteReceiptImage}
+              onPinImage={handlePinTransactionImage}
               onImageClick={(imageUrl) => {
                 const idx = galleryTransactionImages.findIndex(img => img.url === imageUrl)
                 if (idx >= 0) handleImageClick(idx)
@@ -1865,6 +2476,7 @@ export default function TransactionDetail() {
             <TransactionImagePreview
               images={transaction.otherImages}
               onRemoveImage={handleDeleteOtherImage}
+              onPinImage={handlePinTransactionImage}
               onImageClick={(imageUrl) => {
                 const idx = galleryTransactionImages.findIndex(img => img.url === imageUrl)
                 if (idx >= 0) handleImageClick(idx)
@@ -1879,7 +2491,7 @@ export default function TransactionDetail() {
         )}
 
         {/* Transaction Items */}
-        <div className="px-6 py-6 border-t border-gray-200" id="transaction-items-container">
+        <div ref={transactionItemsContainerRef} className="px-6 py-6 border-t border-gray-200" id="transaction-items-container">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-medium text-gray-900 flex items-center">
               <Package className="h-5 w-5 mr-2" />
@@ -1909,6 +2521,10 @@ export default function TransactionDetail() {
                     onImageFilesChange={handleImageFilesChange}
                     onDeleteItems={handleDeletePersistedItems}
                     onRemoveFromTransaction={handleRemoveItemFromThisTransaction}
+                    onSellToBusiness={handleSellItemToBusinessInventory}
+                    onSellToProject={(itemId) => openItemProjectDialog(itemId, 'sell')}
+                    onMoveToBusiness={handleMoveItemToBusinessInventory}
+                    onMoveToProject={(itemId) => openItemProjectDialog(itemId, 'move')}
                     containerId="transaction-items-container"
                   />
                 </div>
@@ -1930,6 +2546,10 @@ export default function TransactionDetail() {
                       onImageFilesChange={handleImageFilesChange}
                       onDeleteItems={handleDeletePersistedItems}
                       onRemoveFromTransaction={handleRemoveItemFromThisTransaction}
+                      onSellToBusiness={handleSellItemToBusinessInventory}
+                      onSellToProject={(itemId) => openItemProjectDialog(itemId, 'sell')}
+                      onMoveToBusiness={handleMoveItemToBusinessInventory}
+                      onMoveToProject={(itemId) => openItemProjectDialog(itemId, 'move')}
                       showSelectionControls={false}
                     />
                   </div>
@@ -1996,6 +2616,7 @@ export default function TransactionDetail() {
           images={itemImages}
           initialIndex={galleryInitialIndex}
           onClose={handleGalleryClose}
+          onPinToggle={handlePinToggle}
         />
       )}
 
@@ -2042,44 +2663,115 @@ export default function TransactionDetail() {
         </div>
       )}
 
-      {/* Add Existing Items Modal */}
-      {showExistingItemsModal && transaction && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50" role="dialog" aria-modal="true">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] overflow-hidden mx-4">
-            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-              <h3 className="text-lg font-medium text-gray-900">Add Existing Items</h3>
-              <button
-                type="button"
-                onClick={() => setShowExistingItemsModal(false)}
-                className="text-sm font-medium text-gray-600 hover:text-gray-900"
-              >
-                Close
-              </button>
+      {/* Item Move/Sell to Project Dialog */}
+      {showItemProjectDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-medium text-gray-900">
+                {itemProjectDialogMode === 'sell' ? 'Sell To Project' : 'Move To Project'}
+              </h3>
             </div>
-            <div id="transaction-items-picker-modal" className="px-6 py-4 overflow-y-auto max-h-[70vh]">
-              <TransactionItemPicker
-                transaction={transaction}
-                projectId={projectId}
-                transactionItemIds={itemsInTransaction.map(item => item.id)}
-                containerId="transaction-items-picker-modal"
-                onItemsAdded={async () => {
-                  await refreshTransactionItems()
-                  await refreshRealtimeAfterWrite()
-                }}
+            <div className="px-6 py-4 space-y-4">
+              <Combobox
+                label="Select Project"
+                value={itemProjectSelectedId}
+                onChange={setItemProjectSelectedId}
+                disabled={loadingProjects || isUpdatingItemProject}
+                loading={loadingProjects}
+                placeholder={loadingProjects ? 'Loading projects...' : 'Select a project'}
+                options={itemProjectOptions}
               />
+              {itemProjectDialogMode === 'move' && itemAssociateDisabledReason && (
+                <p className="text-xs text-gray-500">{itemAssociateDisabledReason}</p>
+              )}
             </div>
-            <div className="px-6 py-4 border-t border-gray-200 flex justify-end">
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
               <button
-                type="button"
-                onClick={() => setShowExistingItemsModal(false)}
+                onClick={() => {
+                  if (isUpdatingItemProject) return
+                  setShowItemProjectDialog(false)
+                  setItemProjectTargetId(null)
+                }}
                 className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                disabled={isUpdatingItemProject}
               >
-                Done
+                Cancel
+              </button>
+              <button
+                onClick={itemProjectDialogMode === 'sell' ? handleSellItemToProject : handleMoveItemToProject}
+                disabled={!itemProjectSelectedId || isUpdatingItemProject || (itemAssociateDisabled && itemProjectDialogMode === 'move')}
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isUpdatingItemProject
+                  ? itemProjectDialogMode === 'sell'
+                    ? 'Selling...'
+                    : 'Moving...'
+                  : itemProjectDialogMode === 'sell'
+                    ? 'Sell'
+                    : 'Move'}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* Add Existing Items Modal */}
+      {showExistingItemsModal && transaction && (
+        <>
+          <div className="fixed inset-0 z-30 bg-black bg-opacity-50 pointer-events-none" />
+          {/* Modal positioned relative to transaction items container on desktop, centered on mobile */}
+          <div
+            className={`fixed z-50 ${
+              modalPosition
+                ? ''
+                : isImagePinned
+                  ? 'inset-x-0 bottom-0 h-[62vh] flex items-end justify-center'
+                  : 'inset-0 flex items-end justify-center'
+            }`}
+            style={modalPosition ? {
+              top: `${modalPosition.top}px`,
+              left: `${modalPosition.left}px`,
+              width: `${modalPosition.width}px`,
+              maxWidth: 'calc(100% - 32px)', // 16px margin on each side
+              height: 'calc(100vh - 16px)'
+            } : undefined}
+            role="dialog"
+            aria-modal="true"
+          >
+              <div className={`bg-white rounded-lg shadow-xl overflow-hidden ${
+              modalPosition
+                ? 'w-full h-[calc(100vh-16px)] max-h-none flex flex-col'
+                : 'w-full max-w-5xl mx-4 h-[66vh] max-h-[66vh] flex flex-col'
+            }`}>
+              <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <h3 className="text-lg font-medium text-gray-900">Add Existing Items</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowExistingItemsModal(false)}
+                  className="text-sm font-medium text-gray-600 hover:text-gray-900"
+                >
+                  Close
+                </button>
+              </div>
+              <div id="transaction-items-picker-modal" className={`px-6 py-4 overflow-y-auto ${modalPosition ? 'flex-1' : 'max-h-[70vh]'}`}>
+                <TransactionItemPicker
+                  transaction={transaction}
+                  projectId={projectId}
+                  transactionItemIds={itemsInTransaction.map(item => item.id)}
+                  containerId="transaction-items-picker-modal"
+                  onItemsAdded={async () => {
+                    await refreshTransactionItems()
+                    await refreshRealtimeAfterWrite()
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+        </div>
+      </div>
     </div>
   )
 }
