@@ -115,6 +115,19 @@ export class ImageUploadService {
   }
 
   /**
+   * Upload a space image to Supabase Storage
+   */
+  static async uploadSpaceImage(
+    file: File,
+    projectName: string,
+    spaceId: string,
+    onProgress?: (progress: UploadProgress) => void,
+    retryCount: number = 0
+  ): Promise<ImageUploadResult> {
+    return this.uploadImageInternal(file, projectName, spaceId, 'space-images', onProgress, retryCount)
+  }
+
+  /**
    * Upload business logo to Supabase Storage
    */
   static async uploadBusinessLogo(

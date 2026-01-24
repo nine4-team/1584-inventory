@@ -1,18 +1,18 @@
 import { useState, useEffect } from 'react'
 import { Receipt, MapPin, Tag, Trash2, X } from 'lucide-react'
-import { Transaction, Project } from '@/types'
-import { transactionService, projectService } from '@/services/inventoryService'
+import { Transaction } from '@/types'
+import { transactionService } from '@/services/inventoryService'
 import { DISPOSITION_OPTIONS, displayDispositionLabel } from '@/utils/dispositionUtils'
 import type { ItemDisposition } from '@/types'
 import { useAccount } from '@/contexts/AccountContext'
 import { Combobox } from '@/components/ui/Combobox'
-import { getProjectLocations } from '@/utils/locationPresets'
+import SpaceSelector from '@/components/spaces/SpaceSelector'
 
 interface BulkItemControlsProps {
   selectedItemIds: Set<string>
   projectId?: string
   onAssignToTransaction?: (transactionId: string) => Promise<void>
-  onSetLocation?: (location: string) => Promise<void>
+  onSetSpaceId?: (spaceId: string | null) => Promise<void>
   onSetDisposition?: (disposition: ItemDisposition) => Promise<void>
   onSetSku?: (sku: string) => Promise<void>
   onDelete?: () => Promise<void>
@@ -31,7 +31,7 @@ export default function BulkItemControls({
   selectedItemIds,
   projectId,
   onAssignToTransaction,
-  onSetLocation,
+  onSetSpaceId,
   onSetDisposition,
   onSetSku,
   onDelete,
@@ -47,7 +47,7 @@ export default function BulkItemControls({
 }: BulkItemControlsProps) {
   const { currentAccountId } = useAccount()
   const canAssign = enableAssignToTransaction && !!onAssignToTransaction
-  const canSetLocation = enableLocation && !!onSetLocation
+  const canSetLocation = enableLocation && !!onSetSpaceId
   const canSetDisposition = enableDisposition && !!onSetDisposition
   const canSetSku = enableSku && !!onSetSku
   const canDelete = enableDelete && !!onDelete
@@ -59,13 +59,10 @@ export default function BulkItemControls({
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [loadingTransactions, setLoadingTransactions] = useState(false)
   const [selectedTransactionId, setSelectedTransactionId] = useState('')
-  const [locationValue, setLocationValue] = useState('')
+  const [spaceIdValue, setSpaceIdValue] = useState<string | null>(null)
   const [selectedDisposition, setSelectedDisposition] = useState<ItemDisposition | ''>('')
   const [skuValue, setSkuValue] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
-  const [project, setProject] = useState<Project | null>(null)
-  const [loadingProject, setLoadingProject] = useState(false)
-  const [hasLocationSelection, setHasLocationSelection] = useState(false)
 
   // Load transactions when dialog opens
   useEffect(() => {
@@ -75,31 +72,9 @@ export default function BulkItemControls({
     }
   }, [showTransactionDialog, currentAccountId, canAssign, projectId, transactions.length])
 
-  // Load project when location dialog opens
-  useEffect(() => {
-    if (!canSetLocation || !showLocationDialog) return
-    if (!currentAccountId || !projectId) return
-    
-    const loadProject = async () => {
-      setLoadingProject(true)
-      try {
-        const fetchedProject = await projectService.getProject(currentAccountId, projectId)
-        setProject(fetchedProject)
-      } catch (error) {
-        console.error('Failed to load project:', error)
-        setProject(null)
-      } finally {
-        setLoadingProject(false)
-      }
-    }
-
-    loadProject()
-  }, [showLocationDialog, currentAccountId, projectId, canSetLocation])
-
   useEffect(() => {
     if (!showLocationDialog) return
-    setLocationValue('')
-    setHasLocationSelection(false)
+    setSpaceIdValue(null)
   }, [showLocationDialog])
 
   const loadTransactions = async () => {
@@ -140,17 +115,16 @@ export default function BulkItemControls({
     }
   }
 
-  const handleSetLocation = async () => {
-    if (!canSetLocation || !onSetLocation) return
+  const handleSetSpaceId = async () => {
+    if (!canSetLocation || !onSetSpaceId) return
     setIsProcessing(true)
     try {
-      await onSetLocation(locationValue)
+      await onSetSpaceId(spaceIdValue)
       setShowLocationDialog(false)
-      setLocationValue('')
-      setHasLocationSelection(false)
+      setSpaceIdValue(null)
       onClearSelection()
     } catch (error) {
-      console.error('Failed to set location:', error)
+      console.error('Failed to set space:', error)
     } finally {
       setIsProcessing(false)
     }
@@ -249,14 +223,14 @@ export default function BulkItemControls({
               </button>
             )}
 
-            {/* Set Location */}
+            {/* Set Space */}
             {canSetLocation && (
               <button
                 onClick={() => setShowLocationDialog(true)}
                 className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
               >
                 <MapPin className="h-4 w-4" />
-                Set Location
+                Set Space
               </button>
             )}
 
@@ -347,85 +321,36 @@ export default function BulkItemControls({
         </div>
       )}
 
-      {/* Location Input Dialog */}
+      {/* Space Selection Dialog */}
       {canSetLocation && showLocationDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
             <div className="px-6 py-4 border-b border-gray-200">
               <h3 className="text-lg font-medium text-gray-900">
-                Set Location for {selectedItemIds.size} item{selectedItemIds.size !== 1 ? 's' : ''}
+                Set Space for {selectedItemIds.size} item{selectedItemIds.size !== 1 ? 's' : ''}
               </h3>
             </div>
             <div className="px-6 py-4">
-              {projectId && project ? (
-                <Combobox
-                  label="Location"
-                  value={locationValue}
-                  onChange={(value) => {
-                    setLocationValue(value)
-                    setHasLocationSelection(true)
-                  }}
-                  disabled={isProcessing || loadingProject}
-                  loading={loadingProject}
-                  placeholder={loadingProject ? "Loading locations..." : "Select or create a location..."}
+              {projectId ? (
+                <SpaceSelector
+                  projectId={projectId}
+                  value={spaceIdValue}
+                  onChange={(spaceId) => setSpaceIdValue(spaceId)}
+                  placeholder="Select or create a space..."
                   allowCreate={Boolean(currentAccountId && projectId)}
-                  onCreateOption={async (query: string) => {
-                    if (!currentAccountId || !projectId) {
-                      throw new Error('Project or account unavailable for location creation')
-                    }
-                    try {
-                      const createdLocation = await projectService.addProjectLocation(
-                        currentAccountId,
-                        projectId,
-                        query
-                      )
-                      // Refresh project to get updated locations
-                      const updatedProject = await projectService.getProject(currentAccountId, projectId)
-                      if (updatedProject) {
-                        setProject(updatedProject)
-                      }
-                      return createdLocation
-                    } catch (error) {
-                      console.error('Failed to create location:', error)
-                      throw error
-                    }
-                  }}
-                  options={[
-                    { id: '', label: 'No location set' },
-                    ...getProjectLocations(project.settings).map(loc => ({ id: loc, label: loc }))
-                  ]}
                 />
-              ) : projectId ? (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Location
-                  </label>
-                  <input
-                    type="text"
-                    value={locationValue}
-                    onChange={(e) => setLocationValue(e.target.value)}
-                    placeholder={loadingProject ? "Loading..." : "Select a project to choose locations"}
-                    disabled
-                    className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-50 text-gray-500 cursor-not-allowed"
-                  />
-                  {!loadingProject && (
-                    <p className="mt-1 text-xs text-gray-500">Project not found</p>
-                  )}
-                </div>
               ) : (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Location
+                    Space
                   </label>
                   <input
                     type="text"
-                    value={locationValue}
-                    onChange={(e) => setLocationValue(e.target.value)}
-                    placeholder="Select a project to choose locations"
+                    placeholder="Select a project to choose spaces"
                     disabled
                     className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-50 text-gray-500 cursor-not-allowed"
                   />
-                  <p className="mt-1 text-xs text-gray-500">Bulk location setting is only available for project items</p>
+                  <p className="mt-1 text-xs text-gray-500">Bulk space setting is only available for project items</p>
                 </div>
               )}
             </div>
@@ -433,9 +358,7 @@ export default function BulkItemControls({
               <button
                 onClick={() => {
                   setShowLocationDialog(false)
-                  setLocationValue('')
-                  setHasLocationSelection(false)
-                  setProject(null)
+                  setSpaceIdValue(null)
                 }}
                 className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
                 disabled={isProcessing}
@@ -443,11 +366,11 @@ export default function BulkItemControls({
                 Cancel
               </button>
               <button
-                onClick={handleSetLocation}
-                disabled={isProcessing || !hasLocationSelection}
+                onClick={handleSetSpaceId}
+                disabled={isProcessing}
                 className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isProcessing ? 'Setting...' : 'Set Location'}
+                {isProcessing ? 'Setting...' : 'Set Space'}
               </button>
             </div>
           </div>

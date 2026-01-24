@@ -760,7 +760,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
     }
   }
 
-  const handleBulkSetLocation = async (location: string) => {
+  const handleBulkSetSpaceId = async (spaceId: string | null) => {
     if (!currentAccountId) {
       setError('Account ID is required')
       return
@@ -772,15 +772,15 @@ export default function InventoryList({ projectId, projectName, items: propItems
     try {
       const updatePromises = itemIds.map(itemId =>
         unifiedItemsService.updateItem(currentAccountId, itemId, {
-          space: location
+          spaceId: spaceId
         })
       )
 
       await Promise.all(updatePromises)
-      showSuccess(`Updated location for ${itemIds.length} item${itemIds.length !== 1 ? 's' : ''}`)
+      showSuccess(`Updated space for ${itemIds.length} item${itemIds.length !== 1 ? 's' : ''}`)
     } catch (error) {
-      console.error('Failed to set location:', error)
-      setError('Failed to set location. Please try again.')
+      console.error('Failed to set space:', error)
+      setError('Failed to set space. Please try again.')
       throw error
     }
   }
@@ -1615,7 +1615,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
         projectId={projectId}
         onAssignToTransaction={handleBulkAssignToTransaction}
         enableAssignToTransaction={isOnline}
-        onSetLocation={handleBulkSetLocation}
+        onSetSpaceId={handleBulkSetSpaceId}
         onSetDisposition={handleBulkSetDisposition}
         onSetSku={handleBulkSetSku}
         onDelete={handleBulkDelete}

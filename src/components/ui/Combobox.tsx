@@ -130,7 +130,7 @@ export function Combobox({
             )}>
               <HeadlessCombobox.Input
                 className={clsx(
-                  'w-full border-none py-2 pl-3 pr-10 text-sm leading-5 text-gray-900',
+                  'h-full w-full border-none py-0 pl-3 pr-10 text-sm leading-5 text-gray-900',
                   'focus:ring-0 focus:outline-none cursor-pointer',
                   disabled || loading || isCreating ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : 'bg-white cursor-pointer'
                 )}
