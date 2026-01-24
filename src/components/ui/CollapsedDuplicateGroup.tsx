@@ -52,20 +52,21 @@ export default function CollapsedDuplicateGroup({
   return (
     <div className={`space-y-0 ${className}`}>
       {/* Group Header - Clickable */}
-      <button
-        type="button"
-        onClick={toggleExpanded}
-        className="w-full text-left cursor-pointer bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg transition-colors duration-200 focus:outline-none"
-        aria-expanded={isExpanded}
-        aria-controls={`group-${groupId}-content`}
-        aria-label={`Expand group: ${count} items`}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            toggleExpanded()
-          }
-        }}
-      >
+      <div
+      role="button"
+      tabIndex={0}
+      onClick={toggleExpanded}
+      className="w-full text-left cursor-pointer bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg transition-colors duration-200 focus:outline-none"
+      aria-expanded={isExpanded}
+      aria-controls={`group-${groupId}-content`}
+      aria-label={`Expand group: ${count} items`}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          toggleExpanded()
+        }
+      }}
+    >
         <div className="p-4">
           {/* Top row: checkbox, price, controls (view all) */}
           <div className="flex items-center gap-4 mb-3">
@@ -120,7 +121,7 @@ export default function CollapsedDuplicateGroup({
             {summary}
           </div>
         </div>
-      </button>
+      </div>
 
       {/* Expanded Content */}
       {isExpanded && (

@@ -170,8 +170,8 @@ export default function SpaceItemPicker({
   const selectedCount = selectedItemIds.size
 
   return (
-    <div className="mb-6 rounded-lg border border-gray-200 bg-white p-4">
-      <div className="flex flex-col gap-3">
+    <div className="flex flex-col flex-1 px-6 py-4">
+      <div className="flex flex-col gap-3 mb-4">
         <div className="relative w-full">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
           <input
@@ -197,7 +197,7 @@ export default function SpaceItemPicker({
         </div>
       </div>
 
-      <div className="mt-4 space-y-3">
+      <div className="space-y-3">
         {isLoading ? (
           <div className="text-sm text-gray-500">Loading project items...</div>
         ) : items.length === 0 ? (
@@ -265,8 +265,8 @@ export default function SpaceItemPicker({
       </div>
 
       {selectedCount > 0 && (
-        <div className="fixed bottom-0 z-40 bg-white border-t border-gray-200 shadow-lg w-full left-0">
-          <div className="px-4 py-3 flex items-center justify-between gap-3 max-w-5xl mx-auto">
+        <div className="sticky bottom-0 z-20 bg-white border-t border-gray-200 shadow-lg -mx-6 -mb-4 px-6 mt-auto">
+          <div className="py-4 flex items-center justify-between gap-3">
             <span className="text-sm font-medium text-gray-700">
               {selectedCount} Selected
             </span>
