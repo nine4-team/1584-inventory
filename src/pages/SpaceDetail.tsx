@@ -282,6 +282,17 @@ export default function SpaceDetail() {
     showSuccess(selectedIds.length === 1 ? 'Removed item from space' : `Removed ${selectedIds.length} items from space`)
   }
 
+  const bulkSetSpaceId = async (spaceIdValue: string | null, selectedIds: string[]) => {
+    if (!currentAccountId) return
+    await Promise.all(selectedIds.map(itemId => unifiedItemsService.updateItem(currentAccountId, itemId, { spaceId: spaceIdValue })))
+    await fetchSpace()
+    if (spaceIdValue) {
+      showSuccess(selectedIds.length === 1 ? 'Moved item to new space' : `Moved ${selectedIds.length} items to new space`)
+    } else {
+      showSuccess(selectedIds.length === 1 ? 'Removed item from space' : `Removed ${selectedIds.length} items from space`)
+    }
+  }
+
   const handleSaveDetails = async () => {
     if (!currentAccountId || !space) return
 
@@ -636,6 +647,8 @@ export default function SpaceDetail() {
           containerId="space-items-container"
           sentinelId="space-items-sentinel"
           enableTransactionActions={false}
+          enableLocation={true}
+          onSetSpaceId={(spaceIdValue, selectedIds, _selectedItems) => bulkSetSpaceId(spaceIdValue, selectedIds)}
           bulkAction={{
             label: 'Remove',
             onRun: async (selectedIds) => bulkUnassignSpace(selectedIds)
@@ -659,7 +672,7 @@ export default function SpaceDetail() {
                 Close
               </button>
             </div>
-            <div id="space-items-picker-modal" className="px-6 py-4 overflow-y-auto flex-1">
+            <div id="space-items-picker-modal" className="overflow-y-auto flex-1 flex flex-col">
               <SpaceItemPicker
                 projectId={projectId}
                 spaceId={spaceId}
