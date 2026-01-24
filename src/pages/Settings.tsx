@@ -10,6 +10,7 @@ import AccountManagement from '../components/auth/AccountManagement'
 import TaxPresetsManager from '../components/TaxPresetsManager'
 import VendorDefaultsManager from '../components/VendorDefaultsManager'
 import BudgetCategoriesManager from '../components/BudgetCategoriesManager'
+import SpaceTemplatesManager from '../components/spaces/SpaceTemplatesManager'
 import { Button } from '../components/ui/Button'
 
 export default function Settings() {
@@ -23,6 +24,7 @@ export default function Settings() {
   const [profileError, setProfileError] = useState<string | null>(null)
   const [profileSuccess, setProfileSuccess] = useState(false)
   const [activeTab, setActiveTab] = useState<'general' | 'presets' | 'account' | 'users'>('general')
+  const [activePresetTab, setActivePresetTab] = useState<'budget-categories' | 'vendor-defaults' | 'tax-presets' | 'space-templates'>('budget-categories')
 
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -278,25 +280,71 @@ export default function Settings() {
           <div className="space-y-6">
             {isAdmin ? (
               <>
-                <div className="bg-white overflow-hidden shadow rounded-lg">
-                  <div className="p-6">
-                    {/* Section header removed — manager renders its own title/description */}
-                    <BudgetCategoriesManager />
+                {/* Sub-tabs for Presets */}
+                <div className="bg-white rounded-md shadow-sm">
+                  <div className="border-b border-gray-200">
+                    <nav className="flex -mb-px space-x-6 px-6" aria-label="Preset Tabs">
+                      <button
+                        onClick={() => setActivePresetTab('budget-categories')}
+                        className={`py-4 px-1 border-b-2 font-medium text-sm ${activePresetTab === 'budget-categories' ? 'border-primary-500 text-gray-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                      >
+                        Budget
+                      </button>
+                      <button
+                        onClick={() => setActivePresetTab('vendor-defaults')}
+                        className={`py-4 px-1 border-b-2 font-medium text-sm ${activePresetTab === 'vendor-defaults' ? 'border-primary-500 text-gray-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                      >
+                        Vendors
+                      </button>
+                      <button
+                        onClick={() => setActivePresetTab('tax-presets')}
+                        className={`py-4 px-1 border-b-2 font-medium text-sm ${activePresetTab === 'tax-presets' ? 'border-primary-500 text-gray-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                      >
+                        Tax
+                      </button>
+                      <button
+                        onClick={() => setActivePresetTab('space-templates')}
+                        className={`py-4 px-1 border-b-2 font-medium text-sm ${activePresetTab === 'space-templates' ? 'border-primary-500 text-gray-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                      >
+                        Spaces
+                      </button>
+                    </nav>
                   </div>
                 </div>
 
-                <div className="bg-white overflow-hidden shadow rounded-lg">
-                  <div className="p-6">
-                    {/* Section header removed — manager renders its own title/description */}
-                    <VendorDefaultsManager />
-                  </div>
-                </div>
+                {/* Sub-tab content */}
+                <div>
+                  {activePresetTab === 'budget-categories' && (
+                    <div className="bg-white overflow-visible shadow rounded-lg">
+                      <div className="p-6">
+                        <BudgetCategoriesManager />
+                      </div>
+                    </div>
+                  )}
 
-                <div className="bg-white overflow-hidden shadow rounded-lg">
-                  <div className="p-6">
-                    {/* Section header removed — manager renders its own title/description */}
-                    <TaxPresetsManager />
-                  </div>
+                  {activePresetTab === 'vendor-defaults' && (
+                    <div className="bg-white overflow-visible shadow rounded-lg">
+                      <div className="p-6">
+                        <VendorDefaultsManager />
+                      </div>
+                    </div>
+                  )}
+
+                  {activePresetTab === 'tax-presets' && (
+                    <div className="bg-white overflow-visible shadow rounded-lg">
+                      <div className="p-6">
+                        <TaxPresetsManager />
+                      </div>
+                    </div>
+                  )}
+
+                  {activePresetTab === 'space-templates' && (
+                    <div className="bg-white overflow-visible shadow rounded-lg">
+                      <div className="p-6">
+                        <SpaceTemplatesManager />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </>
             ) : (

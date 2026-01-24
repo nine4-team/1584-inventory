@@ -110,6 +110,38 @@ export interface ProjectMetadata {
   completionPercentage: number;
 }
 
+export interface Space {
+  id: string;
+  accountId: string;
+  projectId?: string | null; // null = account-wide, UUID = project-specific
+  templateId?: string | null; // Optional provenance: set when space is created from a template
+  name: string;
+  notes?: string | null;
+  images?: ItemImage[]; // Reuse ItemImage shape; isPrimary determines representative image
+  isArchived: boolean;
+  metadata?: Record<string, any> | null;
+  createdAt: Date;
+  updatedAt: Date;
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  version: number;
+}
+
+export interface SpaceTemplate {
+  id: string;
+  accountId: string;
+  name: string;
+  notes?: string | null;
+  isArchived: boolean;
+  sortOrder?: number | null;
+  metadata?: Record<string, any> | null;
+  createdAt: Date;
+  updatedAt: Date;
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  version: number;
+}
+
 export interface Item {
   // Note: This interface uses camelCase for all fields (TypeScript/JavaScript convention)
   // Field mapping to Supabase (snake_case) happens in the service layer conversion functions
@@ -130,7 +162,8 @@ export interface Item {
   paymentMethod: string;
   disposition?: ItemDisposition | null;
   notes?: string;
-  space?: string;               // Space/location where item is placed
+  space?: string;               // Legacy: Space/location where item is placed (deprecated, use spaceId)
+  spaceId?: string | null;     // Foreign key to spaces table
   qrKey: string;
   bookmark: boolean;
   dateCreated: string;

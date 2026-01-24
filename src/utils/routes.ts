@@ -1,4 +1,4 @@
-export type ProjectSection = 'items' | 'transactions' | 'budget'
+export type ProjectSection = 'items' | 'transactions' | 'spaces' | 'budget'
 
 export const projectsRoot = () => '/projects'
 
@@ -35,3 +35,10 @@ export const projectClientSummary = (projectId: string) => `${projectRoot(projec
 
 export const projectPropertyManagementSummary = (projectId: string) =>
   `${projectRoot(projectId)}/property-management-summary`
+
+export const projectSpaces = (projectId: string) => `${projectRoot(projectId)}/spaces`
+
+export const projectSpaceDetail = (projectId: string, spaceId: string) =>
+  `${projectSpaces(projectId)}/${spaceId}`
+
+export const projectSpaceNew = (projectId: string) => `${projectSpaces(projectId)}/new`

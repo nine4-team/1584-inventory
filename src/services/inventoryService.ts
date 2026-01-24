@@ -710,6 +710,7 @@ function mapSupabaseItemToOfflineRecord(row: any): DBItem {
     disposition: converted.disposition ?? undefined,
     notes: converted.notes ?? undefined,
     space: converted.space ?? undefined,
+    spaceId: converted.space_id ?? null,
     qrKey: converted.qr_key ?? '',
     bookmark: converted.bookmark ?? false,
     dateCreated: converted.date_created ?? converted.created_at ?? nowIso,
@@ -748,6 +749,7 @@ function mapOfflineItemToSupabaseShape(item: DBItem) {
     disposition: item.disposition ?? null,
     notes: item.notes ?? null,
     space: item.space ?? null,
+    space_id: item.spaceId ?? null,
     qr_key: item.qrKey ?? '',
     bookmark: item.bookmark ?? false,
     date_created: item.dateCreated,
@@ -4230,6 +4232,7 @@ export const unifiedItemsService = {
     if (item.disposition !== undefined) dbItem.disposition = item.disposition
     if (item.notes !== undefined) dbItem.notes = item.notes
     if (item.space !== undefined) dbItem.space = item.space
+    if (item.spaceId !== undefined) dbItem.space_id = item.spaceId ?? null
     if (item.qrKey !== undefined) dbItem.qr_key = item.qrKey
     if (item.bookmark !== undefined) dbItem.bookmark = item.bookmark
     if (item.dateCreated !== undefined) dbItem.date_created = item.dateCreated
@@ -4500,6 +4503,38 @@ export const unifiedItemsService = {
     }
 
     return await this._getProjectItemsOffline(accountId, projectId, filters, pagination)
+  },
+
+  // Get items for a project filtered by space_id (account-scoped)
+  async getItemsByProjectAndSpace(
+    accountId: string,
+    projectId: string,
+    spaceId: string
+  ): Promise<Item[]> {
+    const online = isNetworkOnline()
+    if (online) {
+      try {
+        await ensureAuthenticatedForDatabase()
+
+        const { data, error } = await supabase
+          .from('items')
+          .select('*')
+          .eq('account_id', accountId)
+          .eq('project_id', projectId)
+          .eq('space_id', spaceId)
+          .order('created_at', { ascending: false, nullsFirst: false })
+          .order('date_created', { ascending: false, nullsFirst: false })
+
+        if (error) throw error
+
+        return (data || []).map(item => this._convertItemFromDb(item))
+      } catch (error) {
+        console.warn('Failed to fetch space items from network, falling back to offline cache:', error)
+      }
+    }
+
+    const offlineItems = await this._getProjectItemsOffline(accountId, projectId)
+    return offlineItems.filter(item => item.spaceId === spaceId)
   },
 
   async searchItemsOutsideProject(

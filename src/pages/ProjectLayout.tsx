@@ -21,7 +21,7 @@ import {
 } from 'lucide-react'
 import ContextBackLink from '@/components/ContextBackLink'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
-import { Project, Transaction, Item } from '@/types'
+import { Project, Transaction, Item, Space } from '@/types'
 import { projectService } from '@/services/inventoryService'
 import { useAccount } from '@/contexts/AccountContext'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
@@ -42,6 +42,7 @@ import {
   projectInvoice,
   projectItems,
   projectPropertyManagementSummary,
+  projectSpaces,
   projectTransactions,
   projectsRoot,
   ProjectSection,
@@ -52,6 +53,7 @@ interface ProjectLayoutContextValue {
   project: Project
   transactions: Transaction[]
   items: Item[]
+  spaces: Space[]
 }
 
 export function useProjectLayoutContext() {
@@ -62,9 +64,12 @@ export function useProjectLayoutContext() {
   return context
 }
 
+import { MapPin } from 'lucide-react'
+
 const sectionDefinitions: Array<{ id: ProjectSection; name: string; icon: typeof Package }> = [
   { id: 'items', name: 'Items', icon: Package },
   { id: 'transactions', name: 'Transactions', icon: FileText },
+  { id: 'spaces', name: 'Spaces', icon: MapPin },
 ]
 
 const budgetTabs = [
@@ -79,6 +84,7 @@ const resolveSectionFromPath = (pathname: string, projectId?: string): ProjectSe
   const remainder = pathname.slice(prefix.length)
   if (remainder.startsWith('transactions')) return 'transactions'
   if (remainder.startsWith('budget')) return 'budget'
+  if (remainder.startsWith('spaces')) return 'spaces'
   if (remainder.startsWith('items')) return 'items'
   return null
 }
@@ -107,6 +113,7 @@ export default function ProjectLayout() {
     project,
     transactions,
     items,
+    spaces,
     isLoading,
     error,
     refreshProject: refreshProjectSnapshot,
@@ -143,6 +150,7 @@ export default function ProjectLayout() {
     return {
       items: projectItems(projectId),
       transactions: projectTransactions(projectId),
+      spaces: projectSpaces(projectId),
       budget: projectBudget(projectId),
     }
   }, [projectId])
@@ -308,6 +316,7 @@ export default function ProjectLayout() {
     project,
     transactions,
     items,
+    spaces,
   }
 
   return (
@@ -454,7 +463,7 @@ export default function ProjectLayout() {
 
       <div className="bg-white shadow rounded-lg">
         <div className="border-b border-gray-200">
-          <nav className="-mb-px flex space-x-8 px-6">
+          <nav className="-mb-px flex space-x-4 sm:space-x-8 px-4 sm:px-6">
             {sectionDefinitions.map(section => {
               const Icon = section.icon
               const isActive = activeSection === section.id
@@ -463,7 +472,7 @@ export default function ProjectLayout() {
                   key={section.id}
                   disabled={!sectionPaths}
                   onClick={() => handleSectionChange(section.id)}
-                  className={`py-4 px-1 border-b-2 font-medium text-base flex items-center ${
+                  className={`py-4 px-2 sm:px-1 border-b-2 font-medium text-base flex items-center whitespace-nowrap ${
                     isActive
                       ? 'border-primary-500 text-primary-600'
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'

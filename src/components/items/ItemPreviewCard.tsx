@@ -54,7 +54,7 @@ interface ItemPreviewCardProps {
   itemLink?: string // Custom link for item detail page
   onClick?: () => void // Custom click handler for item detail
   editLink?: string // Custom link for edit page
-  context?: 'project' | 'businessInventory' | 'transaction'
+  context?: 'project' | 'businessInventory' | 'transaction' | 'space'
   projectId?: string
   // Display helpers
   duplicateCount?: number
@@ -158,10 +158,10 @@ export default function ItemPreviewCard({
 
   // Determine which controls to show based on context (canonical configuration)
   const showTransactionLink = context !== 'transaction' // Hide in transaction context
-  const showBookmark = (context === 'project' || context === 'businessInventory' || context === 'transaction') && !!onBookmark
-  const showDuplicate = (context === 'project' || context === 'businessInventory' || context === 'transaction') && !!onDuplicate
+  const showBookmark = (context === 'project' || context === 'businessInventory' || context === 'transaction' || context === 'space') && !!onBookmark
+  const showDuplicate = (context === 'project' || context === 'businessInventory' || context === 'transaction' || context === 'space') && !!onDuplicate
   const showLocation = true // Always show location if available
-  const showNotes = context === 'transaction' // Show notes in transaction context
+  const showNotes = context === 'transaction' || context === 'space' // Show notes in transaction + space context
   const { currentAccountId } = useAccount()
   const { buildContextUrl } = useNavigationContext()
   
@@ -214,7 +214,7 @@ export default function ItemPreviewCard({
   // Determine the link destination based on context
   const getItemLink = () => {
     if (itemLink) return itemLink
-    if (context === 'project' && projectId && item.itemId) {
+    if ((context === 'project' || context === 'space') && projectId && item.itemId) {
       return `/item/${item.itemId}?project=${projectId}`
     } else if (context === 'businessInventory' && item.itemId) {
       return `/business-inventory/${item.itemId}`
@@ -227,7 +227,7 @@ export default function ItemPreviewCard({
   // Determine the edit link based on context
   const getEditLink = () => {
     if (editLink) return editLink
-    if (context === 'project' && projectId && item.itemId) {
+    if ((context === 'project' || context === 'space') && projectId && item.itemId) {
       return `/project/${projectId}/items/${item.itemId}/edit`
     } else if (context === 'businessInventory' && item.itemId) {
       return `/business-inventory/${item.itemId}/edit`
@@ -246,7 +246,7 @@ export default function ItemPreviewCard({
   const hasPurchasePrice = hasNonEmptyMoneyString(item.purchasePrice)
   const primaryPrice = hasProjectPrice ? item.projectPrice : hasPurchasePrice ? item.purchasePrice : undefined
   const priceLabel = primaryPrice ? formatCurrency(primaryPrice) : null
-  const locationValue = context === 'project' ? item.space : item.businessInventoryLocation
+  const locationValue = (context === 'project' || context === 'space') ? item.space : item.businessInventoryLocation
 
   const hasActions = showBookmark || showDuplicate || onEdit || onAddToTransaction || onRemoveFromTransaction || onSellToBusiness || onSellToProject || onMoveToBusiness || onMoveToProject || onChangeStatus || onDelete
   const hasHeaderAction = Boolean(headerAction)

@@ -1,4 +1,5 @@
 import { useLocation } from 'react-router-dom'
+import { useCallback, useMemo } from 'react'
 import { useNavigationStack } from '../contexts/NavigationStackContext'
 import { projectTransactionDetail } from '@/utils/routes'
 import { getReturnToFromLocation } from '@/utils/navigationReturnTo'
@@ -11,11 +12,10 @@ export interface NavigationContext {
 
 export function useNavigationContext(): NavigationContext {
   const location = useLocation()
-  const searchParams = new URLSearchParams(location.search)
   const navigationStack = useNavigationStack()
+  const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search])
 
-  return {
-    getBackDestination: (defaultPath: string) => {
+  const getBackDestination = useCallback((defaultPath: string) => {
       // Prefer navigation stack first (mimic native Back).
       // Use `peek` here (non-mutating) because this function is called during render
       // to compute the Back link target; calling `pop` during render triggers state
@@ -53,13 +53,13 @@ export function useNavigationContext(): NavigationContext {
       }
 
       return defaultPath
-    },
+  }, [navigationStack, location.pathname, location.search, searchParams])
 
-    getNavigationSource: () => {
-      return searchParams.get('from')
-    },
+  const getNavigationSource = useCallback(() => {
+    return searchParams.get('from')
+  }, [searchParams])
 
-    buildContextUrl: (targetPath: string, additionalParams?: Record<string, string>) => {
+  const buildContextUrl = useCallback((targetPath: string, additionalParams?: Record<string, string>) => {
 
       const url = new URL(targetPath, window.location.origin)
       const currentParams = new URLSearchParams(location.search)
@@ -79,6 +79,11 @@ export function useNavigationContext(): NavigationContext {
       }
 
       return url.pathname + url.search
-    }
-  }
+  }, [location.pathname, location.search])
+
+  return useMemo(() => ({
+    getBackDestination,
+    getNavigationSource,
+    buildContextUrl
+  }), [getBackDestination, getNavigationSource, buildContextUrl])
 }
