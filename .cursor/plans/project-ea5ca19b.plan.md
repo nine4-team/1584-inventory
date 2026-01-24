@@ -1,4 +1,28 @@
-<!-- ea5ca19b-35a3-4a72-b82d-d4f96c2f5d52 ff032d01-16cf-4188-9ab7-cf1fec7077e0 -->
+---
+name: Generate Invoice from Accounting Tab (Projects)
+overview: ""
+todos:
+  - id: 2a12a668-682b-4a3e-bbc2-2d30ac0a9144
+    content: Add /project/:id/invoice route in src/App.tsx
+    status: completed
+  - id: 9b7c30e8-4f4e-446b-ac79-17d8f8bdc822
+    content: Add Generate Invoice button in ProjectDetail accounting tab
+    status: completed
+  - id: 7f455110-e3fe-494f-b7fe-1866f83906a3
+    content: Create ProjectInvoice.tsx to fetch, group, and render invoice
+    status: completed
+  - id: 247fdd96-d30b-4d12-9ceb-6ab545834401
+    content: Use Intl.NumberFormat for USD currency formatting
+    status: completed
+  - id: 060c5b25-33db-4a7d-8698-221760459afe
+    content: Flag items missing project_price and treat as $0
+    status: completed
+  - id: 1e6e3784-97f7-435f-9579-7c681ba50f52
+    content: Validate subtotals and net total with sample data
+    status: pending
+isProject: false
+---
+
 # Generate Invoice from Accounting Tab (Projects)
 
 ### Overview
@@ -84,12 +108,3 @@ Add a single "Generate Invoice" button in the `ProjectDetail` Accounting tab. Cl
   - An item missing `project_price` (should be flagged and counted as $0)
 - Verify subtotals and net total match manual calculations.
 - Confirm the button navigates correctly and the page prints cleanly.
-
-### To-dos
-
-- [x] Add /project/:id/invoice route in src/App.tsx
-- [x] Add Generate Invoice button in ProjectDetail accounting tab
-- [x] Create ProjectInvoice.tsx to fetch, group, and render invoice
-- [x] Use Intl.NumberFormat for USD currency formatting
-- [x] Flag items missing project_price and treat as $0
-- [ ] Validate subtotals and net total with sample data
