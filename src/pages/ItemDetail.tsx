@@ -413,7 +413,10 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
     setIsUpdatingProject(true)
     setSelectedProjectId(nextProjectId)
     try {
-      await unifiedItemsService.updateItem(currentAccountId, item.itemId, { projectId: nextProjectId })
+      await unifiedItemsService.updateItem(currentAccountId, item.itemId, {
+        projectId: nextProjectId,
+        disposition: 'purchased'
+      })
       setItem(prev => prev ? { ...prev, projectId: nextProjectId } : prev)
 
       const nextProject = projects.find(project => project.id === nextProjectId)
