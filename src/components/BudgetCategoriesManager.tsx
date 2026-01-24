@@ -5,6 +5,7 @@ import { getDefaultCategory, setDefaultCategory, setBudgetCategoryOrder } from '
 import { BudgetCategory } from '@/types'
 import { useAccount } from '@/contexts/AccountContext'
 import { Button } from './ui/Button'
+import { presetsActionMenuStyles, presetsTableStyles } from '@/components/presets/presetTableStyles'
 import CategorySelect from '@/components/CategorySelect'
 import { getItemizationEnabled } from '@/utils/categoryItemization'
 
@@ -357,7 +358,7 @@ export default function BudgetCategoriesManager() {
       <div className="bg-gray-50 border border-gray-200 rounded-md p-4">
         <p className="text-sm text-gray-500 mb-3">Set the default category that will be used when creating transactions.</p>
         <div className="flex items-start space-x-3">
-          <div className="flex-1">
+          <div className="w-full max-w-xs">
             <CategorySelect
               id="accountDefaultCategory"
               label="Default Transaction Category"
@@ -474,26 +475,26 @@ export default function BudgetCategoriesManager() {
       {/* bulk operations removed */}
 
       {/* Categories Table */}
-      <div className="overflow-hidden shadow ring-1 ring-black ring-opacity-5 rounded-md">
-        <table className="min-w-full divide-y divide-gray-300 text-xs">
-          <thead className="bg-gray-50">
+      <div className={presetsTableStyles.wrapper}>
+        <table className={presetsTableStyles.table}>
+          <thead className={presetsTableStyles.headerRow}>
             <tr>
-              <th scope="col" className="py-2 pl-3 pr-2 text-left font-semibold text-gray-900 sm:pl-4 w-6">
+              <th scope="col" className={`${presetsTableStyles.headerCell} w-6`}>
                 {/* Drag handle column */}
               </th>
-              <th scope="col" className="py-2 pl-2 pr-2 text-left font-semibold text-gray-900">
+              <th scope="col" className={presetsTableStyles.headerCellCompact}>
                 Name
               </th>
               {/* slug and transactions columns removed */}
-              <th scope="col" className="px-2 py-2 text-left font-semibold text-gray-900">
+              <th scope="col" className={presetsTableStyles.headerCellCompact}>
                 Itemize
               </th>
-              <th scope="col" className="px-2 py-2 text-left font-semibold text-gray-900">
+              <th scope="col" className={presetsTableStyles.headerCellCompact}>
                 Actions
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200 bg-white">
+          <tbody className={presetsTableStyles.body}>
             {activeCategories.length === 0 && archivedCategories.length === 0 ? (
               <tr>
                 <td colSpan={4} className="py-8 text-center text-sm text-gray-500">
@@ -535,7 +536,7 @@ export default function BudgetCategoriesManager() {
                           type="text"
                           value={formData.name}
                           onChange={(e) => handleFormChange('name', e.target.value)}
-                          className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 text-xs"
+                          className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 text-sm"
                           autoFocus
                         />
                       ) : (
@@ -573,7 +574,7 @@ export default function BudgetCategoriesManager() {
                             type="button"
                             onClick={handleSave}
                             disabled={isSaving || !formData.name.trim()}
-                            className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             <Save className="h-3 w-3 mr-1" />
                             {isSaving ? 'Saving...' : 'Save'}
@@ -582,18 +583,18 @@ export default function BudgetCategoriesManager() {
                             type="button"
                             onClick={handleCancel}
                             disabled={isSaving}
-                            className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                            className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
                           >
                             <X className="h-3 w-3" />
                           </button>
                         </div>
                       ) : (
-                        <div className="relative inline-flex justify-end category-actions-menu">
+                        <div className={`${presetsActionMenuStyles.wrapper} category-actions-menu`}>
                           <button
                             type="button"
                             onClick={() => setOpenMenuId(prev => (prev === category.id ? null : category.id))}
                             disabled={isSaving}
-                            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className={presetsActionMenuStyles.button}
                             aria-haspopup="menu"
                             aria-expanded={openMenuId === category.id}
                           >
@@ -602,13 +603,13 @@ export default function BudgetCategoriesManager() {
                           </button>
                           {openMenuId === category.id && (
                             <div
-                              className="absolute right-0 top-full mt-2 w-32 rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 z-10"
+                              className={presetsActionMenuStyles.panel}
                               role="menu"
                             >
                               <button
                                 type="button"
                                 onClick={() => handleStartEdit(category)}
-                                className="flex w-full items-center px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"
+                                className={presetsActionMenuStyles.item}
                                 role="menuitem"
                               >
                                 <Edit2 className="h-3.5 w-3.5 mr-2 text-gray-500" />
@@ -617,7 +618,7 @@ export default function BudgetCategoriesManager() {
                               <button
                                 type="button"
                                 onClick={() => handleArchive(category.id)}
-                                className="flex w-full items-center px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"
+                                className={presetsActionMenuStyles.item}
                                 role="menuitem"
                               >
                                 <Archive className="h-3.5 w-3.5 mr-2 text-gray-500" />
@@ -683,7 +684,7 @@ export default function BudgetCategoriesManager() {
                           type="button"
                           onClick={() => handleUnarchive(category.id)}
                           disabled={isSaving}
-                          className="inline-flex items-center px-2 py-1 border border-gray-300 text-xs font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="inline-flex items-center px-2 py-1 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <ArchiveRestore className="h-3 w-3 mr-1" />
                           Unarchive

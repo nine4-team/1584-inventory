@@ -140,4 +140,32 @@ export class OfflineAwareImageService {
     // Online: upload immediately
     return await ImageUploadService.uploadOtherImage(file, projectName, transactionId, onProgress)
   }
+
+  /**
+   * Upload a space image, storing it offline if network is unavailable
+   */
+  static async uploadSpaceImage(
+    file: File,
+    projectName: string,
+    spaceId: string,
+    accountId: string,
+    onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void
+  ): Promise<{ url: string; fileName: string; size: number; mimeType: string }> {
+    const isOnline = isNetworkOnline()
+
+    if (!isOnline) {
+      // Store offline and queue for upload
+      const { mediaId } = await offlineMediaService.queueMediaUpload(accountId, spaceId, file)
+
+      return {
+        url: `offline://${mediaId}`,
+        fileName: file.name,
+        size: file.size,
+        mimeType: file.type
+      }
+    }
+
+    // Online: upload immediately
+    return await ImageUploadService.uploadSpaceImage(file, projectName, spaceId, onProgress)
+  }
 }

@@ -29,7 +29,7 @@ import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, COMPANY_NAME } from
 import { projectItemDetail, projectItems } from '@/utils/routes'
 import { getReturnToFromLocation, navigateToReturnToOrFallback } from '@/utils/navigationReturnTo'
 import SpeechMicButton from '@/components/ui/SpeechMicButton'
-import { getProjectLocations } from '@/utils/locationPresets'
+import SpaceSelector from '@/components/spaces/SpaceSelector'
 
 // Get canonical transaction title for display
 const getCanonicalTransactionTitle = (transaction: Transaction): string => {
@@ -100,7 +100,7 @@ export default function EditItem() {
     projectPrice: '',
     marketValue: '',
     paymentMethod: '',
-    space: '',
+    spaceId: null as string | null,
     notes: '',
     selectedTransactionId: ''
   })
@@ -206,7 +206,7 @@ export default function EditItem() {
               projectPrice: String(fetchedItem.projectPrice || ''),
               marketValue: String(fetchedItem.marketValue || ''),
               paymentMethod: String(fetchedItem.paymentMethod || ''),
-              space: String(fetchedItem.space || ''),
+              spaceId: fetchedItem.spaceId || null,
               notes: String(fetchedItem.notes || ''),
               selectedTransactionId: String(fetchedItem.transactionId || '')
             })
@@ -219,7 +219,7 @@ export default function EditItem() {
               projectPrice: String(fetchedItem.projectPrice || ''),
               marketValue: String(fetchedItem.marketValue || ''),
               paymentMethod: String(fetchedItem.paymentMethod || ''),
-              space: String(fetchedItem.space || ''),
+              spaceId: fetchedItem.spaceId || null,
               notes: String(fetchedItem.notes || ''),
               selectedTransactionId: String(fetchedItem.transactionId || '')
             }
@@ -277,7 +277,7 @@ export default function EditItem() {
     if (String(formData.projectPrice ?? '') !== String(initial.projectPrice ?? '')) return true
     if (String(formData.marketValue ?? '') !== String(initial.marketValue ?? '')) return true
     if (String(formData.paymentMethod ?? '') !== String(initial.paymentMethod ?? '')) return true
-    if (String(formData.space ?? '') !== String(initial.space ?? '')) return true
+    if (String(formData.spaceId ?? '') !== String(initial.spaceId ?? '')) return true
     if (String(formData.notes ?? '') !== String(initial.notes ?? '')) return true
 
     const initialProject = initialProjectIdRef.current ?? ''
@@ -362,7 +362,7 @@ export default function EditItem() {
       projectPrice: formData.projectPrice || formData.purchasePrice,
       marketValue: formData.marketValue,
       paymentMethod: formData.paymentMethod,
-      space: formData.space,
+      spaceId: formData.spaceId,
       notes: formData.notes,
       transactionId: formData.selectedTransactionId || undefined,
       projectId: targetProjectId,
@@ -1006,57 +1006,30 @@ export default function EditItem() {
 
               {/* Space */}
               <div>
-                <label htmlFor="space" className="block text-sm font-medium text-gray-700">
+                <label htmlFor="spaceId" className="block text-sm font-medium text-gray-700">
                   Space
                 </label>
-                {activeProjectId && currentProject ? (
+                {activeProjectId ? (
                   <div className="mt-1">
-                    <Combobox
-                      label=""
-                      options={[
-                        { id: '', label: 'No space set' },
-                        ...getProjectLocations(currentProject.settings).map(loc => ({ id: loc, label: loc }))
-                      ]}
-                      value={formData.space}
-                      onChange={(value) => handleInputChange('space', value)}
-                      placeholder="Select or create a location..."
+                    <SpaceSelector
+                      projectId={activeProjectId}
+                      value={formData.spaceId}
+                      onChange={(spaceId) => handleInputChange('spaceId', spaceId)}
+                      placeholder="Select or create a space..."
                       allowCreate={Boolean(currentAccountId && activeProjectId)}
-                      onCreateOption={async (query: string) => {
-                        if (!currentAccountId || !activeProjectId) {
-                          throw new Error('Project or account unavailable for location creation')
-                        }
-                        try {
-                          const createdLocation = await projectService.addProjectLocation(
-                            currentAccountId,
-                            activeProjectId,
-                            query
-                          )
-                          // Refresh project to get updated locations
-                          const updatedProject = await projectService.getProject(currentAccountId, activeProjectId)
-                          if (updatedProject) {
-                            setCurrentProject(updatedProject)
-                          }
-                          return createdLocation
-                        } catch (error) {
-                          console.error('Failed to create location:', error)
-                          throw error
-                        }
-                      }}
                     />
                   </div>
                 ) : (
                   <div className="mt-1">
                     <input
                       type="text"
-                      id="space"
-                      value={formData.space}
-                      onChange={(e) => handleInputChange('space', e.target.value)}
-                      placeholder={activeProjectId ? "Loading project..." : "Select a project to choose locations"}
+                      id="spaceId"
+                      placeholder="Select a project to choose spaces"
                       disabled
                       className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-50 text-gray-500 cursor-not-allowed"
                     />
                     {!activeProjectId && (
-                      <p className="mt-1 text-xs text-gray-500">Select a project to choose locations</p>
+                      <p className="mt-1 text-xs text-gray-500">Select a project to choose spaces</p>
                     )}
                   </div>
                 )}

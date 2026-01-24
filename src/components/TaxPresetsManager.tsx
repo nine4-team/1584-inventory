@@ -3,6 +3,7 @@ import { Save, AlertCircle } from 'lucide-react'
 import { getTaxPresets, updateTaxPresets } from '@/services/taxPresetsService'
 import { TaxPreset } from '@/types'
 import { useAccount } from '@/contexts/AccountContext'
+import { presetsTableStyles } from '@/components/presets/presetTableStyles'
 
 export default function TaxPresetsManager() {
   const { currentAccountId, loading: accountLoading } = useAccount()
@@ -128,31 +129,31 @@ export default function TaxPresetsManager() {
         </div>
       )}
 
-      <div className="overflow-hidden shadow ring-1 ring-black ring-opacity-5 rounded-md">
-        <table className="min-w-full divide-y divide-gray-300">
-          <thead className="bg-gray-50">
+      <div className={presetsTableStyles.wrapper}>
+        <table className={presetsTableStyles.table}>
+          <thead className={presetsTableStyles.headerRow}>
             <tr>
-              <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900 sm:pl-6">
+              <th scope="col" className={presetsTableStyles.headerCell}>
                 Preset Name
               </th>
-              <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">
+              <th scope="col" className={presetsTableStyles.headerCellCompact}>
                 Tax Rate (%)
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200 bg-white">
+          <tbody className={presetsTableStyles.body}>
             {presets.map((preset, index) => (
               <tr key={preset.id}>
-                <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm sm:pl-6">
+                <td className="whitespace-nowrap py-2 pl-3 pr-2 text-sm sm:pl-4">
                   <input
                     type="text"
                     value={preset.name}
                     onChange={(e) => handlePresetChange(index, 'name', e.target.value)}
-                    className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 text-sm"
                     placeholder="Preset name"
                   />
                 </td>
-                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                <td className="whitespace-nowrap px-2 py-2 text-sm text-gray-500">
                   <input
                     type="number"
                     step="0.01"
@@ -160,7 +161,7 @@ export default function TaxPresetsManager() {
                     max="100"
                     value={preset.rate}
                     onChange={(e) => handlePresetChange(index, 'rate', parseFloat(e.target.value) || 0)}
-                    className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 text-sm"
                     placeholder="0.00"
                   />
                 </td>
@@ -175,9 +176,9 @@ export default function TaxPresetsManager() {
           type="button"
           onClick={handleSave}
           disabled={isSaving}
-          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <Save className="h-4 w-4 mr-2" />
+          <Save className="h-3 w-3 mr-1" />
           {isSaving ? 'Saving...' : 'Save Presets'}
         </button>
       </div>

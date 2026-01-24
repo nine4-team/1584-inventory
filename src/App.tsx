@@ -106,6 +106,7 @@ function App() {
                         <Route index element={withRouteSuspense(<ProjectLegacyTabRedirect />)} />
                         <Route path="items" element={withRouteSuspense(<ProjectItemsPage />)} />
                         <Route path="transactions" element={withRouteSuspense(<ProjectTransactionsPage />)} />
+                        <Route path="spaces" element={withRouteSuspense(<ProjectSpacesPage />)} />
                         <Route path="budget" element={withRouteSuspense(<ProjectBudgetPage />)} />
                       </Route>
 
@@ -140,6 +141,14 @@ function App() {
                       <Route
                         path="/project/:projectId/transactions/:transactionId/edit"
                         element={withRouteSuspense(<EditTransaction />)}
+                      />
+                      <Route
+                        path="/project/:projectId/spaces/new"
+                        element={withRouteSuspense(<SpaceNew />)}
+                      />
+                      <Route
+                        path="/project/:projectId/spaces/:spaceId"
+                        element={withRouteSuspense(<SpaceDetail />)}
                       />
 
                       <Route
@@ -231,6 +240,9 @@ const ItemDetail = lazy(() => import('./pages/ItemDetail'))
 const ProjectLayout = lazy(() => import('./pages/ProjectLayout'))
 const ProjectItemsPage = lazy(() => import('./pages/ProjectItemsPage'))
 const ProjectTransactionsPage = lazy(() => import('./pages/ProjectTransactionsPage'))
+const ProjectSpacesPage = lazy(() => import('./pages/ProjectSpacesPage'))
+const SpaceDetail = lazy(() => import('./pages/SpaceDetail'))
+const SpaceNew = lazy(() => import('./pages/SpaceNew'))
 const ProjectBudgetPage = lazy(() => import('./pages/ProjectBudgetPage'))
 const ProjectLegacyTabRedirect = lazy(() => import('./pages/ProjectLegacyTabRedirect'))
 const ProjectLegacyEntityRedirect = lazy(() => import('./pages/ProjectLegacyEntityRedirect'))

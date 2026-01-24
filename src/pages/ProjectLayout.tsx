@@ -21,7 +21,7 @@ import {
 } from 'lucide-react'
 import ContextBackLink from '@/components/ContextBackLink'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
-import { Project, Transaction, Item } from '@/types'
+import { Project, Transaction, Item, Space } from '@/types'
 import { projectService } from '@/services/inventoryService'
 import { useAccount } from '@/contexts/AccountContext'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
@@ -42,6 +42,7 @@ import {
   projectInvoice,
   projectItems,
   projectPropertyManagementSummary,
+  projectSpaces,
   projectTransactions,
   projectsRoot,
   ProjectSection,
@@ -52,6 +53,7 @@ interface ProjectLayoutContextValue {
   project: Project
   transactions: Transaction[]
   items: Item[]
+  spaces: Space[]
 }
 
 export function useProjectLayoutContext() {
@@ -62,9 +64,12 @@ export function useProjectLayoutContext() {
   return context
 }
 
+import { MapPin } from 'lucide-react'
+
 const sectionDefinitions: Array<{ id: ProjectSection; name: string; icon: typeof Package }> = [
   { id: 'items', name: 'Items', icon: Package },
   { id: 'transactions', name: 'Transactions', icon: FileText },
+  { id: 'spaces', name: 'Spaces', icon: MapPin },
 ]
 
 const budgetTabs = [
@@ -79,6 +84,7 @@ const resolveSectionFromPath = (pathname: string, projectId?: string): ProjectSe
   const remainder = pathname.slice(prefix.length)
   if (remainder.startsWith('transactions')) return 'transactions'
   if (remainder.startsWith('budget')) return 'budget'
+  if (remainder.startsWith('spaces')) return 'spaces'
   if (remainder.startsWith('items')) return 'items'
   return null
 }
@@ -107,6 +113,7 @@ export default function ProjectLayout() {
     project,
     transactions,
     items,
+    spaces,
     isLoading,
     error,
     refreshProject: refreshProjectSnapshot,
@@ -143,6 +150,7 @@ export default function ProjectLayout() {
     return {
       items: projectItems(projectId),
       transactions: projectTransactions(projectId),
+      spaces: projectSpaces(projectId),
       budget: projectBudget(projectId),
     }
   }, [projectId])
@@ -308,6 +316,7 @@ export default function ProjectLayout() {
     project,
     transactions,
     items,
+    spaces,
   }
 
   return (

@@ -1,8 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useAccount } from './AccountContext'
-import type { Item, Project, Transaction } from '@/types'
+import type { Item, Project, Transaction, Space } from '@/types'
 import { lineageService } from '@/services/lineageService'
 import { projectService, transactionService, unifiedItemsService } from '@/services/inventoryService'
+import { spaceService } from '@/services/spaceService'
 import { isNetworkOnline, subscribeToNetworkStatus, getNetworkStatusSnapshot } from '@/services/networkStatusService'
 import { offlineStore } from '@/services/offlineStore'
 import { registerSnapshotRefreshCallback } from '@/utils/realtimeSnapshotUpdater'
@@ -26,6 +27,7 @@ type ProjectRealtimeEntry = {
   project: Project | null
   transactions: Transaction[]
   items: Item[]
+  spaces: Space[]
   isLoading: boolean
   error: string | null
   initialized: boolean
@@ -69,6 +71,7 @@ const createEmptyEntry = (): ProjectRealtimeEntry => ({
   project: null,
   transactions: [],
   items: [],
+  spaces: [],
   isLoading: true,
   error: null,
   initialized: false,
@@ -377,6 +380,23 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
     [applyTelemetryPatch, currentAccountId, setEntry]
   )
 
+  const fetchAndStoreSpaces = useCallback(
+    async (projectId: string): Promise<Space[]> => {
+      if (!currentAccountId) return []
+      const spacesData = await spaceService.listSpaces({
+        accountId: currentAccountId,
+        projectId,
+        includeArchived: false,
+      })
+      setEntry(projectId, entry => ({
+        ...entry,
+        spaces: spacesData,
+      }))
+      return spacesData
+    },
+    [currentAccountId, setEntry]
+  )
+
   const attachLineageSubscriptions = useCallback(
     (projectId: string, transactions: Transaction[]) => {
       if (!currentAccountId) return
@@ -489,7 +509,8 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
     async (projectId: string, options?: { includeProject?: boolean }) => {
       const transactionsPromise = fetchAndStoreTransactions(projectId)
       const itemsPromise = fetchAndStoreItems(projectId)
-      const waiters: Promise<unknown>[] = [transactionsPromise, itemsPromise]
+      const spacesPromise = fetchAndStoreSpaces(projectId)
+      const waiters: Promise<unknown>[] = [transactionsPromise, itemsPromise, spacesPromise]
       if (options?.includeProject) {
         waiters.push(refreshProject(projectId))
       }
@@ -498,7 +519,7 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
       attachLineageSubscriptions(projectId, transactionsData)
       applyTelemetryPatch(projectId, { lastCollectionsRefreshAt: Date.now() })
     },
-    [applyTelemetryPatch, attachLineageSubscriptions, fetchAndStoreItems, fetchAndStoreTransactions, refreshProject]
+    [applyTelemetryPatch, attachLineageSubscriptions, fetchAndStoreItems, fetchAndStoreTransactions, fetchAndStoreSpaces, refreshProject]
   )
 
   const hydrateProjectFromIndexedDB = useCallback(
@@ -556,12 +577,16 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
           }
         }
 
+        // Load spaces (empty array for cache hydration, will be refreshed on next online sync)
+        const spaces: Space[] = []
+
         // Update snapshot
         setEntry(projectId, entry => ({
           ...entry,
           project,
           items,
           transactions,
+          spaces,
           initialized: true,
           isLoading: false,
           error: project ? null : 'Project not found in cache',
@@ -617,10 +642,11 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
       }))
 
       try {
-        const [project, transactionsData, itemsData] = await Promise.all([
+        const [project, transactionsData, itemsData, spacesData] = await Promise.all([
           projectService.getProject(currentAccountId, projectId),
           transactionService.getTransactions(currentAccountId, projectId),
           unifiedItemsService.getItemsByProject(currentAccountId, projectId),
+          spaceService.listSpaces({ accountId: currentAccountId, projectId, includeArchived: false }),
         ])
 
         if (!project) {
@@ -629,6 +655,7 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
             project: null,
             transactions: [],
             items: [],
+            spaces: [],
             error: 'Project not found',
             isLoading: false,
             initialized: true,
@@ -641,6 +668,7 @@ export function ProjectRealtimeProvider({ children, cleanupDelayMs = 15000 }: Pr
           project,
           transactions: transactionsData,
           items: itemsData,
+          spaces: spacesData,
           error: null,
           isLoading: false,
           initialized: true,
@@ -801,6 +829,7 @@ export function useProjectRealtime(projectId?: string | null) {
     project: snapshot?.project ?? null,
     transactions: snapshot?.transactions ?? [],
     items: snapshot?.items ?? [],
+    spaces: snapshot?.spaces ?? [],
     isLoading: snapshot ? snapshot.isLoading : Boolean(projectId),
     error: snapshot?.error ?? null,
     telemetry: snapshot?.telemetry ?? createDefaultTelemetry(),

@@ -33,7 +33,7 @@ import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, COMPANY_NAME } from
 import { projectItems } from '@/utils/routes'
 import { navigateToReturnToOrFallback } from '@/utils/navigationReturnTo'
 import SpeechMicButton from '@/components/ui/SpeechMicButton'
-import { getProjectLocations } from '@/utils/locationPresets'
+import SpaceSelector from '@/components/spaces/SpaceSelector'
 
 // Get canonical transaction title for display
 const getCanonicalTransactionTitle = (transaction: Transaction): string => {
@@ -56,7 +56,7 @@ type AddItemFormData = {
   projectPrice: string
   marketValue: string
   paymentMethod: string
-  space: string
+  spaceId: string | null
   notes: string
   disposition: ItemDisposition
   selectedTransactionId: string
@@ -117,7 +117,7 @@ export default function AddItem() {
     projectPrice: '',
     marketValue: '',
     paymentMethod: '',
-    space: '',
+    spaceId: null,
     notes: '',
     disposition: 'purchased',
     selectedTransactionId: ''
@@ -839,56 +839,29 @@ export default function AddItem() {
 
           {/* Space */}
           <div>
-            <label htmlFor="space" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="spaceId" className="block text-sm font-medium text-gray-700">
               Space
             </label>
-            {projectId && project ? (
+            {projectId ? (
               <div className="mt-1">
-                <Combobox
-                  label=""
-                  options={[
-                    { id: '', label: 'No space set' },
-                    ...getProjectLocations(project.settings).map(loc => ({ id: loc, label: loc }))
-                  ]}
-                  value={formData.space}
-                  onChange={(value) => handleInputChange('space', value)}
-                  placeholder="Select or create a location..."
+                <SpaceSelector
+                  projectId={projectId}
+                  value={formData.spaceId}
+                  onChange={(spaceId) => handleInputChange('spaceId', spaceId)}
+                  placeholder="Select or create a space..."
                   allowCreate={Boolean(currentAccountId && projectId)}
-                  onCreateOption={async (query: string) => {
-                    if (!currentAccountId || !projectId) {
-                      throw new Error('Project or account unavailable for location creation')
-                    }
-                    try {
-                      const createdLocation = await projectService.addProjectLocation(
-                        currentAccountId,
-                        projectId,
-                        query
-                      )
-                      // Refresh project to get updated locations
-                      const updatedProject = await projectService.getProject(currentAccountId, projectId)
-                      if (updatedProject) {
-                        setProject(updatedProject)
-                      }
-                      return createdLocation
-                    } catch (error) {
-                      console.error('Failed to create location:', error)
-                      throw error
-                    }
-                  }}
                 />
               </div>
             ) : (
               <div className="mt-1">
                 <input
                   type="text"
-                  id="space"
-                  value={formData.space}
-                  onChange={(e) => handleInputChange('space', e.target.value)}
-                  placeholder="Select a project to choose locations"
+                  id="spaceId"
+                  placeholder="Select a project to choose spaces"
                   disabled
                   className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-50 text-gray-500 cursor-not-allowed"
                 />
-                <p className="mt-1 text-xs text-gray-500">Select a project to choose locations</p>
+                <p className="mt-1 text-xs text-gray-500">Select a project to choose spaces</p>
               </div>
             )}
           </div>
