@@ -5518,7 +5518,7 @@ export const unifiedItemsService = {
       )
     }
 
-    const nextDisposition = options?.disposition ?? item.disposition ?? 'inventory'
+    const nextDisposition = options?.disposition ?? 'inventory'
     await this.updateItem(accountId, itemId, {
       projectId: null,
       transactionId: null,

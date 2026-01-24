@@ -890,7 +890,8 @@ export default function TransactionDetail() {
     setIsUpdatingItemProject(true)
     try {
       await unifiedItemsService.updateItem(currentAccountId, itemTargetRecord.itemId, {
-        projectId: itemProjectSelectedId
+        projectId: itemProjectSelectedId,
+        disposition: 'purchased'
       })
       await refreshTransactionItems()
       await refreshRealtimeAfterWrite()
@@ -2113,7 +2114,7 @@ export default function TransactionDetail() {
     <div className="space-y-6">
       <div className={isImagePinned ? 'lg:flex lg:gap-6' : ''}>
         {isImagePinned && pinnedImage && (
-          <div className="fixed top-0 left-0 right-0 h-[33vh] bg-white border-b border-gray-200 z-40 lg:sticky lg:top-4 lg:h-screen lg:w-96 lg:rounded-lg lg:border lg:shadow-sm lg:flex-shrink-0">
+          <div className="fixed top-0 left-0 right-0 h-[33svh] bg-white border-b border-gray-200 z-40 lg:sticky lg:top-4 lg:h-screen lg:w-96 lg:rounded-lg lg:border lg:shadow-sm lg:flex-shrink-0">
             <div className="relative w-full h-full p-3">
               <button
                 onClick={() => handlePinToggle()}
@@ -2149,7 +2150,7 @@ export default function TransactionDetail() {
             </div>
           </div>
         )}
-        <div className={isImagePinned ? 'pt-[50vh] lg:pt-0 lg:flex-1' : ''}>
+        <div className={isImagePinned ? 'pt-[33svh] lg:pt-0 lg:flex-1' : ''}>
       {/* Header */}
       <div className="space-y-4">
         {/* Back button row */}

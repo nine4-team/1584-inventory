@@ -536,7 +536,10 @@ export default function InventoryList({ projectId, projectName, items: propItems
 
     setIsUpdatingProject(true)
     try {
-      await unifiedItemsService.updateItem(currentAccountId, projectTargetItemId, { projectId: selectedProjectId })
+      await unifiedItemsService.updateItem(currentAccountId, projectTargetItemId, {
+        projectId: selectedProjectId,
+        disposition: 'purchased'
+      })
       await refreshRealtimeAfterWrite()
       setItems(prev => prev.filter(entry => entry.itemId !== projectTargetItemId))
       setShowProjectDialog(false)
