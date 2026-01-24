@@ -41,6 +41,13 @@ interface TransactionItemsListProps {
   onMoveToProject?: (itemId: string) => Promise<void> | void
   enablePersistedItemFeatures?: boolean // Whether to enable bookmark/disposition features that require persisted items
   containerId?: string // ID of the container element to track for sticky behavior
+  enableTransactionActions?: boolean // Whether to show transaction actions (assign/change/remove)
+  bulkAction?: {
+    label: string
+    onRun: (selectedIds: string[], selectedItems: TransactionItemFormData[]) => Promise<void>
+  }
+  sentinelId?: string // ID of sentinel element to track sticky behavior
+  context?: 'transaction' | 'space'
 }
 
 export default function TransactionItemsList({
@@ -63,7 +70,11 @@ export default function TransactionItemsList({
   onMoveToBusiness,
   onMoveToProject,
   enablePersistedItemFeatures = true,
-  containerId
+  containerId,
+  enableTransactionActions = true,
+  bulkAction,
+  sentinelId = 'transaction-items-sentinel',
+  context = 'transaction'
 }: TransactionItemsListProps) {
   const generateTempItemId = () => `item-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
 
@@ -93,6 +104,8 @@ export default function TransactionItemsList({
   const [showAddItemMenu, setShowAddItemMenu] = useState(false)
   const [shouldStick, setShouldStick] = useState(true)
   const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null)
+  const [bulkActionError, setBulkActionError] = useState<string | null>(null)
+  const [isRunningBulkAction, setIsRunningBulkAction] = useState(false)
   const [removeTargetItemId, setRemoveTargetItemId] = useState<string | null>(null)
   const [isRemoveConfirmOpen, setIsRemoveConfirmOpen] = useState(false)
   const [isRemoving, setIsRemoving] = useState(false)
@@ -170,7 +183,7 @@ export default function TransactionItemsList({
 
     const checkScrollPosition = () => {
       const container = document.getElementById(containerId)
-      const sentinel = document.getElementById('transaction-items-sentinel')
+      const sentinel = document.getElementById(sentinelId)
       
       if (!container || !sentinel) {
         // If elements don't exist, default to sticky
@@ -191,7 +204,7 @@ export default function TransactionItemsList({
     checkScrollPosition()
 
     // Set up IntersectionObserver on the sentinel
-    const sentinel = document.getElementById('transaction-items-sentinel')
+    const sentinel = document.getElementById(sentinelId)
     let observer: IntersectionObserver | null = null
 
     if (sentinel) {
@@ -219,7 +232,7 @@ export default function TransactionItemsList({
       window.removeEventListener('scroll', checkScrollPosition)
       window.removeEventListener('resize', checkScrollPosition)
     }
-  }, [containerId])
+  }, [containerId, sentinelId])
 
   useEffect(() => {
     if (typeof window === 'undefined' || !containerId) {
@@ -256,6 +269,12 @@ export default function TransactionItemsList({
       setBulkDeleteError(null)
     }
   }, [selectedItemIds, bulkDeleteError])
+
+  useEffect(() => {
+    if (selectedItemIds.size === 0 && bulkActionError) {
+      setBulkActionError(null)
+    }
+  }, [selectedItemIds, bulkActionError])
 
   // Close menus when clicking outside
   useEffect(() => {
@@ -786,9 +805,13 @@ export default function TransactionItemsList({
         onEdit={(href) => handleEditItem(item.id)}
         onClick={isPersisted ? () => setViewingItemId(item.id) : undefined}
         onChangeStatus={enablePersistedControls ? updateDisposition : undefined}
-        onAddToTransaction={enablePersistedControls ? () => openTransactionDialog(item.id) : undefined}
+        onAddToTransaction={
+          enableTransactionActions && enablePersistedControls
+            ? () => openTransactionDialog(item.id)
+            : undefined
+        }
         onRemoveFromTransaction={
-          item.transactionId
+          enableTransactionActions && item.transactionId
             ? (itemId) => requestRemoveFromTransaction(itemId)
             : undefined
         }
@@ -798,7 +821,7 @@ export default function TransactionItemsList({
         onMoveToProject={onMoveToProject}
         onDelete={handleDeleteItem}
         uploadingImages={new Set()}
-        context="transaction"
+        context={context}
         projectId={projectId}
         duplicateCount={groupSize}
         duplicateIndex={itemIndexInGroup}
@@ -966,6 +989,27 @@ export default function TransactionItemsList({
     }
   }
 
+  const handleBulkActionRun = async () => {
+    if (!bulkAction) return
+    if (selectedItemIds.size === 0) return
+
+    const selectedIds = Array.from(selectedItemIds)
+    const selected = items.filter(item => selectedItemIds.has(item.id))
+    if (selectedIds.length === 0 || selected.length === 0) return
+
+    setBulkActionError(null)
+    setIsRunningBulkAction(true)
+    try {
+      await bulkAction.onRun(selectedIds, selected)
+      setSelectedItemIds(new Set())
+    } catch (error) {
+      console.error('TransactionItemsList: bulk action failed', error)
+      setBulkActionError('Failed to run bulk action. Please try again.')
+    } finally {
+      setIsRunningBulkAction(false)
+    }
+  }
+
   const openTransactionDialog = (itemId: string) => {
     setTransactionTargetItemId(itemId)
     const targetItem = items.find(i => i.id === itemId)
@@ -1062,27 +1106,29 @@ export default function TransactionItemsList({
 
   return (
     <div className="relative space-y-4">
-      <BlockingConfirmDialog
-        open={isRemoveConfirmOpen}
-        title="Remove item from transaction?"
-        description={
-          <div className="text-sm text-gray-700 space-y-2">
-            <p>This will remove the item from this transaction.</p>
-            <p className="text-gray-600">The item will not be deleted.</p>
-          </div>
-        }
-        confirmLabel="Remove"
-        cancelLabel="Cancel"
-        confirmVariant="danger"
-        isConfirming={isRemoving}
-        onCancel={() => {
-          if (isRemoving) return
-          setIsRemoveConfirmOpen(false)
-          setRemoveTargetItemId(null)
-        }}
-        onConfirm={confirmRemoveFromTransaction}
-      />
-      {showTransactionDialog && (
+      {enableTransactionActions && (
+        <BlockingConfirmDialog
+          open={isRemoveConfirmOpen}
+          title="Remove item from transaction?"
+          description={
+            <div className="text-sm text-gray-700 space-y-2">
+              <p>This will remove the item from this transaction.</p>
+              <p className="text-gray-600">The item will not be deleted.</p>
+            </div>
+          }
+          confirmLabel="Remove"
+          cancelLabel="Cancel"
+          confirmVariant="danger"
+          isConfirming={isRemoving}
+          onCancel={() => {
+            if (isRemoving) return
+            setIsRemoveConfirmOpen(false)
+            setRemoveTargetItemId(null)
+          }}
+          onConfirm={confirmRemoveFromTransaction}
+        />
+      )}
+      {enableTransactionActions && showTransactionDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
             <div className="px-6 py-4 border-b border-gray-200">
@@ -1111,17 +1157,19 @@ export default function TransactionItemsList({
               {transactionDialogError && (
                 <p className="text-sm text-red-600">{transactionDialogError}</p>
               )}
-              <button
-                type="button"
-                onClick={() => {
-                  if (!transactionTargetItemId) return
-                  requestRemoveFromTransaction(transactionTargetItemId)
-                  setShowTransactionDialog(false)
-                }}
-                className="text-sm text-gray-700 hover:text-gray-900"
-              >
-            Remove from transaction
-              </button>
+              {enableTransactionActions && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!transactionTargetItemId) return
+                    requestRemoveFromTransaction(transactionTargetItemId)
+                    setShowTransactionDialog(false)
+                  }}
+                  className="text-sm text-gray-700 hover:text-gray-900"
+                >
+                  Remove from transaction
+                </button>
+              )}
             </div>
             <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
               <button
@@ -1361,6 +1409,9 @@ export default function TransactionItemsList({
           {bulkDeleteError && (
             <p className="mt-2 text-sm text-red-600">{bulkDeleteError}</p>
           )}
+          {bulkActionError && (
+            <p className="mt-2 text-sm text-red-600">{bulkActionError}</p>
+          )}
         </div>
       )}
 
@@ -1497,19 +1548,52 @@ export default function TransactionItemsList({
         )}
       </div>
       {showSelectionControls && (
-        <BulkItemControls
-          selectedItemIds={selectedItemIds}
-          projectId={projectId}
-          onDelete={handleBulkDeleteSelected}
-          onClearSelection={() => setSelectedItemIds(new Set())}
-          itemListContainerWidth={bulkControlsWidth}
-          enableAssignToTransaction={false}
-          enableLocation={false}
-          enableDisposition={false}
-          enableSku={false}
-          deleteButtonLabel="Delete selected items"
-          placement="container"
-        />
+        bulkAction ? (
+          selectedItemIds.size > 0 ? (
+          <div
+            className="sticky bottom-0 z-40 bg-white border-t border-gray-200 shadow-lg"
+            style={{ width: '100%' }}
+          >
+            <div className="px-4 py-3 flex items-center justify-between gap-3">
+              <span className="text-sm font-medium text-gray-700">
+                {selectedItemIds.size} item{selectedItemIds.size !== 1 ? 's' : ''} selected
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedItemIds(new Set())}
+                  disabled={isRunningBulkAction}
+                  className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkActionRun}
+                  disabled={isRunningBulkAction}
+                  className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-700 bg-red-50 border border-red-300 rounded-md hover:bg-red-100 disabled:opacity-50"
+                >
+                  {bulkAction.label}
+                </button>
+              </div>
+            </div>
+          </div>
+          ) : null
+        ) : (
+          <BulkItemControls
+            selectedItemIds={selectedItemIds}
+            projectId={projectId}
+            onDelete={handleBulkDeleteSelected}
+            onClearSelection={() => setSelectedItemIds(new Set())}
+            itemListContainerWidth={bulkControlsWidth}
+            enableAssignToTransaction={false}
+            enableLocation={false}
+            enableDisposition={false}
+            enableSku={false}
+            deleteButtonLabel="Delete selected items"
+            placement="container"
+          />
+        )
       )}
     </div>
   )
