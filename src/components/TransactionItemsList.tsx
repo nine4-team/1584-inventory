@@ -17,6 +17,7 @@ import ItemPreviewCard, { type ItemPreviewData } from './items/ItemPreviewCard'
 import BulkItemControls from '@/components/ui/BulkItemControls'
 import BlockingConfirmDialog from '@/components/ui/BlockingConfirmDialog'
 import { Combobox } from '@/components/ui/Combobox'
+import SpaceSelector from '@/components/spaces/SpaceSelector'
 import { supabase } from '@/services/supabase'
 import { lineageService } from '@/services/lineageService'
 
@@ -46,6 +47,8 @@ interface TransactionItemsListProps {
     label: string
     onRun: (selectedIds: string[], selectedItems: TransactionItemFormData[]) => Promise<void>
   }
+  enableLocation?: boolean
+  onSetSpaceId?: (spaceId: string | null, selectedIds: string[], selectedItems: TransactionItemFormData[]) => Promise<void> | void
   sentinelId?: string // ID of sentinel element to track sticky behavior
   context?: 'transaction' | 'space'
 }
@@ -73,6 +76,8 @@ export default function TransactionItemsList({
   containerId,
   enableTransactionActions = true,
   bulkAction,
+  enableLocation = false,
+  onSetSpaceId,
   sentinelId = 'transaction-items-sentinel',
   context = 'transaction'
 }: TransactionItemsListProps) {
@@ -116,6 +121,10 @@ export default function TransactionItemsList({
   const [transactionTargetItemId, setTransactionTargetItemId] = useState<string | null>(null)
   const [isUpdatingTransaction, setIsUpdatingTransaction] = useState(false)
   const [bulkControlsWidth, setBulkControlsWidth] = useState<number | undefined>(undefined)
+  const [showLocationDialog, setShowLocationDialog] = useState(false)
+  const [spaceIdValue, setSpaceIdValue] = useState<string | null>(null)
+  const [isSettingSpace, setIsSettingSpace] = useState(false)
+  const [bulkLocationError, setBulkLocationError] = useState<string | null>(null)
   const { currentAccountId } = useAccount()
   const { buildContextUrl } = useNavigationContext()
   const { refreshCollections: refreshProjectCollections } = useProjectRealtime(projectId)
@@ -274,7 +283,10 @@ export default function TransactionItemsList({
     if (selectedItemIds.size === 0 && bulkActionError) {
       setBulkActionError(null)
     }
-  }, [selectedItemIds, bulkActionError])
+    if (selectedItemIds.size === 0 && bulkLocationError) {
+      setBulkLocationError(null)
+    }
+  }, [selectedItemIds, bulkActionError, bulkLocationError])
 
   // Close menus when clicking outside
   useEffect(() => {
@@ -1010,6 +1022,29 @@ export default function TransactionItemsList({
     }
   }
 
+  const handleBulkSetSpaceId = async () => {
+    if (!onSetSpaceId) return
+    if (selectedItemIds.size === 0) return
+
+    const selectedIds = Array.from(selectedItemIds)
+    const selected = items.filter(item => selectedItemIds.has(item.id))
+    if (selectedIds.length === 0 || selected.length === 0) return
+
+    setBulkLocationError(null)
+    setIsSettingSpace(true)
+    try {
+      await onSetSpaceId(spaceIdValue ?? null, selectedIds, selected)
+      setSelectedItemIds(new Set())
+      setShowLocationDialog(false)
+      setSpaceIdValue(null)
+    } catch (error) {
+      console.error('TransactionItemsList: bulk space update failed', error)
+      setBulkLocationError('Failed to set space. Please try again.')
+    } finally {
+      setIsSettingSpace(false)
+    }
+  }
+
   const openTransactionDialog = (itemId: string) => {
     setTransactionTargetItemId(itemId)
     const targetItem = items.find(i => i.id === itemId)
@@ -1412,6 +1447,9 @@ export default function TransactionItemsList({
           {bulkActionError && (
             <p className="mt-2 text-sm text-red-600">{bulkActionError}</p>
           )}
+        {bulkLocationError && (
+          <p className="mt-2 text-sm text-red-600">{bulkLocationError}</p>
+        )}
         </div>
       )}
 
@@ -1554,24 +1592,34 @@ export default function TransactionItemsList({
             className="sticky bottom-0 z-40 bg-white border-t border-gray-200 shadow-lg"
             style={{ width: '100%' }}
           >
-            <div className="px-4 py-3 flex items-center justify-between gap-3">
-              <span className="text-sm font-medium text-gray-700">
+            <div className="py-3 flex flex-col gap-2">
+              <span className="text-xs font-medium text-gray-600">
                 {selectedItemIds.size} item{selectedItemIds.size !== 1 ? 's' : ''} selected
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-nowrap">
                 <button
                   type="button"
                   onClick={() => setSelectedItemIds(new Set())}
                   disabled={isRunningBulkAction}
-                  className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+                  className="flex-1 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
                 >
                   Clear
                 </button>
+                {enableLocation && onSetSpaceId && (
+                  <button
+                    type="button"
+                    onClick={() => setShowLocationDialog(true)}
+                    disabled={isRunningBulkAction || isSettingSpace}
+                    className="inline-flex items-center justify-center gap-2 flex-1 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Set Space
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={handleBulkActionRun}
                   disabled={isRunningBulkAction}
-                  className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-700 bg-red-50 border border-red-300 rounded-md hover:bg-red-100 disabled:opacity-50"
+                  className="inline-flex items-center justify-center gap-2 flex-1 px-3 py-2 text-sm font-medium text-red-700 bg-red-50 border border-red-300 rounded-md hover:bg-red-100 disabled:opacity-50"
                 >
                   {bulkAction.label}
                 </button>
@@ -1594,6 +1642,60 @@ export default function TransactionItemsList({
             placement="container"
           />
         )
+      )}
+      {enableLocation && onSetSpaceId && showLocationDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-medium text-gray-900">
+                Set Space for {selectedItemIds.size} item{selectedItemIds.size !== 1 ? 's' : ''}
+              </h3>
+            </div>
+            <div className="px-6 py-4">
+              {projectId ? (
+                <SpaceSelector
+                  projectId={projectId}
+                  value={spaceIdValue}
+                  onChange={(spaceId) => setSpaceIdValue(spaceId)}
+                  placeholder="Select or create a space..."
+                  allowCreate={Boolean(currentAccountId && projectId)}
+                />
+              ) : (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Space
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Select a project to choose spaces"
+                    disabled
+                    className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-50 text-gray-500 cursor-not-allowed"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">Bulk space setting is only available for project items</p>
+                </div>
+              )}
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowLocationDialog(false)
+                  setSpaceIdValue(null)
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                disabled={isSettingSpace}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBulkSetSpaceId}
+                disabled={isSettingSpace}
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSettingSpace ? 'Setting...' : 'Set Space'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
