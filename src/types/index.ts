@@ -99,8 +99,9 @@ export interface Project {
 export type ProjectBudgetCategories = Record<string, number>
 
 export interface ProjectSettings {
-  allowPublicAccess: boolean;
-  notificationsEnabled: boolean;
+  allowPublicAccess?: boolean;
+  notificationsEnabled?: boolean;
+  locations?: string[];
 }
 
 export interface ProjectMetadata {

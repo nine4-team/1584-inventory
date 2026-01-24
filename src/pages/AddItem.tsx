@@ -9,7 +9,7 @@ import { OfflineAwareImageService } from '@/services/offlineAwareImageService'
 import { offlineMediaService } from '@/services/offlineMediaService'
 import { TransactionSource } from '@/constants/transactionSources'
 import { getAvailableVendors } from '@/services/vendorDefaultsService'
-import { Transaction, ItemImage, ItemDisposition } from '@/types'
+import { Transaction, ItemImage, ItemDisposition, Project } from '@/types'
 import { Combobox } from '@/components/ui/Combobox'
 import ImagePreview from '@/components/ui/ImagePreview'
 import QuantityPill from '@/components/ui/QuantityPill'
@@ -33,6 +33,7 @@ import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, COMPANY_NAME } from
 import { projectItems } from '@/utils/routes'
 import { navigateToReturnToOrFallback } from '@/utils/navigationReturnTo'
 import SpeechMicButton from '@/components/ui/SpeechMicButton'
+import { getProjectLocations } from '@/utils/locationPresets'
 
 // Get canonical transaction title for display
 const getCanonicalTransactionTitle = (transaction: Transaction): string => {
@@ -83,6 +84,7 @@ export default function AddItem() {
   const itemSavedRef = useRef(false)
 
   const [projectName, setProjectName] = useState<string>('')
+  const [project, setProject] = useState<Project | null>(null)
 
   // Check if user has permission to add items (USER role or higher)
   if (!hasRole(UserRole.USER)) {
@@ -143,10 +145,11 @@ export default function AddItem() {
       if (projectId && currentAccountId) {
         setLoadingTransactions(true)
         try {
-          // Fetch project name for image uploads
-          const project = await projectService.getProject(currentAccountId, projectId)
-          if (project) {
-            setProjectName(project.name)
+          // Fetch project name for image uploads and locations
+          const fetchedProject = await projectService.getProject(currentAccountId, projectId)
+          if (fetchedProject) {
+            setProjectName(fetchedProject.name)
+            setProject(fetchedProject)
           }
 
           // Fetch transactions
@@ -839,22 +842,55 @@ export default function AddItem() {
             <label htmlFor="space" className="block text-sm font-medium text-gray-700">
               Space
             </label>
-            <div className="mt-1 relative">
-              <input
-                type="text"
-                id="space"
-                value={formData.space}
-                onChange={(e) => handleInputChange('space', e.target.value)}
-                placeholder="e.g., Living Room, Master Bedroom, Kitchen"
-                className="block w-full px-3 py-2 pr-12 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-              />
-              <SpeechMicButton
-                value={formData.space}
-                onChangeText={(next) => handleInputChange('space', next)}
-                label="Space"
-                append={false}
-              />
-            </div>
+            {projectId && project ? (
+              <div className="mt-1">
+                <Combobox
+                  label=""
+                  options={[
+                    { id: '', label: 'No space set' },
+                    ...getProjectLocations(project.settings).map(loc => ({ id: loc, label: loc }))
+                  ]}
+                  value={formData.space}
+                  onChange={(value) => handleInputChange('space', value)}
+                  placeholder="Select or create a location..."
+                  allowCreate={Boolean(currentAccountId && projectId)}
+                  onCreateOption={async (query: string) => {
+                    if (!currentAccountId || !projectId) {
+                      throw new Error('Project or account unavailable for location creation')
+                    }
+                    try {
+                      const createdLocation = await projectService.addProjectLocation(
+                        currentAccountId,
+                        projectId,
+                        query
+                      )
+                      // Refresh project to get updated locations
+                      const updatedProject = await projectService.getProject(currentAccountId, projectId)
+                      if (updatedProject) {
+                        setProject(updatedProject)
+                      }
+                      return createdLocation
+                    } catch (error) {
+                      console.error('Failed to create location:', error)
+                      throw error
+                    }
+                  }}
+                />
+              </div>
+            ) : (
+              <div className="mt-1">
+                <input
+                  type="text"
+                  id="space"
+                  value={formData.space}
+                  onChange={(e) => handleInputChange('space', e.target.value)}
+                  placeholder="Select a project to choose locations"
+                  disabled
+                  className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-50 text-gray-500 cursor-not-allowed"
+                />
+                <p className="mt-1 text-xs text-gray-500">Select a project to choose locations</p>
+              </div>
+            )}
           </div>
 
           {/* Disposition */}

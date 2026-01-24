@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
 import { Receipt, MapPin, Tag, Trash2, X } from 'lucide-react'
-import { Transaction } from '@/types'
-import { transactionService } from '@/services/inventoryService'
+import { Transaction, Project } from '@/types'
+import { transactionService, projectService } from '@/services/inventoryService'
 import { DISPOSITION_OPTIONS, displayDispositionLabel } from '@/utils/dispositionUtils'
 import type { ItemDisposition } from '@/types'
 import { useAccount } from '@/contexts/AccountContext'
 import { Combobox } from '@/components/ui/Combobox'
+import { getProjectLocations } from '@/utils/locationPresets'
 
 interface BulkItemControlsProps {
   selectedItemIds: Set<string>
@@ -62,6 +63,9 @@ export default function BulkItemControls({
   const [selectedDisposition, setSelectedDisposition] = useState<ItemDisposition | ''>('')
   const [skuValue, setSkuValue] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
+  const [project, setProject] = useState<Project | null>(null)
+  const [loadingProject, setLoadingProject] = useState(false)
+  const [hasLocationSelection, setHasLocationSelection] = useState(false)
 
   // Load transactions when dialog opens
   useEffect(() => {
@@ -70,6 +74,33 @@ export default function BulkItemControls({
       loadTransactions()
     }
   }, [showTransactionDialog, currentAccountId, canAssign, projectId, transactions.length])
+
+  // Load project when location dialog opens
+  useEffect(() => {
+    if (!canSetLocation || !showLocationDialog) return
+    if (!currentAccountId || !projectId) return
+    
+    const loadProject = async () => {
+      setLoadingProject(true)
+      try {
+        const fetchedProject = await projectService.getProject(currentAccountId, projectId)
+        setProject(fetchedProject)
+      } catch (error) {
+        console.error('Failed to load project:', error)
+        setProject(null)
+      } finally {
+        setLoadingProject(false)
+      }
+    }
+
+    loadProject()
+  }, [showLocationDialog, currentAccountId, projectId, canSetLocation])
+
+  useEffect(() => {
+    if (!showLocationDialog) return
+    setLocationValue('')
+    setHasLocationSelection(false)
+  }, [showLocationDialog])
 
   const loadTransactions = async () => {
     if (!currentAccountId || !projectId) return
@@ -116,6 +147,7 @@ export default function BulkItemControls({
       await onSetLocation(locationValue)
       setShowLocationDialog(false)
       setLocationValue('')
+      setHasLocationSelection(false)
       onClearSelection()
     } catch (error) {
       console.error('Failed to set location:', error)
@@ -325,24 +357,85 @@ export default function BulkItemControls({
               </h3>
             </div>
             <div className="px-6 py-4">
-              <label htmlFor="location-input" className="block text-sm font-medium text-gray-700 mb-2">
-                Location
-              </label>
-              <input
-                id="location-input"
-                type="text"
-                value={locationValue}
-                onChange={(e) => setLocationValue(e.target.value)}
-                placeholder="e.g., Living Room, Master Bedroom, Kitchen"
-                className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                disabled={isProcessing}
-              />
+              {projectId && project ? (
+                <Combobox
+                  label="Location"
+                  value={locationValue}
+                  onChange={(value) => {
+                    setLocationValue(value)
+                    setHasLocationSelection(true)
+                  }}
+                  disabled={isProcessing || loadingProject}
+                  loading={loadingProject}
+                  placeholder={loadingProject ? "Loading locations..." : "Select or create a location..."}
+                  allowCreate={Boolean(currentAccountId && projectId)}
+                  onCreateOption={async (query: string) => {
+                    if (!currentAccountId || !projectId) {
+                      throw new Error('Project or account unavailable for location creation')
+                    }
+                    try {
+                      const createdLocation = await projectService.addProjectLocation(
+                        currentAccountId,
+                        projectId,
+                        query
+                      )
+                      // Refresh project to get updated locations
+                      const updatedProject = await projectService.getProject(currentAccountId, projectId)
+                      if (updatedProject) {
+                        setProject(updatedProject)
+                      }
+                      return createdLocation
+                    } catch (error) {
+                      console.error('Failed to create location:', error)
+                      throw error
+                    }
+                  }}
+                  options={[
+                    { id: '', label: 'No location set' },
+                    ...getProjectLocations(project.settings).map(loc => ({ id: loc, label: loc }))
+                  ]}
+                />
+              ) : projectId ? (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Location
+                  </label>
+                  <input
+                    type="text"
+                    value={locationValue}
+                    onChange={(e) => setLocationValue(e.target.value)}
+                    placeholder={loadingProject ? "Loading..." : "Select a project to choose locations"}
+                    disabled
+                    className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-50 text-gray-500 cursor-not-allowed"
+                  />
+                  {!loadingProject && (
+                    <p className="mt-1 text-xs text-gray-500">Project not found</p>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Location
+                  </label>
+                  <input
+                    type="text"
+                    value={locationValue}
+                    onChange={(e) => setLocationValue(e.target.value)}
+                    placeholder="Select a project to choose locations"
+                    disabled
+                    className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-50 text-gray-500 cursor-not-allowed"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">Bulk location setting is only available for project items</p>
+                </div>
+              )}
             </div>
             <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
               <button
                 onClick={() => {
                   setShowLocationDialog(false)
                   setLocationValue('')
+                  setHasLocationSelection(false)
+                  setProject(null)
                 }}
                 className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
                 disabled={isProcessing}
@@ -351,7 +444,7 @@ export default function BulkItemControls({
               </button>
               <button
                 onClick={handleSetLocation}
-                disabled={isProcessing}
+                disabled={isProcessing || !hasLocationSelection}
                 className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isProcessing ? 'Setting...' : 'Set Location'}

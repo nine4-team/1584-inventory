@@ -5,6 +5,7 @@ import { getTaxPresetById } from './taxPresetsService'
 import { getDefaultCategory } from './accountPresetsService'
 import { CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { lineageService } from './lineageService'
+import { dedupeLocations, getProjectLocations, normalizeLocationName } from '@/utils/locationPresets'
 import { offlineStore, type DBItem, type DBTransaction, type DBProject, mapItemToDBItem, mapProjectToDBProject } from './offlineStore'
 import { offlineTransactionService } from './offlineTransactionService'
 import { isNetworkOnline, withNetworkTimeout, NetworkTimeoutError } from './networkStatusService'
@@ -1449,6 +1450,62 @@ export const projectService = {
       const { offlineProjectService } = await import('./offlineProjectService')
       await offlineProjectService.deleteProject(accountId, projectId)
     }
+  },
+
+  // Add a location to a project's preset list
+  async addProjectLocation(accountId: string, projectId: string, rawName: string): Promise<string> {
+    // Normalize the location name
+    const normalizedName = normalizeLocationName(rawName)
+    if (!normalizedName) {
+      throw new Error('Location name cannot be empty')
+    }
+
+    // Load current project (try cache first, then fetch)
+    let project: Project | null = null
+    try {
+      const queryClient = tryGetQueryClient()
+      if (queryClient) {
+        project = queryClient.getQueryData<Project>(['project', accountId, projectId]) ?? null
+      }
+    } catch (e) {
+      // Non-fatal - will fetch below
+    }
+
+    if (!project) {
+      project = await this.getProject(accountId, projectId)
+    }
+
+    if (!project) {
+      throw new Error(`Project ${projectId} not found`)
+    }
+
+    // Get existing locations
+    const existingLocations = getProjectLocations(project.settings)
+    
+    // Check if location already exists (case-insensitive)
+    const normalizedLower = normalizedName.toLowerCase()
+    const existingMatch = existingLocations.find(
+      loc => normalizeLocationName(loc).toLowerCase() === normalizedLower
+    )
+
+    if (existingMatch) {
+      // Return the existing canonical display string
+      return existingMatch.trim()
+    }
+
+    // Add the new location
+    const updatedLocations = dedupeLocations([...existingLocations, normalizedName])
+
+    // Update project settings
+    await this.updateProject(accountId, projectId, {
+      settings: {
+        ...(project.settings || {}),
+        locations: updatedLocations
+      }
+    })
+
+    // Return the normalized name (which becomes the canonical display string)
+    return normalizedName
   },
 
   // Subscribe to projects with real-time updates
