@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { Save, AlertCircle, Plus, Edit2, Archive, ArchiveRestore, X, Trash2, GripVertical, Info, MoreVertical } from 'lucide-react'
 import { budgetCategoriesService } from '@/services/budgetCategoriesService'
 import { getDefaultCategory, setDefaultCategory, setBudgetCategoryOrder } from '@/services/accountPresetsService'
@@ -27,6 +28,7 @@ export default function BudgetCategoriesManager() {
   const [dragOverCategoryId, setDragOverCategoryId] = useState<string | null>(null)
   const [isSavingOrder, setIsSavingOrder] = useState(false)
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
+  const [hasArchivedCategories, setHasArchivedCategories] = useState(false)
 
   const loadCategories = useCallback(async () => {
     if (!currentAccountId) return
@@ -39,6 +41,9 @@ export default function BudgetCategoriesManager() {
         showArchived
       )
       setCategories(loadedCategories)
+      setHasArchivedCategories(prevHasArchived =>
+        showArchived ? loadedCategories.some(category => category.isArchived) : prevHasArchived
+      )
       // Load saved account-wide default category from Postgres account_presets
       try {
         const defaultCategory = await getDefaultCategory(currentAccountId)
@@ -69,6 +74,22 @@ export default function BudgetCategoriesManager() {
       setError('No account found. Please ensure you are logged in and have an account.')
     }
   }, [currentAccountId, accountLoading, loadCategories])
+
+  useEffect(() => {
+    if (!creating) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        handleCancel()
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [creating])
 
   useEffect(() => {
     if (!openMenuId) return
@@ -218,6 +239,7 @@ export default function BudgetCategoriesManager() {
       setSuccessMessage(null)
 
       await budgetCategoriesService.archiveCategory(currentAccountId, categoryId)
+      setHasArchivedCategories(true)
       setSuccessMessage('Category archived successfully')
 
       // Reload categories
@@ -344,6 +366,7 @@ export default function BudgetCategoriesManager() {
 
   const activeCategories = categories.filter(c => !c.isArchived)
   const archivedCategories = categories.filter(c => c.isArchived)
+  const showArchivedSection = hasArchivedCategories || archivedCategories.length > 0
 
   return (
     <div className="space-y-4">
@@ -355,7 +378,7 @@ export default function BudgetCategoriesManager() {
       </div>
 
       {/* Account-wide default category preset */}
-      <div className="bg-gray-50 border border-gray-200 rounded-md p-4">
+      <div className="bg-gray-50 border border-gray-200 rounded-md p-4 max-w-4xl">
         <p className="text-sm text-gray-500 mb-3">Set the default category that will be used when creating transactions.</p>
         <div className="flex items-start space-x-3">
           <div className="w-full max-w-xs">
@@ -364,7 +387,6 @@ export default function BudgetCategoriesManager() {
               label="Default Transaction Category"
               value={selectedDefaultCategoryId || undefined}
               onChange={(categoryId) => setSelectedDefaultCategoryId(categoryId || null)}
-              helperText="This default applies account-wide (saved locally for now)"
               asDropdown={true}
             />
           </div>
@@ -418,84 +440,43 @@ export default function BudgetCategoriesManager() {
         </div>
       )}
 
-      {/* Create Form - Only show when creating, not when editing inline */}
-      {creating && (
-        <div className="bg-gray-50 border border-gray-200 rounded-md p-4 space-y-3">
-          <h5 className="text-sm font-medium text-gray-900">
-            Create New Category
-          </h5>
-          <div>
-            <label htmlFor="category-name" className="block text-sm font-medium text-gray-700 mb-1">
-              Name *
-            </label>
-            <input
-              type="text"
-              id="category-name"
-              value={formData.name}
-              onChange={(e) => handleFormChange('name', e.target.value)}
-              placeholder="e.g., Design Fee, Furnishings"
-              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
-              autoFocus
-            />
-          </div>
-          {/* slug removed from settings UI */}
-          <div className="flex items-center space-x-2">
-            <Button
-              onClick={handleSave}
-              disabled={isSaving || !formData.name.trim()}
-              size="sm"
-            >
-              <Save className="h-4 w-4 mr-2" />
-              {isSaving ? 'Saving...' : creating ? 'Create' : 'Save'}
-            </Button>
-            <Button
-              onClick={handleCancel}
-              variant="secondary"
-              size="sm"
-              disabled={isSaving}
-            >
-              <X className="h-4 w-4 mr-2" />
-              Cancel
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* Create Button - simplified UI */}
-      {!creating && !editingId && (
-        <div className="flex items-center justify-between">
-          <div />
-          <Button onClick={handleStartCreate} size="sm">
-            <Plus className="h-4 w-4 mr-2" />
-            Add Category
-          </Button>
-        </div>
-      )}
 
       {/* bulk operations removed */}
 
       {/* Categories Table */}
       <div className={presetsTableStyles.wrapper}>
+        {showArchivedSection && (
+          <div className="flex justify-end px-4 py-2 border-b border-gray-200">
+            <button
+              type="button"
+              onClick={() => setShowArchived(!showArchived)}
+              className="text-sm text-primary-600 hover:text-primary-700"
+            >
+              {showArchived ? 'Hide' : 'Show'} Archived
+            </button>
+          </div>
+        )}
         <table className={presetsTableStyles.table}>
-          <thead className={presetsTableStyles.headerRow}>
-            <tr>
-              <th scope="col" className={`${presetsTableStyles.headerCell} w-6`}>
-                {/* Drag handle column */}
-              </th>
-              <th scope="col" className={presetsTableStyles.headerCellCompact}>
-                Name
-              </th>
-              {/* slug and transactions columns removed */}
-              <th scope="col" className={presetsTableStyles.headerCellCompact}>
-                Itemize
-              </th>
-              <th scope="col" className={presetsTableStyles.headerCellCompact}>
-                Actions
-              </th>
-            </tr>
-          </thead>
           <tbody className={presetsTableStyles.body}>
-            {activeCategories.length === 0 && archivedCategories.length === 0 ? (
+            {activeCategories.length > 0 || creating ? (
+              <tr>
+                <td className="py-2 bg-gray-100 pl-3 pr-2 sm:pl-4">
+                  {/* Empty cell for drag handle column */}
+                </td>
+                <td className="py-2 bg-gray-100 pl-2 pr-2">
+                  <span className="text-sm font-medium text-gray-700">Active Categories</span>
+                </td>
+                <td className="py-2 bg-gray-100 px-2">
+                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Itemize</span>
+                </td>
+                <td className="py-2 bg-gray-100 px-2">
+                  {/* Empty cell for actions column */}
+                </td>
+              </tr>
+            ) : null}
+
+            {/* Empty state or categories */}
+            {activeCategories.length === 0 && archivedCategories.length === 0 && !creating ? (
               <tr>
                 <td colSpan={4} className="py-8 text-center text-sm text-gray-500">
                   No categories found. Create your first category to get started.
@@ -632,63 +613,161 @@ export default function BudgetCategoriesManager() {
                   </tr>
                 )})
             }
-            {archivedCategories.length > 0 && (
+            
+            {/* Add new category row (when not creating) */}
+            {!creating && !editingId && (
+              <tr 
+                className="bg-gray-50 hover:bg-gray-100 cursor-pointer transition-colors"
+                onClick={handleStartCreate}
+              >
+                <td className="whitespace-nowrap py-2 pl-3 pr-2 text-gray-400 sm:pl-4">
+                  {/* Empty drag handle cell */}
+                </td>
+                <td className="whitespace-nowrap py-2 pl-2 pr-2 text-gray-400">
+                  <div className="flex items-center">
+                    <Plus className="h-4 w-4 mr-2 flex-shrink-0" />
+                    <span className="text-sm italic whitespace-nowrap">Click to create new category</span>
+                  </div>
+                </td>
+                <td className="whitespace-nowrap px-2 py-2 text-gray-400">
+                  <span className="text-sm italic">-</span>
+                </td>
+                <td className="whitespace-nowrap px-2 py-2 text-gray-400">
+                  {/* Empty actions cell */}
+                </td>
+              </tr>
+            )}
+            
+            {showArchivedSection && (
               <>
+                {(activeCategories.length > 0 || creating) && (
+                  <tr>
+                    <td colSpan={4} className="py-2">
+                      <div className="h-2" />
+                    </td>
+                  </tr>
+                )}
                 <tr>
-                  <td colSpan={4} className="py-2 bg-gray-100">
-                    <div className="flex items-center justify-between px-4">
-                      <span className="text-sm font-medium text-gray-700">Archived Categories</span>
-                      <button
-                        type="button"
-                        onClick={() => setShowArchived(!showArchived)}
-                        className="text-sm text-primary-600 hover:text-primary-700"
-                      >
-                        {showArchived ? 'Hide' : 'Show'} Archived
-                      </button>
-                    </div>
+                  <td className="py-2 bg-gray-100 pl-3 pr-2 sm:pl-4">
+                    {/* Empty cell for drag handle column */}
+                  </td>
+                  <td className="py-2 bg-gray-100 pl-2 pr-2">
+                    <span className="text-sm font-medium text-gray-700">Archived Categories</span>
+                  </td>
+                  <td className="py-2 bg-gray-100 px-2">
+                    <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Itemize</span>
+                  </td>
+                  <td className="py-2 bg-gray-100 px-2">
+                    {/* Empty cell for actions column */}
                   </td>
                 </tr>
                 {showArchived &&
                   archivedCategories.map((category) => (
-                    <tr key={category.id} className="bg-gray-50">
+                    <tr 
+                      key={category.id} 
+                      className={`bg-gray-50 ${editingId === category.id ? 'bg-gray-100' : ''}`}
+                    >
                     <td className="whitespace-nowrap py-2 pl-3 pr-2 text-gray-500 sm:pl-4">
                         {/* Empty cell for drag handle column */}
                       </td>
                       <td className="py-2 pl-2 pr-2 font-medium text-gray-500">
-                        <span className="block max-w-[10rem] truncate">
-                          {category.name}
-                        </span>
+                        {editingId === category.id ? (
+                          <input
+                            type="text"
+                            value={formData.name}
+                            onChange={(e) => handleFormChange('name', e.target.value)}
+                            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 text-sm"
+                            autoFocus
+                          />
+                        ) : (
+                          <span className="block max-w-[10rem] truncate">
+                            {category.name}
+                          </span>
+                        )}
                       </td>
                       <td className="whitespace-nowrap px-2 py-2 text-gray-500">
-                        <div className="flex items-center space-x-1">
-                          <label className="relative inline-flex items-center cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={getItemizationEnabled(category)}
-                              onChange={() => handleToggleItemization(category.id, getItemizationEnabled(category))}
-                              disabled={isSaving}
-                              className="sr-only peer"
-                            />
-                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
-                          </label>
-                          <div className="group relative">
-                            <Info className="h-3.5 w-3.5 text-gray-400 cursor-help" />
-                            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-64 p-2 bg-gray-900 text-white text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-                              When enabled, transactions in this category can have line items attached. When disabled, the items section and audit/review features are hidden for transactions in this category.
+                        {editingId !== category.id && (
+                          <div className="flex items-center space-x-1">
+                            <label className="relative inline-flex items-center cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={getItemizationEnabled(category)}
+                                onChange={() => handleToggleItemization(category.id, getItemizationEnabled(category))}
+                                disabled={isSaving}
+                                className="sr-only peer"
+                              />
+                              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
+                            </label>
+                            <div className="group relative">
+                              <Info className="h-3.5 w-3.5 text-gray-400 cursor-help" />
+                              <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-64 p-2 bg-gray-900 text-white text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                                When enabled, transactions in this category can have line items attached. When disabled, the items section and audit/review features are hidden for transactions in this category.
+                              </div>
                             </div>
                           </div>
-                        </div>
+                        )}
                       </td>
                       <td className="whitespace-nowrap px-2 py-2 text-gray-500">
-                        <button
-                          type="button"
-                          onClick={() => handleUnarchive(category.id)}
-                          disabled={isSaving}
-                          className="inline-flex items-center px-2 py-1 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          <ArchiveRestore className="h-3 w-3 mr-1" />
-                          Unarchive
-                        </button>
+                        {editingId === category.id ? (
+                          <div className="flex items-center space-x-2">
+                            <button
+                              type="button"
+                              onClick={handleSave}
+                              disabled={isSaving || !formData.name.trim()}
+                              className="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <Save className="h-3 w-3 mr-1" />
+                              {isSaving ? 'Saving...' : 'Save'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleCancel}
+                              disabled={isSaving}
+                              className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className={`${presetsActionMenuStyles.wrapper} category-actions-menu`}>
+                            <button
+                              type="button"
+                              onClick={() => setOpenMenuId(prev => (prev === category.id ? null : category.id))}
+                              disabled={isSaving}
+                              className={presetsActionMenuStyles.button}
+                              aria-haspopup="menu"
+                              aria-expanded={openMenuId === category.id}
+                            >
+                              <span className="sr-only">Open actions</span>
+                              <MoreVertical className="h-3.5 w-3.5" />
+                            </button>
+                            {openMenuId === category.id && (
+                              <div
+                                className={presetsActionMenuStyles.panel}
+                                role="menu"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartEdit(category)}
+                                  className={presetsActionMenuStyles.item}
+                                  role="menuitem"
+                                >
+                                  <Edit2 className="h-3.5 w-3.5 mr-2 text-gray-500" />
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUnarchive(category.id)}
+                                  className={presetsActionMenuStyles.item}
+                                  role="menuitem"
+                                >
+                                  <ArchiveRestore className="h-3.5 w-3.5 mr-2 text-gray-500" />
+                                  Unarchive
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -697,6 +776,73 @@ export default function BudgetCategoriesManager() {
           </tbody>
         </table>
       </div>
+
+      {creating &&
+        createPortal(
+          <div
+            className="fixed left-0 top-0 z-50 flex h-[100dvh] w-screen items-start justify-center bg-gray-900/40 p-4 sm:items-center"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Create budget category"
+            onClick={handleCancel}
+          >
+            <div
+              className="w-full max-w-[calc(100vw-2rem)] sm:max-w-2xl space-y-6 rounded-lg bg-white shadow-xl mx-auto max-h-[calc(100dvh-2rem)] overflow-y-auto"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Create budget category</h3>
+                  <p className="mt-1 text-sm text-gray-500">Add a name for this category.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  className="rounded-md p-2 text-gray-500 hover:text-gray-700"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="px-6 pb-6 space-y-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2" htmlFor="budget-category-name">
+                    Category Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    id="budget-category-name"
+                    type="text"
+                    value={formData.name}
+                    onChange={(e) => handleFormChange('name', e.target.value)}
+                    placeholder="Category name"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    autoFocus
+                  />
+                </div>
+                <div className="flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={handleCancel}
+                    disabled={isSaving}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    disabled={isSaving || !formData.name.trim()}
+                    className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50"
+                  >
+                    <Save className="h-4 w-4 mr-2" />
+                    {isSaving ? 'Saving...' : 'Create category'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   )
 }

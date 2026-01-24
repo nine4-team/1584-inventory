@@ -315,7 +315,7 @@ export default function Settings() {
                 {/* Sub-tab content */}
                 <div>
                   {activePresetTab === 'budget-categories' && (
-                    <div className="bg-white overflow-hidden shadow rounded-lg">
+                    <div className="bg-white overflow-visible shadow rounded-lg">
                       <div className="p-6">
                         <BudgetCategoriesManager />
                       </div>
@@ -323,7 +323,7 @@ export default function Settings() {
                   )}
 
                   {activePresetTab === 'vendor-defaults' && (
-                    <div className="bg-white overflow-hidden shadow rounded-lg">
+                    <div className="bg-white overflow-visible shadow rounded-lg">
                       <div className="p-6">
                         <VendorDefaultsManager />
                       </div>
@@ -331,7 +331,7 @@ export default function Settings() {
                   )}
 
                   {activePresetTab === 'tax-presets' && (
-                    <div className="bg-white overflow-hidden shadow rounded-lg">
+                    <div className="bg-white overflow-visible shadow rounded-lg">
                       <div className="p-6">
                         <TaxPresetsManager />
                       </div>
@@ -339,7 +339,7 @@ export default function Settings() {
                   )}
 
                   {activePresetTab === 'space-templates' && (
-                    <div className="bg-white overflow-hidden shadow rounded-lg">
+                    <div className="bg-white overflow-visible shadow rounded-lg">
                       <div className="p-6">
                         <SpaceTemplatesManager />
                       </div>
