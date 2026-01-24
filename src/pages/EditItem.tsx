@@ -29,6 +29,7 @@ import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, COMPANY_NAME } from
 import { projectItemDetail, projectItems } from '@/utils/routes'
 import { getReturnToFromLocation, navigateToReturnToOrFallback } from '@/utils/navigationReturnTo'
 import SpeechMicButton from '@/components/ui/SpeechMicButton'
+import { getProjectLocations } from '@/utils/locationPresets'
 
 // Get canonical transaction title for display
 const getCanonicalTransactionTitle = (transaction: Transaction): string => {
@@ -119,6 +120,7 @@ export default function EditItem() {
   const isUploadingImage = uploadsInFlight > 0
   const [uploadProgress, setUploadProgress] = useState<number>(0)
   const [projectName, setProjectName] = useState<string>('')
+  const [currentProject, setCurrentProject] = useState<Project | null>(null)
   const offlineMediaIdsRef = useRef<Set<string>>(new Set())
   const initialFormDataRef = useRef<typeof formData | null>(null)
   const initialProjectIdRef = useRef<string | null>(null)
@@ -250,9 +252,13 @@ export default function EditItem() {
         const project = await projectService.getProject(currentAccountId, activeProjectId)
         if (project) {
           setProjectName(project.name)
+          setCurrentProject(project)
+        } else {
+          setCurrentProject(null)
         }
       } catch (error) {
         console.error('Failed to load project name:', error)
+        setCurrentProject(null)
       }
     }
 
@@ -1003,22 +1009,57 @@ export default function EditItem() {
                 <label htmlFor="space" className="block text-sm font-medium text-gray-700">
                   Space
                 </label>
-                <div className="mt-1 relative">
-                  <input
-                    type="text"
-                    id="space"
-                    value={formData.space}
-                    onChange={(e) => handleInputChange('space', e.target.value)}
-                    placeholder="e.g., Living Room, Master Bedroom, Kitchen"
-                    className="block w-full px-3 py-2 pr-12 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                  />
-                  <SpeechMicButton
-                    value={formData.space}
-                    onChangeText={(next) => handleInputChange('space', next)}
-                    label="Space"
-                    append={false}
-                  />
-                </div>
+                {activeProjectId && currentProject ? (
+                  <div className="mt-1">
+                    <Combobox
+                      label=""
+                      options={[
+                        { id: '', label: 'No space set' },
+                        ...getProjectLocations(currentProject.settings).map(loc => ({ id: loc, label: loc }))
+                      ]}
+                      value={formData.space}
+                      onChange={(value) => handleInputChange('space', value)}
+                      placeholder="Select or create a location..."
+                      allowCreate={Boolean(currentAccountId && activeProjectId)}
+                      onCreateOption={async (query: string) => {
+                        if (!currentAccountId || !activeProjectId) {
+                          throw new Error('Project or account unavailable for location creation')
+                        }
+                        try {
+                          const createdLocation = await projectService.addProjectLocation(
+                            currentAccountId,
+                            activeProjectId,
+                            query
+                          )
+                          // Refresh project to get updated locations
+                          const updatedProject = await projectService.getProject(currentAccountId, activeProjectId)
+                          if (updatedProject) {
+                            setCurrentProject(updatedProject)
+                          }
+                          return createdLocation
+                        } catch (error) {
+                          console.error('Failed to create location:', error)
+                          throw error
+                        }
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div className="mt-1">
+                    <input
+                      type="text"
+                      id="space"
+                      value={formData.space}
+                      onChange={(e) => handleInputChange('space', e.target.value)}
+                      placeholder={activeProjectId ? "Loading project..." : "Select a project to choose locations"}
+                      disabled
+                      className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-50 text-gray-500 cursor-not-allowed"
+                    />
+                    {!activeProjectId && (
+                      <p className="mt-1 text-xs text-gray-500">Select a project to choose locations</p>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Notes */}

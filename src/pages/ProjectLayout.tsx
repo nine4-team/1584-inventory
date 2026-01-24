@@ -498,6 +498,7 @@ export default function ProjectLayout() {
             designFee: project.designFee,
             budgetCategories: project.budgetCategories,
             mainImageUrl: project.mainImageUrl,
+            settings: project.settings,
           }}
           onSubmit={handleEditProject}
           onCancel={() => setIsEditing(false)}
