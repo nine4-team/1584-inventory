@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
-import { X, DollarSign, Upload, Trash2 } from 'lucide-react'
-import { ProjectBudgetCategories, BudgetCategory } from '@/types'
+import { X, DollarSign, Upload, Trash2, Plus } from 'lucide-react'
+import { ProjectBudgetCategories, BudgetCategory, ProjectSettings } from '@/types'
 import { ImageUploadService } from '@/services/imageService'
 import { projectService } from '@/services/inventoryService'
 import { useAccount } from '@/contexts/AccountContext'
 import { budgetCategoriesService } from '@/services/budgetCategoriesService'
 import { OfflinePrerequisiteBanner, useOfflinePrerequisiteGate } from './ui/OfflinePrerequisiteBanner'
+import { getProjectLocations, normalizeLocationName, dedupeLocations, filterEmptyLocations } from '@/utils/locationPresets'
 
 interface ProjectFormData {
   name: string;
@@ -15,6 +16,7 @@ interface ProjectFormData {
   designFee?: number;
   budgetCategories?: ProjectBudgetCategories;
   mainImageUrl?: string;
+  settings?: ProjectSettings;
 }
 
 interface ProjectFormProps {
@@ -81,7 +83,14 @@ export default function ProjectForm({ onSubmit, onCancel, isLoading = false, ini
     designFee: initialData?.designFee || undefined,
     budgetCategories: initialData?.budgetCategories || {},
     mainImageUrl: initialData?.mainImageUrl || undefined,
+    settings: initialData?.settings || {},
   })
+
+  // Locations state - derived from settings but managed separately for UI
+  const [locations, setLocations] = useState<string[]>(() => {
+    return getProjectLocations(initialData?.settings)
+  })
+  const [newLocationInput, setNewLocationInput] = useState('')
 
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [imagePreview, setImagePreview] = useState<string | null>(initialData?.mainImageUrl || null)
@@ -181,6 +190,38 @@ export default function ProjectForm({ onSubmit, onCancel, isLoading = false, ini
   }
 
 
+  const handleAddLocation = () => {
+    const normalized = normalizeLocationName(newLocationInput)
+    if (!normalized) {
+      setErrors(prev => ({ ...prev, locations: 'Location name cannot be empty' }))
+      return
+    }
+
+    // Check for duplicates (case-insensitive)
+    const normalizedLower = normalized.toLowerCase()
+    const exists = locations.some(loc => loc.trim().toLowerCase() === normalizedLower)
+    
+    if (exists) {
+      setErrors(prev => ({ ...prev, locations: 'This location already exists' }))
+      return
+    }
+
+    // Add location
+    const updated = dedupeLocations([...locations, normalized])
+    setLocations(updated)
+    setNewLocationInput('')
+    setErrors(prev => {
+      const next = { ...prev }
+      delete next.locations
+      return next
+    })
+  }
+
+  const handleRemoveLocation = (index: number) => {
+    const updated = locations.filter((_, i) => i !== index)
+    setLocations(updated)
+  }
+
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {}
 
@@ -250,9 +291,17 @@ export default function ProjectForm({ onSubmit, onCancel, isLoading = false, ini
         }
       }
 
+      // Merge settings with locations
+      const cleanedLocations = filterEmptyLocations(dedupeLocations(locations))
+      const nextSettings: ProjectSettings = {
+        ...(formData.settings || {}),
+        locations: cleanedLocations.length > 0 ? cleanedLocations : undefined
+      }
+
       const cleanedData = cleanObject({
         ...formData,
-        mainImageUrl: imageUrl
+        mainImageUrl: imageUrl,
+        settings: Object.keys(nextSettings).length > 0 ? nextSettings : undefined
       }) as ProjectFormData
       console.debug('ProjectForm: calling onSubmit with', { cleanedData })
       const result = await onSubmit(cleanedData)
@@ -406,6 +455,84 @@ export default function ProjectForm({ onSubmit, onCancel, isLoading = false, ini
             </div>
 
             {/* Default Transaction Category moved to account-level presets (Settings → Presets → Budget Categories) */}
+
+            {/* Locations Section */}
+            <div className="border-t-2 border-gray-200 pt-6">
+              <div className="mb-6">
+                <h4 className="text-xl font-bold text-gray-900 mb-2">Locations</h4>
+                <p className="text-sm text-gray-600">Manage location presets for this project. These will be available when assigning spaces to items.</p>
+              </div>
+
+              {/* Add Location Input */}
+              <div className="mb-4">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newLocationInput}
+                    onChange={(e) => {
+                      setNewLocationInput(e.target.value)
+                      if (errors.locations) {
+                        setErrors(prev => {
+                          const next = { ...prev }
+                          delete next.locations
+                          return next
+                        })
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        handleAddLocation()
+                      }
+                    }}
+                    placeholder="e.g., Living Room, Master Bedroom"
+                    className={`flex-1 px-4 py-2 rounded-lg border-2 transition-all focus:outline-none focus:ring-2 focus:ring-primary-500/20 ${
+                      errors.locations ? 'border-red-400 bg-red-50' : 'border-gray-200 focus:border-primary-500'
+                    }`}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddLocation}
+                    className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-all flex items-center gap-2"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add
+                  </button>
+                </div>
+                {errors.locations && (
+                  <p className="mt-1.5 text-sm text-red-600 font-medium">{errors.locations}</p>
+                )}
+              </div>
+
+              {/* Locations List */}
+              {locations.length > 0 ? (
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    {locations.map((location, index) => (
+                      <div
+                        key={index}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 bg-gray-100 rounded-lg text-sm text-gray-700"
+                      >
+                        <span>{location}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveLocation(index)}
+                          className="text-gray-500 hover:text-red-600 transition-colors"
+                          aria-label={`Remove ${location}`}
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs text-amber-600">
+                    Removing a location can affect items already using it.
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm text-gray-500 italic">No locations added yet. Add locations above to get started.</p>
+              )}
+            </div>
 
             {/* Budget Categories Section */}
             <div className="border-t-2 border-gray-200 pt-6">

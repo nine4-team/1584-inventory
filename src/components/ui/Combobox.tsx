@@ -23,6 +23,10 @@ interface ComboboxProps {
   placeholder?: string
   required?: boolean
   loading?: boolean
+  allowCreate?: boolean
+  onCreateOption?: (query: string) => Promise<string> | string
+  createOptionLabel?: (query: string) => string
+  isCreateOptionDisabled?: (query: string) => boolean
 }
 
 export function Combobox({
@@ -39,8 +43,13 @@ export function Combobox({
   placeholder = 'Select an option...',
   required = false,
   loading = false,
+  allowCreate = false,
+  onCreateOption,
+  createOptionLabel = (query: string) => `Add "${query}"`,
+  isCreateOptionDisabled,
 }: ComboboxProps) {
   const [query, setQuery] = useState('')
+  const [isCreating, setIsCreating] = useState(false)
 
   const selectedOption = value
     ? options.find(option => option.id === value) ?? null
@@ -51,6 +60,23 @@ export function Combobox({
     : options.filter(option =>
         option.label.toLowerCase().includes(query.toLowerCase())
       )
+
+  // Check if query exactly matches an existing option (case-insensitive)
+  const hasExactMatch = query.trim() !== '' && filteredOptions.some(
+    option => option.label.toLowerCase() === query.trim().toLowerCase()
+  )
+
+  // Determine if we should show create option
+  const shouldShowCreateOption = allowCreate && 
+    onCreateOption && 
+    query.trim() !== '' && 
+    !hasExactMatch &&
+    (!isCreateOptionDisabled || !isCreateOptionDisabled(query.trim()))
+
+  // Build options list with create option prepended if needed
+  const displayOptions = shouldShowCreateOption
+    ? [{ id: '__create__', label: createOptionLabel(query.trim()) }, ...filteredOptions]
+    : filteredOptions
 
   const sizeClasses = {
     sm: 'px-3 py-2 text-sm',
@@ -63,8 +89,30 @@ export function Combobox({
       <div className={className}>
         <HeadlessCombobox
           value={selectedOption}
-          onChange={(option: ComboboxOption | null) => onChange(option?.id || '')}
-          disabled={disabled || loading}
+          onChange={async (option: ComboboxOption | null) => {
+            if (!option) {
+              onChange('')
+              return
+            }
+
+            // Handle create option
+            if (option.id === '__create__' && onCreateOption) {
+              setIsCreating(true)
+              try {
+                const createdValue = await onCreateOption(query.trim())
+                onChange(createdValue)
+                setQuery('')
+              } catch (error) {
+                console.error('Failed to create option:', error)
+                // Don't change selection on error
+              } finally {
+                setIsCreating(false)
+              }
+            } else {
+              onChange(option.id)
+            }
+          }}
+          disabled={disabled || loading || isCreating}
         >
           {label && (
             <HeadlessCombobox.Label className="block text-sm font-medium text-gray-700">
@@ -84,12 +132,17 @@ export function Combobox({
                 className={clsx(
                   'w-full border-none py-2 pl-3 pr-10 text-sm leading-5 text-gray-900',
                   'focus:ring-0 focus:outline-none cursor-pointer',
-                  disabled || loading ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : 'bg-white cursor-pointer'
+                  disabled || loading || isCreating ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : 'bg-white cursor-pointer'
                 )}
                 autoComplete="off"
-                displayValue={(option: ComboboxOption) => option?.label || ''}
+                displayValue={(option: ComboboxOption) => {
+                  if (option) return option.label
+                  // If value doesn't match any option, show the value itself (for creatable scenarios)
+                  if (value && !selectedOption) return value
+                  return ''
+                }}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder={loading ? 'Loading...' : placeholder}
+                placeholder={loading ? 'Loading...' : isCreating ? 'Creating...' : placeholder}
               />
               <div className="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
                 <ChevronsUpDown
@@ -109,43 +162,47 @@ export function Combobox({
                 'absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm',
                 'scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100'
               )}>
-                {filteredOptions.length === 0 && query !== '' ? (
+                {displayOptions.length === 0 && query !== '' ? (
                   <div className="relative cursor-default select-none py-2 px-4 text-gray-700">
                     Nothing found.
                   </div>
                 ) : (
-                  filteredOptions.map((option) => (
-                    <HeadlessCombobox.Option
-                      key={option.id}
-                      className={({ active }) =>
-                        clsx(
-                          'relative cursor-default select-none py-2 pl-10 pr-4',
-                          active ? 'bg-primary-600 text-white' : 'text-gray-900',
-                          option.disabled && 'opacity-50 cursor-not-allowed'
-                        )
-                      }
-                      value={option}
-                      disabled={option.disabled}
-                    >
-                      {({ selected, active }) => (
-                        <>
-                          <span className={clsx('block truncate', selected ? 'font-medium' : 'font-normal')}>
-                            {option.label}
-                          </span>
-                          {selected ? (
-                              <span
-                                className={clsx(
-                                  'absolute inset-y-0 left-0 flex items-center pl-3',
-                                  active ? 'text-white' : 'text-primary-600'
-                                )}
-                              >
-                                <Check className="h-5 w-5" aria-hidden="true" />
-                              </span>
-                          ) : null}
-                        </>
-                      )}
-                    </HeadlessCombobox.Option>
-                  ))
+                  displayOptions.map((option) => {
+                    const isCreateOption = option.id === '__create__'
+                    return (
+                      <HeadlessCombobox.Option
+                        key={option.id}
+                        className={({ active }) =>
+                          clsx(
+                            'relative cursor-default select-none py-2 pl-10 pr-4',
+                            active ? 'bg-primary-600 text-white' : 'text-gray-900',
+                            option.disabled && 'opacity-50 cursor-not-allowed',
+                            isCreateOption && 'font-medium text-primary-600'
+                          )
+                        }
+                        value={option}
+                        disabled={option.disabled || isCreating}
+                      >
+                        {({ selected, active }) => (
+                          <>
+                            <span className={clsx('block truncate', selected ? 'font-medium' : 'font-normal')}>
+                              {option.label}
+                            </span>
+                            {selected && !isCreateOption ? (
+                                <span
+                                  className={clsx(
+                                    'absolute inset-y-0 left-0 flex items-center pl-3',
+                                    active ? 'text-white' : 'text-primary-600'
+                                  )}
+                                >
+                                  <Check className="h-5 w-5" aria-hidden="true" />
+                                </span>
+                            ) : null}
+                          </>
+                        )}
+                      </HeadlessCombobox.Option>
+                    )
+                  })
                 )}
               </HeadlessCombobox.Options>
             </Transition>
