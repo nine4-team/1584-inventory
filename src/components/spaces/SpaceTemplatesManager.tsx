@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Save, AlertCircle, Plus, Edit2, Archive, ArchiveRestore, X, MoreVertical } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { Save, AlertCircle, Plus, Edit2, Archive, ArchiveRestore, X, MoreVertical, GripVertical } from 'lucide-react'
 import { spaceTemplatesService } from '@/services/spaceTemplatesService'
 import { SpaceTemplate } from '@/types'
 import { useAccount } from '@/contexts/AccountContext'
-import { Button } from '../ui/Button'
 import { presetsActionMenuStyles, presetsTableStyles } from '@/components/presets/presetTableStyles'
 
 export default function SpaceTemplatesManager() {
@@ -11,6 +11,7 @@ export default function SpaceTemplatesManager() {
   const [templates, setTemplates] = useState<SpaceTemplate[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
+  const [isSavingOrder, setIsSavingOrder] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const [showArchived, setShowArchived] = useState(false)
@@ -18,6 +19,8 @@ export default function SpaceTemplatesManager() {
   const [creating, setCreating] = useState(false)
   const [formData, setFormData] = useState({ name: '', notes: '' })
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
+  const [draggedTemplateId, setDraggedTemplateId] = useState<string | null>(null)
+  const [dragOverTemplateId, setDragOverTemplateId] = useState<string | null>(null)
 
   const loadTemplates = useCallback(async () => {
     if (!currentAccountId) return
@@ -77,6 +80,22 @@ export default function SpaceTemplatesManager() {
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [openMenuId])
+
+  useEffect(() => {
+    if (!creating) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        handleCancel()
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [creating])
 
   const handleStartCreate = () => {
     setCreating(true)
@@ -202,6 +221,69 @@ export default function SpaceTemplatesManager() {
     }
   }
 
+  const handleDragStart = (templateId: string) => {
+    setDraggedTemplateId(templateId)
+  }
+
+  const handleDragOver = (e: React.DragEvent, templateId: string) => {
+    e.preventDefault()
+    if (draggedTemplateId && draggedTemplateId !== templateId) {
+      setDragOverTemplateId(templateId)
+    }
+  }
+
+  const handleDragLeave = () => {
+    setDragOverTemplateId(null)
+  }
+
+  const handleDrop = async (e: React.DragEvent, targetTemplateId: string) => {
+    e.preventDefault()
+    setDragOverTemplateId(null)
+
+    if (!draggedTemplateId || !currentAccountId || draggedTemplateId === targetTemplateId) {
+      setDraggedTemplateId(null)
+      return
+    }
+
+    const activeTemplates = templates.filter(t => !t.isArchived)
+    const draggedIndex = activeTemplates.findIndex(t => t.id === draggedTemplateId)
+    const targetIndex = activeTemplates.findIndex(t => t.id === targetTemplateId)
+
+    if (draggedIndex === -1 || targetIndex === -1) {
+      setDraggedTemplateId(null)
+      return
+    }
+
+    // Reorder templates
+    const reorderedTemplates = [...activeTemplates]
+    const [draggedTemplate] = reorderedTemplates.splice(draggedIndex, 1)
+    reorderedTemplates.splice(targetIndex, 0, draggedTemplate)
+
+    // Update local state immediately
+    const archivedTemplates = templates.filter(t => t.isArchived)
+    setTemplates([...reorderedTemplates, ...archivedTemplates])
+
+    try {
+      setIsSavingOrder(true)
+      const orderedTemplateIds = reorderedTemplates.map(template => template.id)
+      await spaceTemplatesService.updateTemplateOrder(currentAccountId, orderedTemplateIds)
+      setSuccessMessage('Template order saved')
+      setTimeout(() => setSuccessMessage(null), 3000)
+    } catch (err) {
+      console.error('Error saving template order:', err)
+      setError('Failed to save template order')
+      await loadTemplates()
+    } finally {
+      setIsSavingOrder(false)
+      setDraggedTemplateId(null)
+    }
+  }
+
+  const handleDragEnd = () => {
+    setDraggedTemplateId(null)
+    setDragOverTemplateId(null)
+  }
+
   if (isLoading) {
     return (
       <div className="flex justify-center items-center py-8">
@@ -244,64 +326,9 @@ export default function SpaceTemplatesManager() {
         </div>
       )}
 
-      {/* Create Form */}
-      {creating && (
-        <div className="bg-gray-50 border border-gray-200 rounded-md p-4 space-y-3">
-          <h5 className="text-sm font-medium text-gray-900">
-            Create New Template
-          </h5>
-          <div>
-            <label htmlFor="template-name" className="block text-sm font-medium text-gray-700 mb-1">
-              Name *
-            </label>
-            <input
-              type="text"
-              id="template-name"
-              value={formData.name}
-              onChange={(e) => handleFormChange('name', e.target.value)}
-              placeholder="e.g., Living Room, Kitchen, Storage Unit"
-              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
-              autoFocus
-            />
-          </div>
-          <div>
-            <label htmlFor="template-notes" className="block text-sm font-medium text-gray-700 mb-1">
-              Notes (optional)
-            </label>
-            <textarea
-              id="template-notes"
-              value={formData.notes}
-              onChange={(e) => handleFormChange('notes', e.target.value)}
-              placeholder="Add any notes about this template..."
-              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
-              rows={3}
-            />
-          </div>
-          <div className="flex items-center space-x-2">
-            <Button
-              onClick={handleSave}
-              disabled={isSaving || !formData.name.trim()}
-              size="sm"
-            >
-              <Save className="h-4 w-4 mr-2" />
-              {isSaving ? 'Saving...' : 'Create'}
-            </Button>
-            <Button
-              onClick={handleCancel}
-              variant="secondary"
-              size="sm"
-              disabled={isSaving}
-            >
-              <X className="h-4 w-4 mr-2" />
-              Cancel
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* Create Button */}
+      {/* Hide/Show Archived Button */}
       {!creating && !editingId && (
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-end">
           <button
             type="button"
             onClick={() => setShowArchived(!showArchived)}
@@ -309,44 +336,53 @@ export default function SpaceTemplatesManager() {
           >
             {showArchived ? 'Hide' : 'Show'} Archived
           </button>
-          <Button onClick={handleStartCreate} size="sm">
-            <Plus className="h-4 w-4 mr-2" />
-            New Template
-          </Button>
         </div>
       )}
 
       {/* Templates Table */}
       <div className={presetsTableStyles.wrapper}>
         <table className={presetsTableStyles.table}>
-          <thead className={presetsTableStyles.headerRow}>
-            <tr>
-              <th scope="col" className={presetsTableStyles.headerCell}>
-                Name
-              </th>
-              <th scope="col" className={presetsTableStyles.headerCellCompact}>
-                Notes
-              </th>
-              <th scope="col" className={presetsTableStyles.headerCellCompact}>
-                Actions
-              </th>
-            </tr>
-          </thead>
           <tbody className={presetsTableStyles.body}>
-            {activeTemplates.length === 0 && archivedTemplates.length === 0 ? (
+            {/* Empty state or templates */}
+            {activeTemplates.length === 0 && archivedTemplates.length === 0 && !creating ? (
               <tr>
                 <td colSpan={3} className="py-8 text-center text-sm text-gray-500">
                   No templates found. Create your first template to get started.
                 </td>
               </tr>
             ) : activeTemplates.map((template) => {
+                const isDragging = draggedTemplateId === template.id
+                const isDragOver = dragOverTemplateId === template.id
+                const isEditing = editingId === template.id
+                
                 return (
                   <tr 
-                    key={template.id} 
-                    className={editingId === template.id ? 'bg-gray-50' : ''}
+                    key={template.id}
+                    className={`
+                      ${isEditing ? 'bg-gray-50' : ''}
+                      ${isDragging ? 'opacity-50' : ''}
+                      ${isDragOver ? 'bg-primary-50 border-t-2 border-primary-500' : ''}
+                      transition-colors
+                    `}
+                    draggable={!isEditing && !isSaving && !isSavingOrder}
+                    onDragStart={() => handleDragStart(template.id)}
+                    onDragOver={(e) => handleDragOver(e, template.id)}
+                    onDragLeave={handleDragLeave}
+                    onDrop={(e) => handleDrop(e, template.id)}
+                    onDragEnd={handleDragEnd}
                   >
-                    <td className="py-2 pl-3 pr-2 font-medium text-gray-900 sm:pl-4">
-                      {editingId === template.id ? (
+                    <td className="whitespace-nowrap py-2 pl-3 pr-2 text-gray-500 sm:pl-4">
+                      {!isEditing && (
+                        <div
+                          className="cursor-move hover:text-gray-700"
+                          title="Drag to reorder"
+                        >
+                          <GripVertical className="h-4 w-4" />
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-2 pl-2 pr-2 font-medium text-gray-900 sm:pl-4 min-w-0">
+                      {isEditing ? (
                         <input
                           type="text"
                           value={formData.name}
@@ -355,27 +391,13 @@ export default function SpaceTemplatesManager() {
                           autoFocus
                         />
                       ) : (
-                        <span className="block max-w-[10rem] truncate">
+                        <span className="block truncate">
                           {template.name}
                         </span>
                       )}
                     </td>
-                    <td className="px-2 py-2 text-gray-500">
-                      {editingId === template.id ? (
-                        <textarea
-                          value={formData.notes}
-                          onChange={(e) => handleFormChange('notes', e.target.value)}
-                          className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 text-sm"
-                          rows={2}
-                        />
-                      ) : (
-                        <span className="block max-w-[20rem] truncate">
-                          {template.notes || <span className="text-gray-400 italic">No notes</span>}
-                        </span>
-                      )}
-                    </td>
                     <td className="whitespace-nowrap px-2 py-2 text-gray-500">
-                      {editingId === template.id ? (
+                      {isEditing ? (
                         <div className="flex items-center space-x-2">
                           <button
                             type="button"
@@ -439,6 +461,27 @@ export default function SpaceTemplatesManager() {
                   </tr>
                 )})
             }
+            
+            {/* Add new template row (when not creating) */}
+            {!creating && !editingId && (
+              <tr 
+                className="bg-gray-50 hover:bg-gray-100 cursor-pointer transition-colors"
+                onClick={handleStartCreate}
+              >
+                <td className="whitespace-nowrap py-2 pl-3 pr-2 text-gray-400 sm:pl-4">
+                  {/* Empty drag handle cell */}
+                </td>
+                <td className="py-2 pl-2 pr-2 text-gray-400 sm:pl-4 min-w-0">
+                  <div className="flex items-center">
+                    <Plus className="h-4 w-4 mr-2 flex-shrink-0" />
+                    <span className="text-sm italic truncate">Click to create new template</span>
+                  </div>
+                </td>
+                <td className="whitespace-nowrap px-2 py-2 text-gray-400">
+                  {/* Empty actions cell */}
+                </td>
+              </tr>
+            )}
             {showArchived && (
               <>
                 <tr>
@@ -451,14 +494,12 @@ export default function SpaceTemplatesManager() {
                 {archivedTemplates.length > 0 ? (
                   archivedTemplates.map((template) => (
                     <tr key={template.id} className="bg-gray-50">
-                      <td className="py-2 pl-3 pr-2 font-medium text-gray-500 sm:pl-4">
-                        <span className="block max-w-[10rem] truncate">
-                          {template.name}
-                        </span>
+                      <td className="whitespace-nowrap py-2 pl-3 pr-2 text-gray-500 sm:pl-4">
+                        {/* Empty drag handle cell */}
                       </td>
-                      <td className="px-2 py-2 text-gray-500">
-                        <span className="block max-w-[20rem] truncate">
-                          {template.notes || <span className="text-gray-400 italic">No notes</span>}
+                      <td className="py-2 pl-2 pr-2 font-medium text-gray-500 sm:pl-4 min-w-0">
+                        <span className="block truncate">
+                          {template.name}
                         </span>
                       </td>
                       <td className="whitespace-nowrap px-2 py-2 text-gray-500">
@@ -486,6 +527,86 @@ export default function SpaceTemplatesManager() {
           </tbody>
         </table>
       </div>
+
+      {creating &&
+        createPortal(
+          <div
+            className="fixed left-0 top-0 z-50 flex h-[100dvh] w-screen items-start justify-center bg-gray-900/40 p-4 sm:items-center"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Create space template"
+            onClick={handleCancel}
+          >
+            <div
+              className="w-full max-w-[calc(100vw-2rem)] sm:max-w-2xl space-y-6 rounded-lg bg-white shadow-xl mx-auto max-h-[calc(100dvh-2rem)] overflow-y-auto"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Create space template</h3>
+                  <p className="mt-1 text-sm text-gray-500">Add a name and optional notes for this template.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  className="rounded-md p-2 text-gray-500 hover:text-gray-700"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="px-6 pb-6 space-y-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2" htmlFor="space-template-name">
+                    Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    id="space-template-name"
+                    type="text"
+                    value={formData.name}
+                    onChange={(e) => handleFormChange('name', e.target.value)}
+                    placeholder="Template name"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2" htmlFor="space-template-notes">
+                    Notes (optional)
+                  </label>
+                  <textarea
+                    id="space-template-notes"
+                    value={formData.notes}
+                    onChange={(e) => handleFormChange('notes', e.target.value)}
+                    placeholder="Add any notes about this template..."
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    rows={4}
+                  />
+                </div>
+                <div className="flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={handleCancel}
+                    disabled={isSaving}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    disabled={isSaving || !formData.name.trim()}
+                    className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50"
+                  >
+                    <Save className="h-4 w-4 mr-2" />
+                    {isSaving ? 'Saving...' : 'Create template'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   )
 }

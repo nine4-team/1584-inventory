@@ -32,6 +32,7 @@ function mapTemplateRowToTemplate(row: any): SpaceTemplate {
     name: row.name,
     notes: row.notes ?? null,
     isArchived: row.is_archived ?? false,
+    sortOrder: row.sort_order ?? null,
     metadata: row.metadata ?? null,
     createdAt: convertTimestamps(row).created_at,
     updatedAt: convertTimestamps(row).updated_at,
@@ -62,7 +63,9 @@ export const spaceTemplatesService = {
       query = query.eq('is_archived', false)
     }
 
-    query = query.order('name', { ascending: true })
+    query = query
+      .order('sort_order', { ascending: true, nullsFirst: false })
+      .order('name', { ascending: true })
 
     const { data, error } = await query
 
@@ -100,6 +103,16 @@ export const spaceTemplatesService = {
 
     const { data: user } = await supabase.auth.getUser()
     const userId = createdBy || user?.user?.id
+    const { data: maxRow, error: maxError } = await supabase
+      .from('space_templates')
+      .select('sort_order')
+      .eq('account_id', input.accountId)
+      .order('sort_order', { ascending: false })
+      .limit(1)
+
+    handleSupabaseError(maxError)
+
+    const nextSortOrder = (maxRow?.[0]?.sort_order ?? 0) + 1
 
     const { data, error } = await supabase
       .from('space_templates')
@@ -108,6 +121,7 @@ export const spaceTemplatesService = {
         name: input.name.trim(),
         notes: input.notes ?? null,
         is_archived: false,
+        sort_order: nextSortOrder,
         metadata: {},
         created_by: userId,
         updated_by: userId,
@@ -197,6 +211,37 @@ export const spaceTemplatesService = {
       .delete()
       .eq('id', templateId)
       .eq('account_id', accountId)
+
+    handleSupabaseError(error)
+  },
+
+  /**
+   * Update template ordering for an account
+   */
+  async updateTemplateOrder(
+    accountId: string,
+    orderedTemplateIds: string[],
+    updatedBy?: string
+  ): Promise<void> {
+    if (!orderedTemplateIds.length) return
+
+    await ensureAuthenticatedForDatabase()
+
+    const { data: user } = await supabase.auth.getUser()
+    const userId = updatedBy || user?.user?.id
+    const updatedAt = new Date().toISOString()
+
+    const updates = orderedTemplateIds.map((id, index) => ({
+      id,
+      account_id: accountId,
+      sort_order: index + 1,
+      updated_by: userId,
+      updated_at: updatedAt,
+    }))
+
+    const { error } = await supabase
+      .from('space_templates')
+      .upsert(updates, { onConflict: 'id' })
 
     handleSupabaseError(error)
   },

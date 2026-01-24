@@ -1,5 +1,5 @@
 export const presetsTableStyles = {
-  wrapper: 'overflow-hidden shadow ring-1 ring-black ring-opacity-5 rounded-md',
+  wrapper: 'relative overflow-x-auto bg-white shadow ring-1 ring-black ring-opacity-5 rounded-md max-w-4xl',
   table: 'min-w-full divide-y divide-gray-300 text-sm',
   headerRow: 'bg-gray-50',
   headerCell: 'py-2 pl-3 pr-2 text-left font-semibold text-gray-900 sm:pl-4',

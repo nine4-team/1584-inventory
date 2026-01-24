@@ -133,6 +133,7 @@ export interface SpaceTemplate {
   name: string;
   notes?: string | null;
   isArchived: boolean;
+  sortOrder?: number | null;
   metadata?: Record<string, any> | null;
   createdAt: Date;
   updatedAt: Date;

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Save, AlertCircle, X, MoreVertical, Edit2, Trash2 } from 'lucide-react'
+import { Save, AlertCircle, X, MoreVertical, Edit2, Trash2, GripVertical } from 'lucide-react'
 import { getVendorDefaults, updateVendorSlot, VendorSlot } from '@/services/vendorDefaultsService'
 import { useAccount } from '@/contexts/AccountContext'
 import { useAuth } from '@/contexts/AuthContext'
@@ -16,6 +16,8 @@ export default function VendorDefaultsManager() {
   const [editingSlotIndex, setEditingSlotIndex] = useState<number | null>(null)
   const [editingValue, setEditingValue] = useState<string>('')
   const [openMenuIndex, setOpenMenuIndex] = useState<number | null>(null)
+  const [draggedSlotIndex, setDraggedSlotIndex] = useState<number | null>(null)
+  const [dragOverSlotIndex, setDragOverSlotIndex] = useState<number | null>(null)
 
   const loadDefaults = useCallback(async () => {
     if (!currentAccountId) return
@@ -169,6 +171,67 @@ export default function VendorDefaultsManager() {
     }
   }
 
+  const handleDragStart = (slotIndex: number) => {
+    setDraggedSlotIndex(slotIndex)
+  }
+
+  const handleDragOver = (e: React.DragEvent, slotIndex: number) => {
+    e.preventDefault()
+    if (draggedSlotIndex !== null && draggedSlotIndex !== slotIndex) {
+      setDragOverSlotIndex(slotIndex)
+    }
+  }
+
+  const handleDragLeave = () => {
+    setDragOverSlotIndex(null)
+  }
+
+  const handleDrop = async (e: React.DragEvent, targetSlotIndex: number) => {
+    e.preventDefault()
+    setDragOverSlotIndex(null)
+
+    if (draggedSlotIndex === null || !currentAccountId || draggedSlotIndex === targetSlotIndex) {
+      setDraggedSlotIndex(null)
+      return
+    }
+
+    // Swap slots
+    const reorderedSlots = [...slots]
+    const [draggedSlot] = reorderedSlots.splice(draggedSlotIndex, 1)
+    reorderedSlots.splice(targetSlotIndex, 0, draggedSlot)
+
+    // Update local state immediately
+    setSlots(reorderedSlots)
+
+    // Save each slot's new position
+    try {
+      setSavingSlotIndex(targetSlotIndex)
+      for (let i = 0; i < reorderedSlots.length; i++) {
+        const slot = reorderedSlots[i]
+        await updateVendorSlot(
+          currentAccountId,
+          i + 1,
+          slot.name,
+          user?.id
+        )
+      }
+      setSuccessMessage('Vendor order saved')
+      setTimeout(() => setSuccessMessage(null), 3000)
+    } catch (err) {
+      console.error('Error saving vendor order:', err)
+      setError('Failed to save vendor order')
+      await loadDefaults() // Reload to revert
+    } finally {
+      setSavingSlotIndex(null)
+      setDraggedSlotIndex(null)
+    }
+  }
+
+  const handleDragEnd = () => {
+    setDraggedSlotIndex(null)
+    setDragOverSlotIndex(null)
+  }
+
   
 
   if (isLoading) {
@@ -212,109 +275,125 @@ export default function VendorDefaultsManager() {
 
       <div className={presetsTableStyles.wrapper}>
         <table className={presetsTableStyles.table}>
-          <thead className={presetsTableStyles.headerRow}>
-            <tr>
-              <th scope="col" className={presetsTableStyles.headerCell}>
-                Slot
-              </th>
-              <th scope="col" className={presetsTableStyles.headerCellCompact}>
-                Vendor/Source
-              </th>
-              <th scope="col" className={presetsTableStyles.headerCellCompact}>
-                Actions
-              </th>
-            </tr>
-          </thead>
           <tbody className={presetsTableStyles.body}>
-            {slots.map((slot, index) => (
-              <tr key={index}>
-                <td className="whitespace-nowrap py-2 pl-3 pr-2 text-sm font-medium text-gray-900 sm:pl-4">
-                  {index + 1}
-                </td>
-                <td className="px-2 py-2 text-sm text-gray-500">
-                  {editingSlotIndex === index ? (
-                    <div className="space-y-2">
-                      <input
-                        type="text"
-                        value={editingValue}
-                        onChange={(e) => setEditingValue(e.target.value)}
-                        placeholder="Enter vendor/source name (any text allowed)"
-                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 text-sm"
-                        autoFocus
-                      />
-                    </div>
-                  ) : (
-                    <div className="flex items-center">
-                      <span className={slot.name ? 'text-gray-900' : 'text-gray-400 italic'}>
-                        {slot.name || 'Empty'}
-                      </span>
-                    </div>
-                  )}
-                </td>
-                <td className="whitespace-nowrap px-2 py-2 text-sm text-gray-500">
-                  {editingSlotIndex === index ? (
-                    <div className="flex items-center space-x-2">
-                      <button
-                        type="button"
-                        onClick={() => handleSaveSlot(index)}
-                        disabled={savingSlotIndex === index}
-                        className="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            {slots.map((slot, index) => {
+              const isDragging = draggedSlotIndex === index
+              const isDragOver = dragOverSlotIndex === index
+              const isEditing = editingSlotIndex === index
+              
+              return (
+                <tr 
+                  key={index}
+                  className={`
+                    ${isDragging ? 'opacity-50' : ''}
+                    ${isDragOver ? 'bg-primary-50 border-t-2 border-primary-500' : ''}
+                    transition-colors
+                  `}
+                  draggable={!isEditing && savingSlotIndex === null}
+                  onDragStart={() => handleDragStart(index)}
+                  onDragOver={(e) => handleDragOver(e, index)}
+                  onDragLeave={handleDragLeave}
+                  onDrop={(e) => handleDrop(e, index)}
+                  onDragEnd={handleDragEnd}
+                >
+                  <td className="whitespace-nowrap py-2 pl-3 pr-2 text-gray-500 sm:pl-4">
+                    {!isEditing && (
+                      <div
+                        className="cursor-move hover:text-gray-700"
+                        title="Drag to reorder"
                       >
-                        <Save className="h-3 w-3 mr-1" />
-                        {savingSlotIndex === index ? 'Saving...' : 'Save'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingSlotIndex(null)
-                          setEditingValue('')
-                          loadDefaults() // Reset to original values
-                        }}
-                        className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className={`${presetsActionMenuStyles.wrapper} vendor-defaults-actions-menu`}>
-                      <button
-                        type="button"
-                        onClick={() => setOpenMenuIndex(prev => (prev === index ? null : index))}
-                        disabled={savingSlotIndex === index}
-                        className={presetsActionMenuStyles.button}
-                        aria-haspopup="menu"
-                        aria-expanded={openMenuIndex === index}
-                      >
-                        <span className="sr-only">Open actions</span>
-                        <MoreVertical className="h-3.5 w-3.5" />
-                      </button>
-                      {openMenuIndex === index && (
-                        <div className={presetsActionMenuStyles.panel} role="menu">
-                          <button
-                            type="button"
-                            onClick={() => handleStartEdit(index, slot?.name || null)}
-                            className={presetsActionMenuStyles.item}
-                            role="menuitem"
-                          >
-                            <Edit2 className="h-3.5 w-3.5 mr-2 text-gray-500" />
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteSlot(index)}
-                            className={presetsActionMenuStyles.item}
-                            role="menuitem"
-                          >
-                            <Trash2 className="h-3.5 w-3.5 mr-2 text-gray-500" />
-                            Delete
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </td>
-              </tr>
-            ))}
+                        <GripVertical className="h-4 w-4" />
+                      </div>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap py-2 pl-2 pr-2 text-sm font-medium text-gray-900 sm:pl-4">
+                    {index + 1}
+                  </td>
+                  <td className="px-2 py-2 text-sm text-gray-500">
+                    {isEditing ? (
+                      <div className="space-y-2">
+                        <input
+                          type="text"
+                          value={editingValue}
+                          onChange={(e) => setEditingValue(e.target.value)}
+                          placeholder="Enter vendor/source name (any text allowed)"
+                          className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 text-sm"
+                          autoFocus
+                        />
+                      </div>
+                    ) : (
+                      <div className="flex items-center">
+                        <span className={slot.name ? 'text-gray-900' : 'text-gray-400 italic'}>
+                          {slot.name || 'Empty'}
+                        </span>
+                      </div>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-2 text-sm text-gray-500">
+                    {isEditing ? (
+                      <div className="flex items-center space-x-2">
+                        <button
+                          type="button"
+                          onClick={() => handleSaveSlot(index)}
+                          disabled={savingSlotIndex === index}
+                          className="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Save className="h-3 w-3 mr-1" />
+                          {savingSlotIndex === index ? 'Saving...' : 'Save'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingSlotIndex(null)
+                            setEditingValue('')
+                            loadDefaults() // Reset to original values
+                          }}
+                          className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className={`${presetsActionMenuStyles.wrapper} vendor-defaults-actions-menu`}>
+                        <button
+                          type="button"
+                          onClick={() => setOpenMenuIndex(prev => (prev === index ? null : index))}
+                          disabled={savingSlotIndex === index}
+                          className={presetsActionMenuStyles.button}
+                          aria-haspopup="menu"
+                          aria-expanded={openMenuIndex === index}
+                        >
+                          <span className="sr-only">Open actions</span>
+                          <MoreVertical className="h-3.5 w-3.5" />
+                        </button>
+                        {openMenuIndex === index && (
+                          <div className={presetsActionMenuStyles.panel} role="menu">
+                            <button
+                              type="button"
+                              onClick={() => handleStartEdit(index, slot?.name || null)}
+                              className={presetsActionMenuStyles.item}
+                              role="menuitem"
+                            >
+                              <Edit2 className="h-3.5 w-3.5 mr-2 text-gray-500" />
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSlot(index)}
+                              className={presetsActionMenuStyles.item}
+                              role="menuitem"
+                            >
+                              <Trash2 className="h-3.5 w-3.5 mr-2 text-gray-500" />
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
