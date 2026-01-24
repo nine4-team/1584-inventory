@@ -3,9 +3,10 @@ import { useMemo } from 'react'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
-import { Item, Transaction, ItemImage, Project, ItemDisposition } from '@/types'
+import { Item, Transaction, ItemImage, Project, ItemDisposition, BudgetCategory } from '@/types'
 import type { Transaction as TransactionType } from '@/types'
 import { unifiedItemsService, projectService, integrationService, transactionService } from '@/services/inventoryService'
+import { budgetCategoriesService } from '@/services/budgetCategoriesService'
 import { useToast } from '@/components/ui/ToastContext'
 import { lineageService } from '@/services/lineageService'
 import { ImageUploadService } from '@/services/imageService'
@@ -13,7 +14,7 @@ import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
 import { useNetworkState } from '@/hooks/useNetworkState'
 import { useBusinessInventoryRealtime } from '@/contexts/BusinessInventoryRealtimeContext'
 import { formatCurrency, formatDate } from '@/utils/dateUtils'
-import { COMPANY_INVENTORY, COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE } from '@/constants/company'
+import { COMPANY_INVENTORY, COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { supabase } from '@/services/supabase'
 import { useBookmark } from '@/hooks/useBookmark'
 import { useDuplication } from '@/hooks/useDuplication'
@@ -42,16 +43,22 @@ const BUSINESS_ITEM_FILTER_MODES = [
   'no-transaction',
 ] as const
 const BUSINESS_ITEM_SORT_MODES = ['alphabetical', 'creationDate'] as const
-const BUSINESS_TX_FILTER_MODES = ['all', 'pending', 'completed', 'canceled', 'inventory-only'] as const
-const BUSINESS_TX_RECEIPT_FILTER_MODES = ['all', 'no-email'] as const
+const BUSINESS_TX_STATUS_FILTER_MODES = ['all', 'pending', 'completed', 'canceled', 'inventory-only'] as const
+const BUSINESS_TX_REIMBURSEMENT_FILTER_MODES = ['all', 'we-owe', 'client-owes'] as const
+const BUSINESS_TX_RECEIPT_FILTER_MODES = ['all', 'yes', 'no'] as const
 const BUSINESS_TX_TYPE_FILTER_MODES = ['all', 'purchase', 'return'] as const
+const BUSINESS_TX_COMPLETENESS_FILTER_MODES = ['all', 'needs-review', 'complete'] as const
 const BUSINESS_TX_SORT_MODES = ['date-desc', 'date-asc', 'created-desc', 'created-asc'] as const
 
 const DEFAULT_BUSINESS_ITEM_FILTER = 'all'
 const DEFAULT_BUSINESS_ITEM_SORT = 'creationDate'
-const DEFAULT_BUSINESS_TX_FILTER = 'all'
+const DEFAULT_BUSINESS_TX_STATUS_FILTER = 'all'
+const DEFAULT_BUSINESS_TX_REIMBURSEMENT_FILTER = 'all'
 const DEFAULT_BUSINESS_TX_RECEIPT_FILTER = 'all'
 const DEFAULT_BUSINESS_TX_TYPE_FILTER = 'all'
+const DEFAULT_BUSINESS_TX_BUDGET_CATEGORY_FILTER = 'all'
+const DEFAULT_BUSINESS_TX_COMPLETENESS_FILTER = 'all'
+const DEFAULT_BUSINESS_TX_SOURCE_FILTER = 'all'
 const DEFAULT_BUSINESS_TX_SORT = 'date-desc'
 const DEFAULT_BUSINESS_TAB = 'inventory'
 
@@ -65,20 +72,38 @@ const parseBusinessItemSortMode = (value: string | null) =>
     ? (value as (typeof BUSINESS_ITEM_SORT_MODES)[number])
     : DEFAULT_BUSINESS_ITEM_SORT
 
-const parseBusinessTxFilterMode = (value: string | null) =>
-  BUSINESS_TX_FILTER_MODES.includes(value as (typeof BUSINESS_TX_FILTER_MODES)[number])
-    ? (value as (typeof BUSINESS_TX_FILTER_MODES)[number])
-    : DEFAULT_BUSINESS_TX_FILTER
+const parseBusinessTxStatusFilterMode = (value: string | null) =>
+  BUSINESS_TX_STATUS_FILTER_MODES.includes(value as (typeof BUSINESS_TX_STATUS_FILTER_MODES)[number])
+    ? (value as (typeof BUSINESS_TX_STATUS_FILTER_MODES)[number])
+    : DEFAULT_BUSINESS_TX_STATUS_FILTER
 
-const parseBusinessTxReceiptFilterMode = (value: string | null) =>
-  BUSINESS_TX_RECEIPT_FILTER_MODES.includes(value as (typeof BUSINESS_TX_RECEIPT_FILTER_MODES)[number])
+const parseBusinessTxReimbursementFilterMode = (value: string | null) =>
+  BUSINESS_TX_REIMBURSEMENT_FILTER_MODES.includes(value as (typeof BUSINESS_TX_REIMBURSEMENT_FILTER_MODES)[number])
+    ? (value as (typeof BUSINESS_TX_REIMBURSEMENT_FILTER_MODES)[number])
+    : DEFAULT_BUSINESS_TX_REIMBURSEMENT_FILTER
+
+const parseBusinessTxReceiptFilterMode = (value: string | null) => {
+  if (value === 'no-email') return 'no'
+  return BUSINESS_TX_RECEIPT_FILTER_MODES.includes(value as (typeof BUSINESS_TX_RECEIPT_FILTER_MODES)[number])
     ? (value as (typeof BUSINESS_TX_RECEIPT_FILTER_MODES)[number])
     : DEFAULT_BUSINESS_TX_RECEIPT_FILTER
+}
 
 const parseBusinessTxTypeFilterMode = (value: string | null) =>
   BUSINESS_TX_TYPE_FILTER_MODES.includes(value as (typeof BUSINESS_TX_TYPE_FILTER_MODES)[number])
     ? (value as (typeof BUSINESS_TX_TYPE_FILTER_MODES)[number])
     : DEFAULT_BUSINESS_TX_TYPE_FILTER
+
+const parseBusinessTxCompletenessFilterMode = (value: string | null) =>
+  BUSINESS_TX_COMPLETENESS_FILTER_MODES.includes(value as (typeof BUSINESS_TX_COMPLETENESS_FILTER_MODES)[number])
+    ? (value as (typeof BUSINESS_TX_COMPLETENESS_FILTER_MODES)[number])
+    : DEFAULT_BUSINESS_TX_COMPLETENESS_FILTER
+
+const parseBusinessTxBudgetCategoryFilter = (value: string | null) =>
+  value && value !== DEFAULT_BUSINESS_TX_BUDGET_CATEGORY_FILTER ? value : DEFAULT_BUSINESS_TX_BUDGET_CATEGORY_FILTER
+
+const parseBusinessTxSourceFilter = (value: string | null) =>
+  value && value !== DEFAULT_BUSINESS_TX_SOURCE_FILTER ? value : DEFAULT_BUSINESS_TX_SOURCE_FILTER
 
 const parseBusinessTxSortMode = (value: string | null) =>
   BUSINESS_TX_SORT_MODES.includes(value as (typeof BUSINESS_TX_SORT_MODES)[number])
@@ -135,14 +160,36 @@ export default function BusinessInventory() {
 
   // Filter state for transactions tab
   const [showTransactionFilterMenu, setShowTransactionFilterMenu] = useState(false)
-  const [transactionFilterMode, setTransactionFilterMode] = useState<'all' | 'pending' | 'completed' | 'canceled' | 'inventory-only'>(() =>
-    parseBusinessTxFilterMode(searchParams.get('bizTxFilter'))
+  const [transactionFilterMenuView, setTransactionFilterMenuView] = useState<
+    'main'
+    | 'status'
+    | 'source'
+    | 'reimbursement-status'
+    | 'transaction-type'
+    | 'email-receipt'
+    | 'budget-category'
+    | 'completeness'
+  >('main')
+  const [transactionStatusFilter, setTransactionStatusFilter] = useState<'all' | 'pending' | 'completed' | 'canceled' | 'inventory-only'>(() =>
+    parseBusinessTxStatusFilterMode(searchParams.get('bizTxFilter'))
   )
-  const [transactionReceiptFilter, setTransactionReceiptFilter] = useState<'all' | 'no-email'>(() =>
+  const [transactionReimbursementFilter, setTransactionReimbursementFilter] = useState<'all' | 'we-owe' | 'client-owes'>(() =>
+    parseBusinessTxReimbursementFilterMode(searchParams.get('bizTxReimbursement'))
+  )
+  const [transactionReceiptFilter, setTransactionReceiptFilter] = useState<'all' | 'yes' | 'no'>(() =>
     parseBusinessTxReceiptFilterMode(searchParams.get('bizTxReceipt'))
   )
   const [transactionTypeFilter, setTransactionTypeFilter] = useState<'all' | 'purchase' | 'return'>(() =>
     parseBusinessTxTypeFilterMode(searchParams.get('bizTxType'))
+  )
+  const [transactionBudgetCategoryFilter, setTransactionBudgetCategoryFilter] = useState<string>(() =>
+    parseBusinessTxBudgetCategoryFilter(searchParams.get('bizTxCategory'))
+  )
+  const [transactionCompletenessFilter, setTransactionCompletenessFilter] = useState<'all' | 'needs-review' | 'complete'>(() =>
+    parseBusinessTxCompletenessFilterMode(searchParams.get('bizTxCompleteness'))
+  )
+  const [transactionSourceFilter, setTransactionSourceFilter] = useState<string>(() =>
+    parseBusinessTxSourceFilter(searchParams.get('bizTxSource'))
   )
   const [transactionSortMode, setTransactionSortMode] = useState<'date-desc' | 'date-asc' | 'created-desc' | 'created-asc'>(() =>
     parseBusinessTxSortMode(searchParams.get('bizTxSort'))
@@ -197,9 +244,13 @@ export default function BusinessInventory() {
     const nextTxSearch = searchParams.get('bizTxSearch') ?? ''
     const nextItemFilter = parseBusinessItemFilterMode(searchParams.get('bizItemFilter'))
     const nextItemSort = parseBusinessItemSortMode(searchParams.get('bizItemSort'))
-    const nextTxFilter = parseBusinessTxFilterMode(searchParams.get('bizTxFilter'))
+    const nextTxStatusFilter = parseBusinessTxStatusFilterMode(searchParams.get('bizTxFilter'))
+    const nextTxReimbursementFilter = parseBusinessTxReimbursementFilterMode(searchParams.get('bizTxReimbursement'))
     const nextTxReceiptFilter = parseBusinessTxReceiptFilterMode(searchParams.get('bizTxReceipt'))
     const nextTxTypeFilter = parseBusinessTxTypeFilterMode(searchParams.get('bizTxType'))
+    const nextTxBudgetCategoryFilter = parseBusinessTxBudgetCategoryFilter(searchParams.get('bizTxCategory'))
+    const nextTxCompletenessFilter = parseBusinessTxCompletenessFilterMode(searchParams.get('bizTxCompleteness'))
+    const nextTxSourceFilter = parseBusinessTxSourceFilter(searchParams.get('bizTxSource'))
     const nextTxSort = parseBusinessTxSortMode(searchParams.get('bizTxSort'))
 
     const hasChanges =
@@ -208,9 +259,13 @@ export default function BusinessInventory() {
       transactionSearchQuery !== nextTxSearch ||
       filterMode !== nextItemFilter ||
       sortMode !== nextItemSort ||
-      transactionFilterMode !== nextTxFilter ||
+      transactionStatusFilter !== nextTxStatusFilter ||
+      transactionReimbursementFilter !== nextTxReimbursementFilter ||
       transactionReceiptFilter !== nextTxReceiptFilter ||
       transactionTypeFilter !== nextTxTypeFilter ||
+      transactionBudgetCategoryFilter !== nextTxBudgetCategoryFilter ||
+      transactionCompletenessFilter !== nextTxCompletenessFilter ||
+      transactionSourceFilter !== nextTxSourceFilter ||
       transactionSortMode !== nextTxSort
 
     if (!hasChanges) return
@@ -221,9 +276,13 @@ export default function BusinessInventory() {
     if (transactionSearchQuery !== nextTxSearch) setTransactionSearchQuery(nextTxSearch)
     if (filterMode !== nextItemFilter) setFilterMode(nextItemFilter)
     if (sortMode !== nextItemSort) setSortMode(nextItemSort)
-    if (transactionFilterMode !== nextTxFilter) setTransactionFilterMode(nextTxFilter)
+    if (transactionStatusFilter !== nextTxStatusFilter) setTransactionStatusFilter(nextTxStatusFilter)
+    if (transactionReimbursementFilter !== nextTxReimbursementFilter) setTransactionReimbursementFilter(nextTxReimbursementFilter)
     if (transactionReceiptFilter !== nextTxReceiptFilter) setTransactionReceiptFilter(nextTxReceiptFilter)
     if (transactionTypeFilter !== nextTxTypeFilter) setTransactionTypeFilter(nextTxTypeFilter)
+    if (transactionBudgetCategoryFilter !== nextTxBudgetCategoryFilter) setTransactionBudgetCategoryFilter(nextTxBudgetCategoryFilter)
+    if (transactionCompletenessFilter !== nextTxCompletenessFilter) setTransactionCompletenessFilter(nextTxCompletenessFilter)
+    if (transactionSourceFilter !== nextTxSourceFilter) setTransactionSourceFilter(nextTxSourceFilter)
     if (transactionSortMode !== nextTxSort) setTransactionSortMode(nextTxSort)
   }, [searchParams])
 
@@ -250,9 +309,13 @@ export default function BusinessInventory() {
       setParam('bizTxSearch', transactionSearchQuery, '')
       setParam('bizItemFilter', filterMode, DEFAULT_BUSINESS_ITEM_FILTER)
       setParam('bizItemSort', sortMode, DEFAULT_BUSINESS_ITEM_SORT)
-      setParam('bizTxFilter', transactionFilterMode, DEFAULT_BUSINESS_TX_FILTER)
+      setParam('bizTxFilter', transactionStatusFilter, DEFAULT_BUSINESS_TX_STATUS_FILTER)
+      setParam('bizTxReimbursement', transactionReimbursementFilter, DEFAULT_BUSINESS_TX_REIMBURSEMENT_FILTER)
       setParam('bizTxReceipt', transactionReceiptFilter, DEFAULT_BUSINESS_TX_RECEIPT_FILTER)
       setParam('bizTxType', transactionTypeFilter, DEFAULT_BUSINESS_TX_TYPE_FILTER)
+      setParam('bizTxCategory', transactionBudgetCategoryFilter, DEFAULT_BUSINESS_TX_BUDGET_CATEGORY_FILTER)
+      setParam('bizTxCompleteness', transactionCompletenessFilter, DEFAULT_BUSINESS_TX_COMPLETENESS_FILTER)
+      setParam('bizTxSource', transactionSourceFilter, DEFAULT_BUSINESS_TX_SOURCE_FILTER)
       setParam('bizTxSort', transactionSortMode, DEFAULT_BUSINESS_TX_SORT)
 
       if (nextParams.toString() !== searchParams.toString()) {
@@ -279,10 +342,14 @@ export default function BusinessInventory() {
     searchParams,
     setSearchParams,
     sortMode,
-    transactionFilterMode,
+    transactionStatusFilter,
+    transactionReimbursementFilter,
     transactionReceiptFilter,
     transactionSearchQuery,
     transactionTypeFilter,
+    transactionBudgetCategoryFilter,
+    transactionCompletenessFilter,
+    transactionSourceFilter,
     transactionSortMode,
   ])
 
@@ -295,6 +362,7 @@ export default function BusinessInventory() {
     space: ''
   })
   const [isAllocating, setIsAllocating] = useState(false)
+  const [budgetCategories, setBudgetCategories] = useState<BudgetCategory[]>([])
 
   // Close filter menus when clicking outside
   useEffect(() => {
@@ -566,6 +634,13 @@ export default function BusinessInventory() {
 
   const lastItemId = filteredItems[filteredItems.length - 1]?.itemId
 
+  // Canonical transaction title for display only
+  const getCanonicalTransactionTitle = (transaction: TransactionType): string => {
+    if (transaction.transactionId?.startsWith('INV_SALE_')) return COMPANY_INVENTORY_SALE
+    if (transaction.transactionId?.startsWith('INV_PURCHASE_')) return COMPANY_INVENTORY_PURCHASE
+    return transaction.source
+  }
+
   // Group filtered items by their grouping key
   const groupedItems = useMemo(() => {
     const groups = new Map<string, Item[]>()
@@ -583,6 +658,18 @@ export default function BusinessInventory() {
       .map(([groupKey, items]) => ({ groupKey, items }))
   }, [filteredItems])
 
+  const selectedTransactionBudgetCategory = useMemo(
+    () => budgetCategories.find(category => category.id === transactionBudgetCategoryFilter),
+    [budgetCategories, transactionBudgetCategoryFilter]
+  )
+
+  const availableTransactionSources = useMemo(() => {
+    const titles = transactions
+      .map(t => getCanonicalTransactionTitle(t))
+      .filter(Boolean)
+    return Array.from(new Set(titles)).sort((a, b) => a.localeCompare(b))
+  }, [transactions])
+
   // Compute filtered transactions
   const filteredTransactions = useMemo(() => {
     const parseDate = (value?: string | null): number => {
@@ -594,18 +681,26 @@ export default function BusinessInventory() {
     let filtered = transactions
 
     // Apply status filter based on filter mode
-    if (transactionFilterMode !== 'all') {
-      if (transactionFilterMode === 'inventory-only') {
+    if (transactionStatusFilter !== 'all') {
+      if (transactionStatusFilter === 'inventory-only') {
         // Show only business inventory transactions (projectId == null)
         filtered = filtered.filter(t => t.projectId === null)
       } else {
         // Apply status filter for other modes
-        filtered = filtered.filter(t => t.status === transactionFilterMode)
+        filtered = filtered.filter(t => t.status === transactionStatusFilter)
       }
     }
 
-    if (transactionReceiptFilter === 'no-email') {
-      filtered = filtered.filter(t => !t.receiptEmailed)
+    if (transactionReimbursementFilter !== 'all') {
+      if (transactionReimbursementFilter === 'we-owe') {
+        filtered = filtered.filter(t => t.reimbursementType === COMPANY_OWES_CLIENT)
+      } else if (transactionReimbursementFilter === 'client-owes') {
+        filtered = filtered.filter(t => t.reimbursementType === CLIENT_OWES_COMPANY)
+      }
+    }
+
+    if (transactionSourceFilter !== DEFAULT_BUSINESS_TX_SOURCE_FILTER) {
+      filtered = filtered.filter(t => getCanonicalTransactionTitle(t) === transactionSourceFilter)
     }
 
     if (transactionTypeFilter !== 'all') {
@@ -613,10 +708,34 @@ export default function BusinessInventory() {
       filtered = filtered.filter(t => (t.transactionType ?? '').toLowerCase() === filterValue)
     }
 
+    if (transactionReceiptFilter === 'yes') {
+      filtered = filtered.filter(t => t.receiptEmailed)
+    } else if (transactionReceiptFilter === 'no') {
+      filtered = filtered.filter(t => !t.receiptEmailed)
+    }
+
+    if (transactionBudgetCategoryFilter !== DEFAULT_BUSINESS_TX_BUDGET_CATEGORY_FILTER) {
+      const selectedCategoryName = selectedTransactionBudgetCategory?.name?.trim()
+      filtered = filtered.filter(t => {
+        if (t.categoryId) return t.categoryId === transactionBudgetCategoryFilter
+        if (!selectedCategoryName) return false
+        return (t.budgetCategory ?? '').trim() === selectedCategoryName
+      })
+    }
+
+    if (transactionCompletenessFilter !== DEFAULT_BUSINESS_TX_COMPLETENESS_FILTER) {
+      if (transactionCompletenessFilter === 'needs-review') {
+        filtered = filtered.filter(t => t.needsReview === true)
+      } else {
+        filtered = filtered.filter(t => t.needsReview !== true)
+      }
+    }
+
     // Apply search filter
     if (transactionSearchQuery) {
       const query = transactionSearchQuery.toLowerCase()
       filtered = filtered.filter(t =>
+        getCanonicalTransactionTitle(t).toLowerCase().includes(query) ||
         t.source?.toLowerCase().includes(query) ||
         t.transactionType?.toLowerCase().includes(query) ||
         t.projectName?.toLowerCase().includes(query) ||
@@ -639,7 +758,19 @@ export default function BusinessInventory() {
     })
 
     return sorted
-  }, [transactions, transactionFilterMode, transactionReceiptFilter, transactionSearchQuery, transactionSortMode, transactionTypeFilter])
+  }, [
+    transactions,
+    transactionStatusFilter,
+    transactionReimbursementFilter,
+    transactionReceiptFilter,
+    transactionSearchQuery,
+    transactionSortMode,
+    transactionTypeFilter,
+    transactionBudgetCategoryFilter,
+    transactionCompletenessFilter,
+    transactionSourceFilter,
+    selectedTransactionBudgetCategory
+  ])
 
   const inventoryValue = useMemo(() => {
     return items.reduce((sum, item) => {
@@ -648,13 +779,6 @@ export default function BusinessInventory() {
       return sum + (Number.isFinite(parsed) ? parsed : 0)
     }, 0)
   }, [items])
-
-  // Canonical transaction title for display only
-  const getCanonicalTransactionTitle = (transaction: TransactionType): string => {
-    if (transaction.transactionId?.startsWith('INV_SALE_')) return COMPANY_INVENTORY_SALE
-    if (transaction.transactionId?.startsWith('INV_PURCHASE_')) return COMPANY_INVENTORY_PURCHASE
-    return transaction.source
-  }
 
   const tabs = [
     { id: 'inventory' as const, name: 'Items', icon: Package },
@@ -729,6 +853,24 @@ export default function BusinessInventory() {
     }
 
     loadProjects()
+  }, [currentAccountId])
+
+  useEffect(() => {
+    const loadBudgetCategories = async () => {
+      if (!currentAccountId) {
+        setBudgetCategories([])
+        return
+      }
+      try {
+        const categories = await budgetCategoriesService.getCategories(currentAccountId, true)
+        setBudgetCategories(categories)
+      } catch (error) {
+        console.error('Error loading budget categories:', error)
+        setBudgetCategories([])
+      }
+    }
+
+    loadBudgetCategories()
   }, [currentAccountId])
 
   // Per-visible-item lineage subscriptions: refetch single item on new edges to keep list in sync
@@ -1837,9 +1979,19 @@ export default function BusinessInventory() {
                     {/* Filter Button */}
                     <div className="relative">
                       <button
-                        onClick={() => setShowTransactionFilterMenu(!showTransactionFilterMenu)}
+                        onClick={() => {
+                          const next = !showTransactionFilterMenu
+                          setShowTransactionFilterMenu(next)
+                          if (next) setTransactionFilterMenuView('main')
+                        }}
                         className={`transaction-filter-button inline-flex items-center justify-center px-3 py-2 border text-sm font-medium rounded-md transition-colors duration-200 ${
-                          transactionFilterMode === 'all' && transactionReceiptFilter === 'all' && transactionTypeFilter === 'all'
+                          transactionStatusFilter === 'all' &&
+                          transactionReimbursementFilter === 'all' &&
+                          transactionReceiptFilter === 'all' &&
+                          transactionTypeFilter === 'all' &&
+                          transactionBudgetCategoryFilter === 'all' &&
+                          transactionCompletenessFilter === 'all' &&
+                          transactionSourceFilter === 'all'
                             ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
                             : 'border-primary-500 text-primary-600 bg-primary-50 hover:bg-primary-100'
                         }`}
@@ -1851,115 +2003,547 @@ export default function BusinessInventory() {
 
                       {/* Transaction Filter Dropdown Menu */}
                       {showTransactionFilterMenu && (
-                        <div className="transaction-filter-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-10">
-                          <div className="py-1">
-                            <button
-                              onClick={() => {
-                                setTransactionFilterMode('all')
-                                setTransactionReceiptFilter('all')
-                                setTransactionTypeFilter('all')
-                                setShowTransactionFilterMenu(false)
-                              }}
-                              className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
-                                transactionFilterMode === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                              }`}
-                            >
-                              <span>All Transactions</span>
-                              {transactionFilterMode === 'all' ? <Check className="h-4 w-4" /> : null}
-                            </button>
-                            <button
-                              onClick={() => {
-                                setTransactionFilterMode('pending')
-                                setShowTransactionFilterMenu(false)
-                              }}
-                              className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
-                                transactionFilterMode === 'pending' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                              }`}
-                            >
-                              <span>Pending</span>
-                              {transactionFilterMode === 'pending' ? <Check className="h-4 w-4" /> : null}
-                            </button>
-                            <button
-                              onClick={() => {
-                                setTransactionFilterMode('completed')
-                                setShowTransactionFilterMenu(false)
-                              }}
-                              className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
-                                transactionFilterMode === 'completed' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                              }`}
-                            >
-                              <span>Completed</span>
-                              {transactionFilterMode === 'completed' ? <Check className="h-4 w-4" /> : null}
-                            </button>
-                            <button
-                              onClick={() => {
-                                setTransactionFilterMode('canceled')
-                                setShowTransactionFilterMenu(false)
-                              }}
-                              className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
-                                transactionFilterMode === 'canceled' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                              }`}
-                            >
-                              <span>Canceled</span>
-                              {transactionFilterMode === 'canceled' ? <Check className="h-4 w-4" /> : null}
-                            </button>
-                            <button
-                              onClick={() => {
-                                setTransactionFilterMode('inventory-only')
-                                setShowTransactionFilterMenu(false)
-                              }}
-                              className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
-                                transactionFilterMode === 'inventory-only' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                              }`}
-                            >
-                              <span>Inventory Only</span>
-                              {transactionFilterMode === 'inventory-only' ? <Check className="h-4 w-4" /> : null}
-                            </button>
+                        <div className="transaction-filter-menu absolute top-full right-0 mt-1 w-[min(14rem,calc(100vw-2rem))] bg-white border border-gray-200 rounded-md shadow-lg z-10 max-h-[70vh] overflow-y-auto">
+                          {transactionFilterMenuView === 'main' ? (
+                            <div className="py-1">
+                              <button
+                                onClick={() => {
+                                  setTransactionStatusFilter('all')
+                                  setTransactionReimbursementFilter('all')
+                                  setTransactionReceiptFilter('all')
+                                  setTransactionTypeFilter('all')
+                                  setTransactionBudgetCategoryFilter('all')
+                                  setTransactionCompletenessFilter('all')
+                                  setTransactionSourceFilter('all')
+                                  setShowTransactionFilterMenu(false)
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionStatusFilter === 'all' &&
+                                  transactionReimbursementFilter === 'all' &&
+                                  transactionReceiptFilter === 'all' &&
+                                  transactionTypeFilter === 'all' &&
+                                  transactionBudgetCategoryFilter === 'all' &&
+                                  transactionCompletenessFilter === 'all' &&
+                                  transactionSourceFilter === 'all'
+                                    ? 'bg-primary-50 text-primary-600'
+                                    : 'text-gray-700'
+                                }`}
+                              >
+                                <span>All Transactions</span>
+                                {transactionStatusFilter === 'all' &&
+                                transactionReimbursementFilter === 'all' &&
+                                transactionReceiptFilter === 'all' &&
+                                transactionTypeFilter === 'all' &&
+                                transactionBudgetCategoryFilter === 'all' &&
+                                transactionCompletenessFilter === 'all' &&
+                                transactionSourceFilter === 'all' ? (
+                                  <Check className="h-4 w-4" />
+                                ) : null}
+                              </button>
 
-                            <div className="my-1 border-t border-gray-100" />
+                              <button
+                                onClick={() => setTransactionFilterMenuView('transaction-type')}
+                                className={`w-full px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionTypeFilter !== 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                                aria-label="Transaction type"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span>Transaction Type</span>
+                                  <span className="text-xs text-gray-500 truncate max-w-[10rem]">
+                                    {transactionTypeFilter === 'all'
+                                      ? 'All'
+                                      : transactionTypeFilter === 'purchase'
+                                      ? 'Purchase'
+                                      : 'Return'}
+                                  </span>
+                                </div>
+                              </button>
 
-                            <button
-                              onClick={() => {
-                                setTransactionTypeFilter('purchase')
-                                setShowTransactionFilterMenu(false)
-                              }}
-                              className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
-                                transactionTypeFilter === 'purchase' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                              }`}
-                            >
-                              <span>Purchase</span>
-                              {transactionTypeFilter === 'purchase' ? <Check className="h-4 w-4" /> : null}
-                            </button>
-                            <button
-                              onClick={() => {
-                                setTransactionTypeFilter('return')
-                                setShowTransactionFilterMenu(false)
-                              }}
-                              className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
-                                transactionTypeFilter === 'return' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                              }`}
-                            >
-                              <span>Return</span>
-                              {transactionTypeFilter === 'return' ? <Check className="h-4 w-4" /> : null}
-                            </button>
+                              <div className="my-1 border-t border-gray-100" />
 
-                            <div className="my-1 border-t border-gray-100" />
+                              <button
+                                onClick={() => setTransactionFilterMenuView('status')}
+                                className={`w-full px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionStatusFilter !== 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                                aria-label="Status"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span>Status</span>
+                                  <span className="text-xs text-gray-500 truncate max-w-[10rem]">
+                                    {transactionStatusFilter === 'all'
+                                      ? 'All'
+                                      : transactionStatusFilter === 'inventory-only'
+                                      ? 'Inventory Only'
+                                      : transactionStatusFilter.charAt(0).toUpperCase() + transactionStatusFilter.slice(1)}
+                                  </span>
+                                </div>
+                              </button>
 
-                            <button
-                              onClick={() => {
-                                setTransactionReceiptFilter(
-                                  transactionReceiptFilter === 'no-email' ? 'all' : 'no-email'
-                                )
-                                setShowTransactionFilterMenu(false)
-                              }}
-                              className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
-                                transactionReceiptFilter === 'no-email' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
-                              }`}
-                            >
-                              <span>No Email Receipt</span>
-                              {transactionReceiptFilter === 'no-email' ? <Check className="h-4 w-4" /> : null}
-                            </button>
-                          </div>
+                              <div className="my-1 border-t border-gray-100" />
+
+                              <button
+                                onClick={() => setTransactionFilterMenuView('completeness')}
+                                className={`w-full px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionCompletenessFilter !== 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                                aria-label="Completeness"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span>Completeness</span>
+                                  <span className="text-xs text-gray-500 truncate max-w-[10rem]">
+                                    {transactionCompletenessFilter === 'all'
+                                      ? 'All'
+                                      : transactionCompletenessFilter === 'needs-review'
+                                      ? 'Needs Review'
+                                      : 'Complete'}
+                                  </span>
+                                </div>
+                              </button>
+
+                              <div className="my-1 border-t border-gray-100" />
+
+                              <button
+                                onClick={() => setTransactionFilterMenuView('email-receipt')}
+                                className={`w-full px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionReceiptFilter !== 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                                aria-label="Email receipt"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span>Email Receipt</span>
+                                  <span className="text-xs text-gray-500 truncate max-w-[10rem]">
+                                    {transactionReceiptFilter === 'all' ? 'All' : transactionReceiptFilter === 'yes' ? 'Yes' : 'No'}
+                                  </span>
+                                </div>
+                              </button>
+
+                              <div className="my-1 border-t border-gray-100" />
+
+                              <button
+                                onClick={() => setTransactionFilterMenuView('budget-category')}
+                                className={`w-full px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionBudgetCategoryFilter !== 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                                aria-label="Budget category"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span>Budget Category</span>
+                                  <span className="text-xs text-gray-500 truncate max-w-[10rem]">
+                                    {transactionBudgetCategoryFilter === 'all'
+                                      ? 'All'
+                                      : selectedTransactionBudgetCategory?.name ?? 'Unknown'}
+                                  </span>
+                                </div>
+                              </button>
+
+                              <div className="my-1 border-t border-gray-100" />
+
+                              <button
+                                onClick={() => setTransactionFilterMenuView('source')}
+                                className={`w-full px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionSourceFilter !== 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                                aria-label="Source"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span>Source</span>
+                                  <span className="text-xs text-gray-500 truncate max-w-[10rem]">
+                                    {transactionSourceFilter === 'all' ? 'All' : transactionSourceFilter}
+                                  </span>
+                                </div>
+                              </button>
+
+                              <div className="my-1 border-t border-gray-100" />
+
+                              <button
+                                onClick={() => setTransactionFilterMenuView('reimbursement-status')}
+                                className={`w-full px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionReimbursementFilter !== 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                                aria-label="Reimbursement status"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span>Reimbursement</span>
+                                  <span className="text-xs text-gray-500 truncate max-w-[10rem]">
+                                    {transactionReimbursementFilter === 'all'
+                                      ? 'All'
+                                      : transactionReimbursementFilter === 'we-owe'
+                                      ? 'Owed to Client'
+                                      : 'Owed to Design Business'}
+                                  </span>
+                                </div>
+                              </button>
+                            </div>
+                          ) : transactionFilterMenuView === 'status' ? (
+                            <div className="py-1">
+                              <button
+                                onClick={() => setTransactionFilterMenuView('main')}
+                                className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                              >
+                                ← Back
+                              </button>
+
+                              <div className="my-1 border-t border-gray-100" />
+
+                              <button
+                                onClick={() => {
+                                  setTransactionStatusFilter('all')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionStatusFilter === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>All</span>
+                                {transactionStatusFilter === 'all' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setTransactionStatusFilter('pending')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionStatusFilter === 'pending' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>Pending</span>
+                                {transactionStatusFilter === 'pending' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setTransactionStatusFilter('completed')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionStatusFilter === 'completed' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>Completed</span>
+                                {transactionStatusFilter === 'completed' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setTransactionStatusFilter('canceled')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionStatusFilter === 'canceled' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>Canceled</span>
+                                {transactionStatusFilter === 'canceled' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setTransactionStatusFilter('inventory-only')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionStatusFilter === 'inventory-only' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>Inventory Only</span>
+                                {transactionStatusFilter === 'inventory-only' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                            </div>
+                          ) : transactionFilterMenuView === 'source' ? (
+                            <div className="py-1">
+                              <button
+                                onClick={() => setTransactionFilterMenuView('main')}
+                                className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                              >
+                                ← Back
+                              </button>
+
+                              <div className="my-1 border-t border-gray-100" />
+
+                              <button
+                                onClick={() => {
+                                  setTransactionSourceFilter('all')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionSourceFilter === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>All sources</span>
+                                {transactionSourceFilter === 'all' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                              {availableTransactionSources.map(source => (
+                                <button
+                                  key={source}
+                                  onClick={() => {
+                                    setTransactionSourceFilter(source)
+                                    setShowTransactionFilterMenu(false)
+                                    setTransactionFilterMenuView('main')
+                                  }}
+                                  className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                    transactionSourceFilter === source ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                  }`}
+                                >
+                                  <span>{source}</span>
+                                  {transactionSourceFilter === source ? <Check className="h-4 w-4" /> : null}
+                                </button>
+                              ))}
+                            </div>
+                          ) : transactionFilterMenuView === 'reimbursement-status' ? (
+                            <div className="py-1">
+                              <button
+                                onClick={() => setTransactionFilterMenuView('main')}
+                                className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                              >
+                                ← Back
+                              </button>
+
+                              <div className="my-1 border-t border-gray-100" />
+
+                              <button
+                                onClick={() => {
+                                  setTransactionReimbursementFilter('all')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionReimbursementFilter === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>All Statuses</span>
+                                {transactionReimbursementFilter === 'all' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setTransactionReimbursementFilter('we-owe')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionReimbursementFilter === 'we-owe' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>Owed to Client</span>
+                                {transactionReimbursementFilter === 'we-owe' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setTransactionReimbursementFilter('client-owes')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionReimbursementFilter === 'client-owes' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>Owed to Design Business</span>
+                                {transactionReimbursementFilter === 'client-owes' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                            </div>
+                          ) : transactionFilterMenuView === 'transaction-type' ? (
+                            <div className="py-1">
+                              <button
+                                onClick={() => setTransactionFilterMenuView('main')}
+                                className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                              >
+                                ← Back
+                              </button>
+
+                              <div className="my-1 border-t border-gray-100" />
+
+                              <button
+                                onClick={() => {
+                                  setTransactionTypeFilter('all')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionTypeFilter === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>All Types</span>
+                                {transactionTypeFilter === 'all' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setTransactionTypeFilter('purchase')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionTypeFilter === 'purchase' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>Purchase</span>
+                                {transactionTypeFilter === 'purchase' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setTransactionTypeFilter('return')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionTypeFilter === 'return' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>Return</span>
+                                {transactionTypeFilter === 'return' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                            </div>
+                          ) : transactionFilterMenuView === 'completeness' ? (
+                            <div className="py-1">
+                              <button
+                                onClick={() => setTransactionFilterMenuView('main')}
+                                className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                              >
+                                ← Back
+                              </button>
+
+                              <div className="my-1 border-t border-gray-100" />
+
+                              <button
+                                onClick={() => {
+                                  setTransactionCompletenessFilter('all')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionCompletenessFilter === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>All</span>
+                                {transactionCompletenessFilter === 'all' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setTransactionCompletenessFilter('needs-review')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionCompletenessFilter === 'needs-review' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>Needs Review</span>
+                                {transactionCompletenessFilter === 'needs-review' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setTransactionCompletenessFilter('complete')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionCompletenessFilter === 'complete' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>Complete</span>
+                                {transactionCompletenessFilter === 'complete' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                            </div>
+                          ) : transactionFilterMenuView === 'budget-category' ? (
+                            <div className="py-1">
+                              <button
+                                onClick={() => setTransactionFilterMenuView('main')}
+                                className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                              >
+                                ← Back
+                              </button>
+
+                              <div className="my-1 border-t border-gray-100" />
+
+                              <button
+                                onClick={() => {
+                                  setTransactionBudgetCategoryFilter('all')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionBudgetCategoryFilter === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>All</span>
+                                {transactionBudgetCategoryFilter === 'all' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                              {budgetCategories.length === 0 ? (
+                                <div className="px-3 py-2 text-sm text-gray-500">No categories</div>
+                              ) : (
+                                budgetCategories.map(category => (
+                                  <button
+                                    key={category.id}
+                                    onClick={() => {
+                                      setTransactionBudgetCategoryFilter(category.id)
+                                      setShowTransactionFilterMenu(false)
+                                      setTransactionFilterMenuView('main')
+                                    }}
+                                    className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                      transactionBudgetCategoryFilter === category.id ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                    }`}
+                                  >
+                                    <span>{category.name}</span>
+                                    {transactionBudgetCategoryFilter === category.id ? <Check className="h-4 w-4" /> : null}
+                                  </button>
+                                ))
+                              )}
+                            </div>
+                          ) : (
+                            <div className="py-1">
+                              <button
+                                onClick={() => setTransactionFilterMenuView('main')}
+                                className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                              >
+                                ← Back
+                              </button>
+
+                              <div className="my-1 border-t border-gray-100" />
+
+                              <button
+                                onClick={() => {
+                                  setTransactionReceiptFilter('all')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionReceiptFilter === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>All</span>
+                                {transactionReceiptFilter === 'all' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setTransactionReceiptFilter('yes')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionReceiptFilter === 'yes' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>Yes</span>
+                                {transactionReceiptFilter === 'yes' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setTransactionReceiptFilter('no')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionReceiptFilter === 'no' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>No</span>
+                                {transactionReceiptFilter === 'no' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1975,7 +2559,14 @@ export default function BusinessInventory() {
                     No transactions found
                   </h3>
                   <p className="text-sm text-gray-500 mb-4">
-                    {transactionSearchQuery || transactionFilterMode !== 'all' || transactionReceiptFilter !== 'all'
+                    {transactionSearchQuery ||
+                    transactionStatusFilter !== 'all' ||
+                    transactionReimbursementFilter !== 'all' ||
+                    transactionReceiptFilter !== 'all' ||
+                    transactionTypeFilter !== 'all' ||
+                    transactionBudgetCategoryFilter !== 'all' ||
+                    transactionCompletenessFilter !== 'all' ||
+                    transactionSourceFilter !== 'all'
                       ? 'Try adjusting your search or filter criteria.'
                       : 'No inventory-related transactions found.'
                     }
