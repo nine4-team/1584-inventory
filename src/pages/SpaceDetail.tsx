@@ -45,6 +45,7 @@ export default function SpaceDetail() {
   const [editingItemId, setEditingItemId] = useState<{ checklistId: string; itemId: string } | null>(null)
   const [suppressItemCommit, setSuppressItemCommit] = useState(false)
   const [newItemTexts, setNewItemTexts] = useState<Record<string, string>>({})
+  const [activeTab, setActiveTab] = useState<'items' | 'images' | 'checklists'>('items')
 
   const backDestination = useMemo(() => {
     const defaultPath = projectId ? projectSpaces(projectId) : '/projects'
@@ -593,304 +594,339 @@ export default function SpaceDetail() {
         </div>
       </div>
 
-      {/* Checklists section */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900 flex items-center">
-            <CheckSquare className="h-5 w-5 mr-2" />
-            Checklists
-          </h2>
-          <button
-            onClick={() => {
-              const newChecklist: SpaceChecklist = {
-                id: crypto.randomUUID(),
-                name: 'New Checklist',
-                items: [],
-              }
-              const nextChecklists = [...editedChecklists, newChecklist]
-              setEditingChecklistId(newChecklist.id)
-              void updateChecklists(nextChecklists)
-            }}
-            className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50"
-          >
-            <Plus className="h-3 w-3 mr-1" />
-            Add Checklist
-          </button>
+      {/* Tabs */}
+      <div className="bg-white rounded-lg shadow">
+        <div className="border-b border-gray-200">
+          <nav className="flex -mb-px space-x-6 px-6" aria-label="Tabs">
+            <button
+              onClick={() => setActiveTab('items')}
+              className={`py-4 px-1 border-b-2 font-medium text-base flex items-center ${
+                activeTab === 'items'
+                  ? 'border-primary-500 text-gray-700'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Items ({associatedItems.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('images')}
+              className={`py-4 px-1 border-b-2 font-medium text-base flex items-center ${
+                activeTab === 'images'
+                  ? 'border-primary-500 text-gray-700'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <ImagePlus className="h-4 w-4 mr-2" />
+              Images
+            </button>
+            <button
+              onClick={() => setActiveTab('checklists')}
+              className={`py-4 px-1 border-b-2 font-medium text-base flex items-center ${
+                activeTab === 'checklists'
+                  ? 'border-primary-500 text-gray-700'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <CheckSquare className="h-4 w-4 mr-2" />
+              Checklists
+            </button>
+          </nav>
         </div>
 
-        <div className="space-y-4">
-          {editedChecklists.length === 0 ? (
-            <p className="text-gray-400 italic text-sm">No checklists yet. Add a checklist to get started.</p>
-          ) : (
-            editedChecklists.map((checklist) => (
-              <div key={checklist.id} className="border border-gray-200 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-3">
-                  {editingChecklistId === checklist.id ? (
-                    <input
-                      type="text"
-                      value={checklist.name}
-                      onChange={(event) => {
-                        setEditedChecklists(
-                          editedChecklists.map((c) =>
-                            c.id === checklist.id ? { ...c, name: event.target.value } : c
-                          )
-                        )
-                      }}
-                      onBlur={() => commitChecklistName(checklist.id)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          commitChecklistName(checklist.id)
-                        }
-                      }}
-                      className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      autoFocus
-                    />
-                  ) : (
-                    <h3
-                      className="text-sm font-medium text-gray-900 cursor-pointer hover:text-primary-600"
-                      onClick={() => setEditingChecklistId(checklist.id)}
-                    >
-                      {checklist.name}
-                    </h3>
-                  )}
-                  <button
-                    onClick={() => {
-                      const nextChecklists = editedChecklists.filter((c) => c.id !== checklist.id)
-                      setEditingItemId((prev) =>
-                        prev && prev.checklistId === checklist.id ? null : prev
-                      )
-                      setNewItemTexts((prev) => {
-                        const next = { ...prev }
-                        delete next[checklist.id]
-                        return next
-                      })
-                      void updateChecklists(nextChecklists)
-                    }}
-                    className="ml-2 text-gray-400 hover:text-red-600"
-                    aria-label="Delete checklist"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
+        {/* Tab content */}
+        <div className="p-6">
+          {activeTab === 'items' && (
+            <div id="space-items-container">
+              <TransactionItemsList
+                items={spaceItems}
+                onItemsChange={setSpaceItems}
+                onAddItem={handleCreateSpaceItem}
+                onUpdateItem={handleUpdateSpaceItem}
+                onDuplicateItem={handleDuplicateSpaceItem}
+                onAddExistingItems={() => setShowExistingItemsModal(true)}
+                projectId={projectId}
+                projectName={project?.name}
+                onImageFilesChange={handleImageFilesChange}
+                containerId="space-items-container"
+                sentinelId="space-items-sentinel"
+                enableTransactionActions={false}
+                enableLocation={true}
+                onSetSpaceId={(spaceIdValue, selectedIds, _selectedItems) => bulkSetSpaceId(spaceIdValue, selectedIds)}
+                bulkAction={{
+                  label: 'Remove',
+                  onRun: async (selectedIds) => bulkUnassignSpace(selectedIds)
+                }}
+                context="space"
+              />
+            </div>
+          )}
 
-                <div className="space-y-2 mb-3">
-                  {checklist.items.length === 0 ? (
-                    <p className="text-gray-400 italic text-xs">No items yet</p>
-                  ) : (
-                    checklist.items.map((item) => (
-                      <div key={item.id} className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const nextChecklists = editedChecklists.map((c) =>
-                              c.id === checklist.id
-                                ? {
-                                    ...c,
-                                    items: c.items.map((i) =>
-                                      i.id === item.id ? { ...i, isChecked: !i.isChecked } : i
-                                    ),
-                                  }
-                                : c
-                            )
-                            void updateChecklists(nextChecklists)
-                          }}
-                          role="checkbox"
-                          aria-checked={item.isChecked}
-                          className={`flex-shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
-                            item.isChecked
-                              ? 'bg-primary-500 border-primary-500'
-                              : 'border-gray-300 bg-white hover:border-primary-300'
-                          }`}
-                          aria-label={item.isChecked ? 'Uncheck item' : 'Check item'}
-                        >
-                          {item.isChecked && (
-                            <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                            </svg>
-                          )}
-                        </button>
-                        {editingItemId?.checklistId === checklist.id && editingItemId?.itemId === item.id ? (
+          {activeTab === 'images' && (
+            <div>
+              <div className="flex justify-end mb-4">
+                <div className="flex flex-col items-end gap-1">
+                  <button
+                    onClick={handleAddImage}
+                    className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+                    disabled={isUploadingImage}
+                  >
+                    <ImagePlus className="h-3 w-3 mr-1" />
+                    Add Images
+                  </button>
+                  <UploadActivityIndicator isUploading={isUploadingImage} label="Uploading images" className="mt-1" />
+                </div>
+              </div>
+              {space.images && space.images.length > 0 ? (
+                <ImagePreview
+                  images={space.images}
+                  onRemoveImage={handleRemoveImage}
+                  onSetPrimary={handleSetPrimaryImage}
+                  maxImages={20}
+                  size="md"
+                  showControls={true}
+                />
+              ) : (
+                <div className="text-center py-8">
+                  <ImagePlus className="mx-auto h-8 w-8 text-gray-400" />
+                  <h3 className="mt-2 text-sm font-medium text-gray-900">No images uploaded</h3>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'checklists' && (
+            <div>
+              <div className="flex justify-end mb-4">
+                <button
+                  onClick={() => {
+                    const newChecklist: SpaceChecklist = {
+                      id: crypto.randomUUID(),
+                      name: 'New Checklist',
+                      items: [],
+                    }
+                    const nextChecklists = [...editedChecklists, newChecklist]
+                    setEditingChecklistId(newChecklist.id)
+                    void updateChecklists(nextChecklists)
+                  }}
+                  className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50"
+                >
+                  <Plus className="h-3 w-3 mr-1" />
+                  Add Checklist
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                {editedChecklists.length === 0 ? (
+                  <p className="text-gray-400 italic text-sm">No checklists yet. Add a checklist to get started.</p>
+                ) : (
+                  editedChecklists.map((checklist) => (
+                    <div key={checklist.id} className="border border-gray-200 rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        {editingChecklistId === checklist.id ? (
                           <input
                             type="text"
-                            value={item.text}
+                            value={checklist.name}
                             onChange={(event) => {
                               setEditedChecklists(
                                 editedChecklists.map((c) =>
-                                  c.id === checklist.id
-                                    ? {
-                                        ...c,
-                                        items: c.items.map((i) =>
-                                          i.id === item.id ? { ...i, text: event.target.value } : i
-                                        ),
-                                      }
-                                    : c
+                                  c.id === checklist.id ? { ...c, name: event.target.value } : c
                                 )
                               )
                             }}
-                            onBlur={() => {
-                              if (suppressItemCommit) {
-                                setSuppressItemCommit(false)
-                                return
-                              }
-                              commitChecklistItemText(checklist.id, item.id)
-                            }}
+                            onBlur={() => commitChecklistName(checklist.id)}
                             onKeyDown={(event) => {
                               if (event.key === 'Enter') {
-                                commitChecklistItemText(checklist.id, item.id)
-                              } else if (event.key === 'Escape') {
-                                setSuppressItemCommit(true)
-                                setEditingItemId(null)
+                                commitChecklistName(checklist.id)
                               }
                             }}
-                            className={`flex-1 px-2 py-1 text-sm border border-primary-300 rounded focus:outline-none focus:ring-2 focus:ring-primary-500 ${
-                              item.isChecked ? 'text-gray-500 line-through' : 'text-gray-900'
-                            }`}
+                            className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary-500"
                             autoFocus
                           />
                         ) : (
-                          <span
-                            className={`flex-1 text-sm cursor-pointer hover:text-primary-600 ${
-                              item.isChecked ? 'text-gray-500 line-through' : 'text-gray-900'
-                            }`}
-                            onClick={() => {
-                              setSuppressItemCommit(false)
-                              setEditingItemId({ checklistId: checklist.id, itemId: item.id })
-                            }}
+                          <h3
+                            className="text-sm font-medium text-gray-900 cursor-pointer hover:text-primary-600"
+                            onClick={() => setEditingChecklistId(checklist.id)}
                           >
-                            {item.text}
-                          </span>
+                            {checklist.name}
+                          </h3>
                         )}
                         <button
                           onClick={() => {
-                            const nextChecklists = editedChecklists.map((c) =>
-                              c.id === checklist.id
-                                ? { ...c, items: c.items.filter((i) => i.id !== item.id) }
-                                : c
+                            const nextChecklists = editedChecklists.filter((c) => c.id !== checklist.id)
+                            setEditingItemId((prev) =>
+                              prev && prev.checklistId === checklist.id ? null : prev
                             )
+                            setNewItemTexts((prev) => {
+                              const next = { ...prev }
+                              delete next[checklist.id]
+                              return next
+                            })
                             void updateChecklists(nextChecklists)
                           }}
-                          className="text-gray-400 hover:text-red-600"
-                          aria-label="Remove item"
+                          className="ml-2 text-gray-400 hover:text-red-600"
+                          aria-label="Delete checklist"
                         >
-                          <XIcon className="h-4 w-4" />
+                          <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
-                    ))
-                  )}
-                </div>
 
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={newItemTexts[checklist.id] || ''}
-                    onChange={(event) => {
-                      setNewItemTexts((prev) => ({ ...prev, [checklist.id]: event.target.value }))
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' && newItemTexts[checklist.id]?.trim()) {
-                        const newItem: SpaceChecklistItem = {
-                          id: crypto.randomUUID(),
-                          text: newItemTexts[checklist.id].trim(),
-                          isChecked: false,
-                        }
-                        const nextChecklists = editedChecklists.map((c) =>
-                          c.id === checklist.id ? { ...c, items: [...c.items, newItem] } : c
-                        )
-                        setNewItemTexts((prev) => ({ ...prev, [checklist.id]: '' }))
-                        void updateChecklists(nextChecklists)
-                      }
-                    }}
-                    placeholder="Add item..."
-                    className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary-500"
-                  />
-                  <button
-                    onClick={() => {
-                      if (newItemTexts[checklist.id]?.trim()) {
-                        const newItem: SpaceChecklistItem = {
-                          id: crypto.randomUUID(),
-                          text: newItemTexts[checklist.id].trim(),
-                          isChecked: false,
-                        }
-                        const nextChecklists = editedChecklists.map((c) =>
-                          c.id === checklist.id ? { ...c, items: [...c.items, newItem] } : c
-                        )
-                        setNewItemTexts((prev) => ({ ...prev, [checklist.id]: '' }))
-                        void updateChecklists(nextChecklists)
-                      }
-                    }}
-                    className="px-3 py-1 text-sm text-primary-600 hover:text-primary-700 border border-primary-300 rounded hover:bg-primary-50"
-                  >
-                    Add
-                  </button>
-                </div>
+                      <div className="space-y-2 mb-3">
+                        {checklist.items.length === 0 ? (
+                          <p className="text-gray-400 italic text-xs">No items yet</p>
+                        ) : (
+                          checklist.items.map((item) => (
+                            <div key={item.id} className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const nextChecklists = editedChecklists.map((c) =>
+                                    c.id === checklist.id
+                                      ? {
+                                          ...c,
+                                          items: c.items.map((i) =>
+                                            i.id === item.id ? { ...i, isChecked: !i.isChecked } : i
+                                          ),
+                                        }
+                                      : c
+                                  )
+                                  void updateChecklists(nextChecklists)
+                                }}
+                                role="checkbox"
+                                aria-checked={item.isChecked}
+                                className={`flex-shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+                                  item.isChecked
+                                    ? 'bg-primary-500 border-primary-500'
+                                    : 'border-gray-300 bg-white hover:border-primary-300'
+                                }`}
+                                aria-label={item.isChecked ? 'Uncheck item' : 'Check item'}
+                              >
+                                {item.isChecked && (
+                                  <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                )}
+                              </button>
+                              {editingItemId?.checklistId === checklist.id && editingItemId?.itemId === item.id ? (
+                                <input
+                                  type="text"
+                                  value={item.text}
+                                  onChange={(event) => {
+                                    setEditedChecklists(
+                                      editedChecklists.map((c) =>
+                                        c.id === checklist.id
+                                          ? {
+                                              ...c,
+                                              items: c.items.map((i) =>
+                                                i.id === item.id ? { ...i, text: event.target.value } : i
+                                              ),
+                                            }
+                                          : c
+                                      )
+                                    )
+                                  }}
+                                  onBlur={() => {
+                                    if (suppressItemCommit) {
+                                      setSuppressItemCommit(false)
+                                      return
+                                    }
+                                    commitChecklistItemText(checklist.id, item.id)
+                                  }}
+                                  onKeyDown={(event) => {
+                                    if (event.key === 'Enter') {
+                                      commitChecklistItemText(checklist.id, item.id)
+                                    } else if (event.key === 'Escape') {
+                                      setSuppressItemCommit(true)
+                                      setEditingItemId(null)
+                                    }
+                                  }}
+                                  className={`flex-1 px-2 py-1 text-sm border border-primary-300 rounded focus:outline-none focus:ring-2 focus:ring-primary-500 ${
+                                    item.isChecked ? 'text-gray-500 line-through' : 'text-gray-900'
+                                  }`}
+                                  autoFocus
+                                />
+                              ) : (
+                                <span
+                                  className={`flex-1 text-sm cursor-pointer hover:text-primary-600 ${
+                                    item.isChecked ? 'text-gray-500 line-through' : 'text-gray-900'
+                                  }`}
+                                  onClick={() => {
+                                    setSuppressItemCommit(false)
+                                    setEditingItemId({ checklistId: checklist.id, itemId: item.id })
+                                  }}
+                                >
+                                  {item.text}
+                                </span>
+                              )}
+                              <button
+                                onClick={() => {
+                                  const nextChecklists = editedChecklists.map((c) =>
+                                    c.id === checklist.id
+                                      ? { ...c, items: c.items.filter((i) => i.id !== item.id) }
+                                      : c
+                                  )
+                                  void updateChecklists(nextChecklists)
+                                }}
+                                className="text-gray-400 hover:text-red-600"
+                                aria-label="Remove item"
+                              >
+                                <XIcon className="h-4 w-4" />
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={newItemTexts[checklist.id] || ''}
+                          onChange={(event) => {
+                            setNewItemTexts((prev) => ({ ...prev, [checklist.id]: event.target.value }))
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' && newItemTexts[checklist.id]?.trim()) {
+                              const newItem: SpaceChecklistItem = {
+                                id: crypto.randomUUID(),
+                                text: newItemTexts[checklist.id].trim(),
+                                isChecked: false,
+                              }
+                              const nextChecklists = editedChecklists.map((c) =>
+                                c.id === checklist.id ? { ...c, items: [...c.items, newItem] } : c
+                              )
+                              setNewItemTexts((prev) => ({ ...prev, [checklist.id]: '' }))
+                              void updateChecklists(nextChecklists)
+                            }
+                          }}
+                          placeholder="Add item..."
+                          className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        />
+                        <button
+                          onClick={() => {
+                            if (newItemTexts[checklist.id]?.trim()) {
+                              const newItem: SpaceChecklistItem = {
+                                id: crypto.randomUUID(),
+                                text: newItemTexts[checklist.id].trim(),
+                                isChecked: false,
+                              }
+                              const nextChecklists = editedChecklists.map((c) =>
+                                c.id === checklist.id ? { ...c, items: [...c.items, newItem] } : c
+                              )
+                              setNewItemTexts((prev) => ({ ...prev, [checklist.id]: '' }))
+                              void updateChecklists(nextChecklists)
+                            }
+                          }}
+                          className="px-3 py-1 text-sm text-primary-600 hover:text-primary-700 border border-primary-300 rounded hover:bg-primary-50"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
-            ))
+            </div>
           )}
         </div>
-      </div>
-
-      {/* Space Images */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900 flex items-center">
-            <ImagePlus className="h-5 w-5 mr-2" />
-            Space Images
-          </h2>
-          <div className="flex flex-col items-end gap-1">
-            <button
-              onClick={handleAddImage}
-              className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
-              disabled={isUploadingImage}
-            >
-              <ImagePlus className="h-3 w-3 mr-1" />
-              Add Images
-            </button>
-            <UploadActivityIndicator isUploading={isUploadingImage} label="Uploading images" className="mt-1" />
-          </div>
-        </div>
-        {space.images && space.images.length > 0 ? (
-          <ImagePreview
-            images={space.images}
-            onRemoveImage={handleRemoveImage}
-            onSetPrimary={handleSetPrimaryImage}
-            maxImages={20}
-            size="md"
-            showControls={true}
-          />
-        ) : (
-          <div className="text-center py-8">
-            <ImagePlus className="mx-auto h-8 w-8 text-gray-400" />
-            <h3 className="mt-2 text-sm font-medium text-gray-900">No images uploaded</h3>
-          </div>
-        )}
-      </div>
-
-      {/* Associated items */}
-      <div className="bg-white rounded-lg shadow p-6" id="space-items-container">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">
-          Space Items ({associatedItems.length})
-        </h2>
-        <TransactionItemsList
-          items={spaceItems}
-          onItemsChange={setSpaceItems}
-          onAddItem={handleCreateSpaceItem}
-          onUpdateItem={handleUpdateSpaceItem}
-          onDuplicateItem={handleDuplicateSpaceItem}
-          onAddExistingItems={() => setShowExistingItemsModal(true)}
-          projectId={projectId}
-          projectName={project?.name}
-          onImageFilesChange={handleImageFilesChange}
-          containerId="space-items-container"
-          sentinelId="space-items-sentinel"
-          enableTransactionActions={false}
-          enableLocation={true}
-          onSetSpaceId={(spaceIdValue, selectedIds, _selectedItems) => bulkSetSpaceId(spaceIdValue, selectedIds)}
-          bulkAction={{
-            label: 'Remove',
-            onRun: async (selectedIds) => bulkUnassignSpace(selectedIds)
-          }}
-          context="space"
-        />
       </div>
       <div id="space-items-sentinel" className="h-1" />
 
