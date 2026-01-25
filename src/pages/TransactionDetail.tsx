@@ -37,7 +37,7 @@ import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
 import { useNetworkState } from '@/hooks/useNetworkState'
 import { hydrateOptimisticItem, hydrateTransactionCache, loadTransactionItemsWithReconcile } from '@/utils/hydrationHelpers'
 import { getGlobalQueryClient } from '@/utils/queryClient'
-import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
+import { COMPANY_INVENTORY, COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import TransactionAudit from '@/components/ui/TransactionAudit'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { useSyncError } from '@/hooks/useSyncError'
@@ -1533,13 +1533,15 @@ export default function TransactionDetail() {
   }
 
   const handleReceiptsUpload = async (files: File[]) => {
-    if (!projectId || !transactionId || !project || files.length === 0 || !currentAccountId) return
+    // Allow upload if we have transactionId and accountId, even if project/projectId are missing (Business Inventory)
+    if (!transactionId || files.length === 0 || !currentAccountId) return
 
     setReceiptUploadsInFlight(count => count + 1)
 
     try {
       const newReceiptImages: TransactionImage[] = []
-      const projectName = project.name
+      // Use project name if available, otherwise fallback to Business Inventory
+      const projectName = project?.name || COMPANY_INVENTORY
 
       // Upload sequentially to track offline media IDs properly
       for (const file of files) {
@@ -1651,13 +1653,15 @@ export default function TransactionDetail() {
   }
 
   const handleOtherImagesUpload = async (files: File[]) => {
-    if (!projectId || !transactionId || !project || files.length === 0 || !currentAccountId) return
+    // Allow upload if we have transactionId and accountId, even if project/projectId are missing (Business Inventory)
+    if (!transactionId || files.length === 0 || !currentAccountId) return
 
     setOtherUploadsInFlight(count => count + 1)
 
     try {
       const newOtherImages: TransactionImage[] = []
-      const projectName = project.name
+      // Use project name if available, otherwise fallback to Business Inventory
+      const projectName = project?.name || COMPANY_INVENTORY
 
       // Upload sequentially to track offline media IDs properly
       for (const file of files) {
@@ -1765,7 +1769,8 @@ export default function TransactionDetail() {
   }
 
   const handleDeleteReceiptImage = async (imageUrl: string) => {
-    if (!projectId || !transactionId || !transaction || !currentAccountId) return
+    // Allow delete if we have transactionId and accountId, even if project/projectId are missing (Business Inventory)
+    if (!transactionId || !transaction || !currentAccountId) return
 
     try {
       // Handle offline media deletion if this is an offline placeholder
@@ -1803,7 +1808,8 @@ export default function TransactionDetail() {
   }
 
   const handleDeleteOtherImage = async (imageUrl: string) => {
-    if (!projectId || !transactionId || !transaction || !currentAccountId) return
+    // Allow delete if we have transactionId and accountId, even if project/projectId are missing (Business Inventory)
+    if (!transactionId || !transaction || !currentAccountId) return
 
     try {
       // Handle offline media deletion if this is an offline placeholder
