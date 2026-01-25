@@ -14,6 +14,8 @@ export type AmazonInvoiceParseResult = {
   grandTotal?: string
   projectCode?: string
   paymentMethod?: string
+  tax?: string
+  shipping?: string
   lineItems: AmazonInvoiceLineItem[]
   warnings: string[]
 }
@@ -72,6 +74,17 @@ function extractFirstMatch(text: string, regex: RegExp): string | undefined {
   return m?.[1]?.trim() || undefined
 }
 
+function extractLastMatch(text: string, regex: RegExp): string | undefined {
+  const flags = regex.flags.includes('g') ? regex.flags : regex.flags + 'g'
+  const globalRegex = new RegExp(regex.source, flags)
+  let match
+  let lastMatch
+  while ((match = globalRegex.exec(text)) !== null) {
+    lastMatch = match
+  }
+  return lastMatch?.[1]?.trim()
+}
+
 function normalizeLines(text: string): string[] {
   return text
     .split(/\r?\n/)
@@ -111,6 +124,8 @@ const IGNORE_LINES = [
   /^Billing address$/i,
   /^Credit Card transactions/i,
   /^-- \d+ of \d+ --$/,
+  /^Order Total:/i,
+  /^Grand Total:/i,
 ]
 
 function shouldIgnoreLine(line: string): boolean {
@@ -148,6 +163,12 @@ export function parseAmazonInvoiceText(fullText: string): AmazonInvoiceParseResu
   const paymentMethod = paymentMethodMatch 
     ? `${paymentMethodMatch[1]} | Last digits: ${paymentMethodMatch[2]}`.trim()
     : undefined
+
+  const taxRaw = extractFirstMatch(fullText, /Estimated Tax:\s*\$?\s*([\d,]+\.\d{2})/i)
+  const tax = taxRaw ? normalizeMoneyToTwoDecimalString(taxRaw) : undefined
+
+  const shippingRaw = extractLastMatch(fullText, /Shipping & Handling:\s*\$?\s*([\d,]+\.\d{2})/i)
+  const shipping = shippingRaw ? normalizeMoneyToTwoDecimalString(shippingRaw) : undefined
 
   if (!orderNumber) warnings.push('Could not confidently find an order number.')
   if (!orderPlacedDate) warnings.push('Could not confidently find an order date; defaulting to today is recommended.')
@@ -250,9 +271,19 @@ export function parseAmazonInvoiceText(fullText: string): AmazonInvoiceParseResu
 
       // Start new item
       currentQty = Number.parseInt(itemStartMatch[1], 10)
-      currentDescriptionParts = [itemStartMatch[2].trim()]
-      currentItemStart = i
+      let descriptionPart = itemStartMatch[2].trim()
       currentUnitPrice = undefined
+
+      // Check if description ends with a price (e.g. "... Product Name $12.34")
+      const priceAtEndMatch = descriptionPart.match(/(\$?\d{1,3}(?:,\d{3})*\.\d{2})\s*$/)
+      if (priceAtEndMatch) {
+        currentUnitPrice = normalizeMoneyToTwoDecimalString(priceAtEndMatch[1])
+        // Remove the price from the description
+        descriptionPart = descriptionPart.substring(0, priceAtEndMatch.index).trim()
+      }
+
+      currentDescriptionParts = [descriptionPart]
+      currentItemStart = i
       currentDescriptionLocked = false
       continue
     }
@@ -264,7 +295,7 @@ export function parseAmazonInvoiceText(fullText: string): AmazonInvoiceParseResu
       const lineWithoutMoney = line.replace(/\$?\d{1,3}(?:,\d{3})*\.\d{2}/g, '').trim()
       
       // If line contains only a price (or price + minimal text), it's the price line
-      if (moneyTokens.length > 0 && lineWithoutMoney.length < 15) {
+      if (!currentUnitPrice && moneyTokens.length > 0 && lineWithoutMoney.length < 15) {
         currentUnitPrice = moneyTokens[0]
         currentDescriptionLocked = true
         continue
@@ -287,10 +318,14 @@ export function parseAmazonInvoiceText(fullText: string): AmazonInvoiceParseResu
   // Validate totals
   if (grandTotal) {
     const sumLineTotals = lineItems.reduce((sum, li) => sum + (parseMoneyToNumber(li.total) || 0), 0)
+    const taxNum = tax ? (parseMoneyToNumber(tax) || 0) : 0
+    const shippingNum = shipping ? (parseMoneyToNumber(shipping) || 0) : 0
+    const calculatedTotal = sumLineTotals + taxNum + shippingNum
+    
     const grandTotalNum = parseMoneyToNumber(grandTotal) || 0
-    const diff = Math.abs(sumLineTotals - grandTotalNum)
+    const diff = Math.abs(calculatedTotal - grandTotalNum)
     if (diff > 0.05) {
-      warnings.push(`Line totals ($${sumLineTotals.toFixed(2)}) do not match order total ($${grandTotalNum.toFixed(2)}) (diff $${diff.toFixed(2)})`)
+      warnings.push(`Calculated total ($${calculatedTotal.toFixed(2)}) does not match order total ($${grandTotalNum.toFixed(2)}) (diff $${diff.toFixed(2)})`)
     }
   }
 
@@ -300,6 +335,8 @@ export function parseAmazonInvoiceText(fullText: string): AmazonInvoiceParseResu
     grandTotal,
     projectCode,
     paymentMethod,
+    tax,
+    shipping,
     lineItems,
     warnings,
   }

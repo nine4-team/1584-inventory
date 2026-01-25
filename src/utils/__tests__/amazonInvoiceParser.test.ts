@@ -95,6 +95,8 @@ describe('parseAmazonInvoiceText', () => {
     expect(result.grandTotal).toBe('372.72')
     expect(result.projectCode).toBe('Debbie Hyer - Martinique')
     expect(result.paymentMethod).toBe('Visa | Last digits: 0579')
+    expect(result.tax).toBe('23.57')
+    expect(result.shipping).toBe('0.00')
 
     expect(result.lineItems.length).toBe(4)
     
@@ -134,17 +136,28 @@ describe('parseAmazonInvoiceText', () => {
   it('validates totals match grand total within tolerance', () => {
     const result = parseAmazonInvoiceText(fixtureText)
     
-    // Sum of line item totals: 94.99 + 51.76 + 151.96 + 50.44 = 349.15
+    // Sum of line item totals: 349.15
+    // Tax: 23.57
+    // Shipping: 0.00
+    // Calculated Total: 372.72
     // Grand total: 372.72
-    // Difference: 23.57 (which is the tax)
-    // The parser should warn about this mismatch
+    // Should match exactly
     const hasTotalMismatchWarning = result.warnings.some(w => 
-      w.includes('do not match order total') || w.includes('Line totals')
+      w.includes('does not match order total') || w.includes('Calculated total')
     )
     
-    // Note: The actual totals don't match because tax is included in grand total
-    // but not in individual line items. This is expected behavior.
     expect(result.grandTotal).toBe('372.72')
+    expect(hasTotalMismatchWarning).toBe(false)
+  })
+
+  it('warns when totals do not match', () => {
+    // Modify grand total to be incorrect
+    const text = fixtureText.replace('Grand Total: $372.72', 'Grand Total: $300.00')
+    const result = parseAmazonInvoiceText(text)
+    
+    const hasTotalMismatchWarning = result.warnings.some(w => 
+      w.includes('Calculated total') && w.includes('does not match order total')
+    )
     expect(hasTotalMismatchWarning).toBe(true)
   })
 
@@ -188,7 +201,7 @@ $50.00
     const result = parseAmazonInvoiceText(text)
     
     expect(result.orderPlacedDate).toBeUndefined()
-    expect(result.warnings).toContain('Could not confidently find an order date')
+    expect(result.warnings).toContain('Could not confidently find an order date; defaulting to today is recommended.')
   })
 
   it('handles missing grand total gracefully', () => {
