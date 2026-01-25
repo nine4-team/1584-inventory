@@ -42,7 +42,14 @@ export default function ProjectSpacesPage() {
   return (
     <div className="space-y-6">
       {/* Header with search and create button */}
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-col gap-3">
+        <button
+          onClick={handleCreateSpace}
+          className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+        >
+          <Plus className="h-4 w-4 mr-2" />
+          Add
+        </button>
         <div className="flex-1 max-w-md">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
@@ -55,13 +62,6 @@ export default function ProjectSpacesPage() {
             />
           </div>
         </div>
-        <button
-          onClick={handleCreateSpace}
-          className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Create Space
-        </button>
       </div>
 
       {/* Spaces grid */}
@@ -102,7 +102,7 @@ export default function ProjectSpacesPage() {
               className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700"
             >
               <Plus className="h-4 w-4 mr-2" />
-              Create Space
+              Add
             </button>
           )}
         </div>
