@@ -19,6 +19,7 @@ type ItemActionsMenuProps = {
   menuDirection?: 'auto' | 'top' | 'bottom'
   onEdit?: () => void
   onDuplicate?: (quantity: number) => void
+  onAddToSpace?: () => void
   onAddToTransaction?: () => void
   onRemoveFromTransaction?: () => void
   onSellToBusiness?: () => void
@@ -42,6 +43,7 @@ export default function ItemActionsMenu({
   menuDirection = 'auto',
   onEdit,
   onDuplicate,
+  onAddToSpace,
   onAddToTransaction,
   onRemoveFromTransaction,
   onSellToBusiness,
@@ -102,6 +104,11 @@ export default function ItemActionsMenu({
     if (!onDuplicate) return 'Not available in this context.'
     return null
   }, [onDuplicate])
+
+  const addToSpaceDisabledReason = useMemo(() => {
+    if (!onAddToSpace) return 'Not available in this context.'
+    return null
+  }, [onAddToSpace])
 
   const addToTransactionDisabledReason = useMemo(() => {
     if (!onAddToTransaction) return 'Not available in this context.'
@@ -275,6 +282,7 @@ export default function ItemActionsMenu({
   const hasActions = Boolean(
     onEdit ||
     onDuplicate ||
+    onAddToSpace ||
     onAddToTransaction ||
     onRemoveFromTransaction ||
     onSellToBusiness ||
@@ -309,6 +317,12 @@ export default function ItemActionsMenu({
           buttonContent="Make Copies…"
         />
       )}
+      {renderMenuItem({
+        label: 'Set Space…',
+        onClick: onAddToSpace,
+        disabled: Boolean(addToSpaceDisabledReason),
+        disabledReason: addToSpaceDisabledReason
+      })}
       {renderMenuItem({
         label: 'Associate with Transaction…',
         onClick: onAddToTransaction,

@@ -40,6 +40,7 @@ interface ItemPreviewCardProps {
   onDuplicate?: (itemId: string, quantity?: number) => void | Promise<void>
   onEdit?: (href: string) => void
   onDelete?: (itemId: string) => void
+  onAddToSpace?: (itemId: string) => void
   onAddToTransaction?: (itemId: string) => void
   onRemoveFromTransaction?: (itemId: string) => void
   onSellToBusiness?: (itemId: string) => void
@@ -78,6 +79,7 @@ export default function ItemPreviewCard({
   onDuplicate,
   onEdit,
   onDelete,
+  onAddToSpace,
   onAddToTransaction,
   onRemoveFromTransaction,
   onSellToBusiness,
@@ -327,6 +329,13 @@ export default function ItemPreviewCard({
                       : undefined
                   }
                   onDuplicate={showDuplicate ? handleDuplicate : undefined}
+                  onAddToSpace={
+                    onAddToSpace
+                      ? () => {
+                          onAddToSpace(itemId)
+                        }
+                      : undefined
+                  }
                   onAddToTransaction={
                     onAddToTransaction
                       ? () => {

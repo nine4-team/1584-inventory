@@ -1957,6 +1957,25 @@ export default function TransactionDetail() {
     }
   }
 
+  const handleSetSpaceId = async (spaceId: string | null, selectedIds: string[], selectedItems: any[]) => {
+    if (!currentAccountId) return
+
+    try {
+      const updatePromises = selectedIds.map(itemId =>
+        unifiedItemsService.updateItem(currentAccountId, itemId, {
+          spaceId: spaceId
+        })
+      )
+
+      await Promise.all(updatePromises)
+      await refreshRealtimeAfterWrite()
+      showSuccess(`Updated space for ${selectedIds.length} item${selectedIds.length !== 1 ? 's' : ''}`)
+    } catch (error) {
+      console.error('Failed to set space:', error)
+      showError('Failed to set space. Please try again.')
+    }
+  }
+
   const handleCreateItem = async (item: TransactionItemFormData) => {
     if (!projectId || !transactionId || !transaction || !currentAccountId) return
 
@@ -2557,6 +2576,8 @@ export default function TransactionDetail() {
                       onMoveToBusiness={handleMoveItemToBusinessInventory}
                       onMoveToProject={(itemId) => openItemProjectDialog(itemId, 'move')}
                       containerId="transaction-items-container"
+                      enableLocation={true}
+                      onSetSpaceId={handleSetSpaceId}
                     />
                   </div>
 

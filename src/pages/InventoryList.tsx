@@ -27,6 +27,7 @@ import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { ConflictResolutionView } from '@/components/ConflictResolutionView'
 import BlockingConfirmDialog from '@/components/ui/BlockingConfirmDialog'
 import { Combobox } from '@/components/ui/Combobox'
+import SpaceSelector from '@/components/spaces/SpaceSelector'
 
 interface InventoryListProps {
   projectId: string
@@ -93,6 +94,10 @@ export default function InventoryList({ projectId, projectName, items: propItems
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleteTargetItemId, setDeleteTargetItemId] = useState<string | null>(null)
   const [isDeletingItem, setIsDeletingItem] = useState(false)
+  const [showSpaceDialog, setShowSpaceDialog] = useState(false)
+  const [spaceTargetItemId, setSpaceTargetItemId] = useState<string | null>(null)
+  const [spaceIdValue, setSpaceIdValue] = useState<string | null>(null)
+  const [isSettingSpace, setIsSettingSpace] = useState(false)
   const [filterMode, setFilterMode] = useState<
     'all'
     | 'bookmarked'
@@ -660,6 +665,31 @@ export default function InventoryList({ projectId, projectName, items: propItems
     }
   }
 
+  const handleAddToSpace = (itemId: string) => {
+    setSpaceTargetItemId(itemId)
+    setShowSpaceDialog(true)
+  }
+
+  const handleSetSpace = async () => {
+    if (!currentAccountId || !spaceTargetItemId) return
+    setIsSettingSpace(true)
+    try {
+      await unifiedItemsService.updateItem(currentAccountId, spaceTargetItemId, {
+        spaceId: spaceIdValue
+      })
+      await refreshRealtimeAfterWrite()
+      showSuccess('Item added to space')
+      setShowSpaceDialog(false)
+      setSpaceTargetItemId(null)
+      setSpaceIdValue(null)
+    } catch (error) {
+      console.error('Failed to set space:', error)
+      showError('Failed to set space. Please try again.')
+    } finally {
+      setIsSettingSpace(false)
+    }
+  }
+
 
 
   const handleAddImage = async (itemId: string) => {
@@ -1083,6 +1113,46 @@ export default function InventoryList({ projectId, projectName, items: propItems
           </div>
         </div>
       )}
+      {showSpaceDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-medium text-gray-900">
+                Set Space
+              </h3>
+            </div>
+            <div className="px-6 py-4">
+              <SpaceSelector
+                projectId={projectId}
+                value={spaceIdValue}
+                onChange={setSpaceIdValue}
+                placeholder="Select or create a space..."
+                allowCreate={true}
+              />
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowSpaceDialog(false)
+                  setSpaceTargetItemId(null)
+                  setSpaceIdValue(null)
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                disabled={isSettingSpace}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSetSpace}
+                disabled={isSettingSpace}
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSettingSpace ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {showProjectDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
@@ -1442,6 +1512,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
                       onSellToProject={(itemId) => openProjectDialog(itemId, 'sell')}
                       onMoveToBusiness={handleMoveToBusinessInventory}
                       onMoveToProject={(itemId) => openProjectDialog(itemId, 'move')}
+                      onAddToSpace={handleAddToSpace}
                       onChangeStatus={updateDisposition}
                       onDelete={(itemId) => {
                         setDeleteTargetItemId(itemId)
@@ -1584,6 +1655,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
                                   onSellToProject={(itemId) => openProjectDialog(itemId, 'sell')}
                             onMoveToBusiness={handleMoveToBusinessInventory}
                                   onMoveToProject={(itemId) => openProjectDialog(itemId, 'move')}
+                            onAddToSpace={handleAddToSpace}
                             onChangeStatus={updateDisposition}
                             onDelete={(itemId) => {
                               setDeleteTargetItemId(itemId)

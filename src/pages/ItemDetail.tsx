@@ -23,6 +23,7 @@ import { getOfflineSaveMessage } from '@/utils/offlineUxFeedback'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { projectItemDetail, projectItemEdit, projectItems, projectTransactionDetail } from '@/utils/routes'
 import { Combobox } from '@/components/ui/Combobox'
+import SpaceSelector from '@/components/spaces/SpaceSelector'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import { getGlobalQueryClient } from '@/utils/queryClient'
 import { hydrateItemCache, hydrateProjectCache } from '@/utils/hydrationHelpers'
@@ -64,6 +65,9 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
   const [isRemovingFromTransaction, setIsRemovingFromTransaction] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isDeletingItem, setIsDeletingItem] = useState(false)
+  const [showSpaceDialog, setShowSpaceDialog] = useState(false)
+  const [spaceIdValue, setSpaceIdValue] = useState<string | null>(null)
+  const [isSettingSpace, setIsSettingSpace] = useState(false)
   const { showError, showSuccess } = useToast()
   const { buildContextUrl, getBackDestination } = useNavigationContext()
   const { isOnline } = useNetworkState()
@@ -786,6 +790,31 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
     }
   }, [fetchItem, isRefreshing, refreshRealtimeAfterWrite, showError])
 
+  const handleSetSpace = async () => {
+    if (!item || !currentAccountId) return
+    setIsSettingSpace(true)
+    try {
+      await unifiedItemsService.updateItem(currentAccountId, item.itemId, {
+        spaceId: spaceIdValue
+      })
+      
+      // Update local state
+      setItem(prev => prev ? { ...prev, space: spaceIdValue ? 'Loading...' : null } : prev)
+      
+      await refreshRealtimeAfterWrite()
+      await handleRefreshItem()
+      
+      showSuccess('Space updated successfully')
+      setShowSpaceDialog(false)
+      setSpaceIdValue(null)
+    } catch (error) {
+      console.error('Failed to set space:', error)
+      showError('Failed to set space. Please try again.')
+    } finally {
+      setIsSettingSpace(false)
+    }
+  }
+
   const handleDeleteItem = () => {
     setShowDeleteConfirm(true)
   }
@@ -1493,6 +1522,45 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
           </div>
         </div>
       )}
+      {showSpaceDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-medium text-gray-900">
+                Set Space
+              </h3>
+            </div>
+            <div className="px-6 py-4">
+              <SpaceSelector
+                projectId={projectId || item?.projectId || ''}
+                value={spaceIdValue}
+                onChange={setSpaceIdValue}
+                placeholder="Select or create a space..."
+                allowCreate={true}
+              />
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowSpaceDialog(false)
+                  setSpaceIdValue(null)
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                disabled={isSettingSpace}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSetSpace}
+                disabled={isSettingSpace}
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSettingSpace ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 
@@ -1537,6 +1605,10 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
                 onSellToProject={() => openProjectDialog('sell')}
                 onMoveToBusiness={handleMoveToBusinessInventory}
                 onMoveToProject={() => openProjectDialog('move')}
+                onAddToSpace={() => {
+                  setSpaceIdValue(null) // Reset or set to current space if we had the ID
+                  setShowSpaceDialog(true)
+                }}
                 onChangeStatus={updateDisposition}
                 onDelete={handleDeleteItem}
               />
@@ -1641,6 +1713,10 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
                   onSellToProject={() => openProjectDialog('sell')}
                   onMoveToBusiness={handleMoveToBusinessInventory}
                   onMoveToProject={() => openProjectDialog('move')}
+                  onAddToSpace={() => {
+                    setSpaceIdValue(null)
+                    setShowSpaceDialog(true)
+                  }}
                   onChangeStatus={updateDisposition}
                   onDelete={handleDeleteItem}
                 />

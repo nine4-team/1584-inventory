@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Combobox } from '@/components/ui/Combobox'
 import { Space } from '@/types'
 import { spaceService } from '@/services/spaceService'
@@ -28,17 +28,27 @@ export default function SpaceSelector({
 }: SpaceSelectorProps) {
   const { currentAccountId } = useAccount()
   const { spaces } = useProjectRealtime(projectId || null)
+  const [createdSpace, setCreatedSpace] = useState<{ id: string, name: string } | null>(null)
 
   const options = useMemo(() => {
     const spaceOptions = spaces.map(space => ({
       id: space.id,
       label: space.name + (space.projectId === null ? ' (Account-wide)' : ''),
     }))
+
+    // Add created space if it's not already in the list
+    if (createdSpace && !spaceOptions.find(s => s.id === createdSpace.id)) {
+      spaceOptions.push({
+        id: createdSpace.id,
+        label: createdSpace.name
+      })
+    }
+
     return [
       { id: '', label: 'No space set' },
       ...spaceOptions,
     ]
-  }, [spaces])
+  }, [spaces, createdSpace])
 
   const handleCreateSpace = async (name: string): Promise<string> => {
     if (!currentAccountId) {
@@ -52,6 +62,9 @@ export default function SpaceSelector({
         projectId: projectId || null,
         name: name.trim(),
       })
+
+      // Optimistically add to options so it displays correctly immediately
+      setCreatedSpace({ id: newSpace.id, name: name.trim() })
 
       // Refresh spaces in realtime context
       // Note: This will be handled by the parent component refreshing collections
