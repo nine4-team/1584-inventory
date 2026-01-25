@@ -819,8 +819,9 @@ export default function TransactionsList({ projectId: propProjectId, transaction
           <div className="relative flex-shrink-0">
             <button
               onClick={() => {
-                setShowAddMenu(!showAddMenu)
-                setShowImportSubmenu(false)
+                const next = !showAddMenu
+                setShowAddMenu(next)
+                if (!next) setShowImportSubmenu(false)
               }}
               className="add-button inline-flex items-center justify-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 transition-colors duration-200 flex-shrink-0"
               title="Add transaction"
@@ -840,60 +841,47 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                       setShowImportSubmenu(false)
                     }}
                   >
-                    Create manually
+                    Create Manually
                   </ContextLink>
 
-                  <div className="relative">
-                    <button
-                      onClick={() => setShowImportSubmenu(!showImportSubmenu)}
-                      onMouseEnter={() => setShowImportSubmenu(true)}
-                      className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center justify-between"
-                    >
-                      <span>Import Invoice</span>
-                      <span className="text-gray-400">›</span>
-                    </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowImportSubmenu((prev) => !prev)}
+                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center justify-between"
+                    aria-expanded={showImportSubmenu}
+                  >
+                    <span>Import Invoice</span>
+                    <span className="text-gray-400">{showImportSubmenu ? '▾' : '▸'}</span>
+                  </button>
 
-                    {showImportSubmenu && (
-                      <div className="absolute left-full top-0 ml-1 w-[min(12rem,calc(100vw-4rem))] bg-white border border-gray-200 rounded-md shadow-lg z-20">
-                        <div className="py-1">
-                          <ContextLink
-                            to={buildContextUrl(projectTransactionImport(projectId), { project: projectId })}
-                            className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                            onClick={() => {
-                              setShowAddMenu(false)
-                              setShowImportSubmenu(false)
-                            }}
-                          >
-                            Wayfair
-                          </ContextLink>
-                          <ContextLink
-                            to={buildContextUrl(projectTransactionImportAmazon(projectId), { project: projectId })}
-                            className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                            onClick={() => {
-                              setShowAddMenu(false)
-                              setShowImportSubmenu(false)
-                            }}
-                          >
-                            Amazon
-                          </ContextLink>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  {showImportSubmenu && (
+                    <div className="pb-1">
+                      <ContextLink
+                        to={buildContextUrl(projectTransactionImport(projectId), { project: projectId })}
+                        className="block w-full text-left px-6 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                        onClick={() => {
+                          setShowAddMenu(false)
+                          setShowImportSubmenu(false)
+                        }}
+                      >
+                        Wayfair
+                      </ContextLink>
+                      <ContextLink
+                        to={buildContextUrl(projectTransactionImportAmazon(projectId), { project: projectId })}
+                        className="block w-full text-left px-6 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                        onClick={() => {
+                          setShowAddMenu(false)
+                          setShowImportSubmenu(false)
+                        }}
+                      >
+                        Amazon
+                      </ContextLink>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
           </div>
-
-          {/* Export CSV Button */}
-          <button
-            onClick={handleExportCsv}
-            className="inline-flex items-center justify-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 transition-colors duration-200 flex-shrink-0"
-            title="Export all transactions to CSV"
-          >
-            <FileDown className="h-4 w-4 mr-2" />
-            Export CSV
-          </button>
 
           {/* Sort Button */}
           <div className="relative flex-shrink-0">
@@ -1566,6 +1554,17 @@ export default function TransactionsList({ projectId: propProjectId, transaction
               </div>
             )}
           </div>
+
+          {/* Search Bar - wraps onto its own line on mobile */}
+          {/* Export Button */}
+          <button
+            onClick={handleExportCsv}
+            className="inline-flex items-center justify-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 transition-colors duration-200 flex-shrink-0"
+            title="Export all transactions to CSV"
+          >
+            <FileDown className="h-4 w-4 mr-2" />
+            Export
+          </button>
 
           {/* Search Bar - wraps onto its own line on mobile */}
           <div className="relative flex-1 min-w-[200px] w-full sm:w-auto">
