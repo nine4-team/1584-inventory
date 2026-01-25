@@ -91,6 +91,7 @@ export default function TransactionItemsList({
   const [mergeMasterId, setMergeMasterId] = useState<string | null>(null)
   const [deletingItemIds, setDeletingItemIds] = useState<Set<string>>(new Set())
   const [bookmarkedItemIds, setBookmarkedItemIds] = useState<Set<string>>(new Set())
+  const [itemForSpaceSelection, setItemForSpaceSelection] = useState<string | null>(null)
   const [transactionDisplayInfos, setTransactionDisplayInfos] = useState<Map<string, {title: string, amount: string} | null>>(new Map())
   const [transactionRoutes, setTransactionRoutes] = useState<Map<string, {path: string, projectId: string | null}>>(new Map())
   const [searchQuery, setSearchQuery] = useState('')
@@ -817,6 +818,11 @@ export default function TransactionItemsList({
         onEdit={(href) => handleEditItem(item.id)}
         onClick={isPersisted ? () => setViewingItemId(item.id) : undefined}
         onChangeStatus={enablePersistedControls ? updateDisposition : undefined}
+        onAddToSpace={
+          enableLocation && onSetSpaceId
+            ? handleSingleAddToSpace
+            : undefined
+        }
         onAddToTransaction={
           enableTransactionActions && enablePersistedControls
             ? () => openTransactionDialog(item.id)
@@ -1022,20 +1028,40 @@ export default function TransactionItemsList({
     }
   }
 
-  const handleBulkSetSpaceId = async () => {
-    if (!onSetSpaceId) return
-    if (selectedItemIds.size === 0) return
+  const handleSingleAddToSpace = (itemId: string) => {
+    setItemForSpaceSelection(itemId)
+    setShowLocationDialog(true)
+  }
 
-    const selectedIds = Array.from(selectedItemIds)
-    const selected = items.filter(item => selectedItemIds.has(item.id))
-    if (selectedIds.length === 0 || selected.length === 0) return
+  const handleSetSpace = async () => {
+    if (!onSetSpaceId) return
+    
+    let targetIds: string[] = []
+    let targetItems: TransactionItemFormData[] = []
+
+    if (itemForSpaceSelection) {
+      targetIds = [itemForSpaceSelection]
+      const item = items.find(i => i.id === itemForSpaceSelection)
+      if (item) targetItems = [item]
+    } else {
+      if (selectedItemIds.size === 0) return
+      targetIds = Array.from(selectedItemIds)
+      targetItems = items.filter(item => selectedItemIds.has(item.id))
+    }
+
+    if (targetIds.length === 0 || targetItems.length === 0) return
 
     setBulkLocationError(null)
     setIsSettingSpace(true)
     try {
-      await onSetSpaceId(spaceIdValue ?? null, selectedIds, selected)
-      setSelectedItemIds(new Set())
+      await onSetSpaceId(spaceIdValue ?? null, targetIds, targetItems)
+      
       setShowLocationDialog(false)
+      setSpaceIdValue(null)
+      setItemForSpaceSelection(null)
+      if (!itemForSpaceSelection) {
+        setSelectedItemIds(new Set())
+      }
       setSpaceIdValue(null)
     } catch (error) {
       console.error('TransactionItemsList: bulk space update failed', error)
@@ -1648,7 +1674,10 @@ export default function TransactionItemsList({
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
             <div className="px-6 py-4 border-b border-gray-200">
               <h3 className="text-lg font-medium text-gray-900">
-                Set Space for {selectedItemIds.size} item{selectedItemIds.size !== 1 ? 's' : ''}
+                {itemForSpaceSelection 
+                  ? 'Set Space for Item'
+                  : `Set Space for ${selectedItemIds.size} item${selectedItemIds.size !== 1 ? 's' : ''}`
+                }
               </h3>
             </div>
             <div className="px-6 py-4">
@@ -1680,6 +1709,7 @@ export default function TransactionItemsList({
                 onClick={() => {
                   setShowLocationDialog(false)
                   setSpaceIdValue(null)
+                  setItemForSpaceSelection(null)
                 }}
                 className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
                 disabled={isSettingSpace}
@@ -1687,7 +1717,7 @@ export default function TransactionItemsList({
                 Cancel
               </button>
               <button
-                onClick={handleBulkSetSpaceId}
+                onClick={handleSetSpace}
                 disabled={isSettingSpace}
                 className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >

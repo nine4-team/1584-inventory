@@ -12,6 +12,7 @@ interface InventoryItemRowProps {
   onBookmark: (itemId: string) => void
   onDuplicate: (itemId: string, quantity?: number) => void
   onEdit: (href: string) => void
+  onAddToSpace?: (itemId: string) => void
   onAddToTransaction?: (itemId: string) => void
   onSellToBusiness?: (itemId: string) => void
   onSellToProject?: (itemId: string) => void
@@ -36,6 +37,7 @@ export default function InventoryItemRow({
   onBookmark,
   onDuplicate,
   onEdit,
+  onAddToSpace,
   onAddToTransaction,
   onSellToBusiness,
   onSellToProject,
@@ -116,6 +118,7 @@ export default function InventoryItemRow({
         onBookmark={onBookmark}
         onDuplicate={onDuplicate}
         onEdit={onEdit}
+        onAddToSpace={onAddToSpace}
         onAddToTransaction={onAddToTransaction}
         onSellToBusiness={onSellToBusiness}
         onSellToProject={onSellToProject}
