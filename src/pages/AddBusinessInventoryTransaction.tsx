@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { ArrowLeft, X, Save } from 'lucide-react'
-import { Transaction, Project, TaxPreset } from '@/types'
+import { Transaction, Project, TaxPreset, TransactionImage } from '@/types'
 import { CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { transactionService, projectService } from '@/services/inventoryService'
 import { getTaxPresets } from '@/services/taxPresetsService'
@@ -15,6 +15,11 @@ import CategorySelect from '@/components/CategorySelect'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { useSyncError } from '@/hooks/useSyncError'
 import { useBusinessInventoryRealtime } from '@/contexts/BusinessInventoryRealtimeContext'
+import { OfflineAwareImageService } from '@/services/offlineAwareImageService'
+import { useOfflineMediaTracker } from '@/hooks/useOfflineMediaTracker'
+import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
+import { useNetworkState } from '@/hooks/useNetworkState'
+import ImageUpload from '@/components/ui/ImageUpload'
 
 export default function AddBusinessInventoryTransaction() {
   const navigate = useStackedNavigate()
@@ -23,6 +28,12 @@ export default function AddBusinessInventoryTransaction() {
   const { currentAccountId } = useAccount()
   const { refreshCollections } = useBusinessInventoryRealtime()
   const { user } = useAuth()
+  const { isOnline } = useNetworkState()
+  const { showOfflineSaved } = useOfflineFeedback()
+  
+  // Track offline media IDs for cleanup
+  const receiptTracker = useOfflineMediaTracker()
+  
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
   const [formData, setFormData] = useState({
@@ -40,7 +51,8 @@ export default function AddBusinessInventoryTransaction() {
     status: 'pending' as const,
     reimbursementType: '' as '' | typeof CLIENT_OWES_COMPANY | typeof COMPANY_OWES_CLIENT | null | undefined,
     triggerEvent: 'Manual' as const,
-    receiptEmailed: false
+    receiptEmailed: false,
+    receiptImages: [] as File[]
   })
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
   const [isCustomSource, setIsCustomSource] = useState(false)
@@ -136,7 +148,7 @@ export default function AddBusinessInventoryTransaction() {
     }
   }, [subtotal])
 
-  const handleInputChange = (field: keyof typeof formData, value: string | boolean) => {
+  const handleInputChange = (field: keyof typeof formData, value: string | boolean | File[]) => {
     setFormData(prev => ({ ...prev, [field]: value }))
     // Clear error when user starts typing
     if (formErrors[field]) {
@@ -145,6 +157,14 @@ export default function AddBusinessInventoryTransaction() {
     // Clear general error when any field changes
     if (formErrors.general) {
       setFormErrors(prev => ({ ...prev, general: '' }))
+    }
+  }
+
+  const handleReceiptImagesChange = (files: File[]) => {
+    setFormData(prev => ({ ...prev, receiptImages: files }))
+    // Clear any existing image errors
+    if (formErrors.receiptImages) {
+      setFormErrors(prev => ({ ...prev, receiptImages: undefined }))
     }
   }
 
@@ -195,6 +215,8 @@ export default function AddBusinessInventoryTransaction() {
       // Business inventory transactions always have projectId set to null
       const projectId = null
       const projectName = null
+      // Use 'BusinessInventory' as sentinel value for storage paths
+      const storageProjectName = 'BusinessInventory'
 
       if (!user?.id) {
         setFormErrors({ general: 'User must be authenticated to create transactions' })
@@ -208,17 +230,72 @@ export default function AddBusinessInventoryTransaction() {
         return
       }
 
+      // Process receipt images to get metadata
+      let processedReceiptImages: TransactionImage[] | undefined
+      let receiptOfflineMediaIds: string[] = []
+      if (formData.receiptImages && formData.receiptImages.length > 0) {
+        processedReceiptImages = []
+        for (const file of formData.receiptImages) {
+          try {
+            const uploadResult = await OfflineAwareImageService.uploadReceiptAttachment(
+              file,
+              storageProjectName,
+              '', // No transactionId yet, will be updated during sync
+              currentAccountId
+            )
+
+            const metadata = uploadResult.url.startsWith('offline://')
+              ? {
+                  offlineMediaId: uploadResult.url.replace('offline://', ''),
+                  isOfflinePlaceholder: true
+                }
+              : undefined
+
+            if (metadata?.offlineMediaId) {
+              receiptTracker.trackMediaId(metadata.offlineMediaId)
+              receiptOfflineMediaIds.push(metadata.offlineMediaId)
+            }
+
+            processedReceiptImages.push({
+              url: uploadResult.url,
+              fileName: uploadResult.fileName,
+              uploadedAt: new Date(),
+              size: uploadResult.size,
+              mimeType: uploadResult.mimeType,
+              ...(metadata && { metadata })
+            } as TransactionImage)
+          } catch (uploadError) {
+            console.error(`Failed to upload receipt ${file.name}:`, uploadError)
+            // Continue with other files
+          }
+        }
+      }
+
       const isNoTaxSelection = taxRatePreset === NO_TAX_PRESET_ID
+      const { receiptImages: _receiptImages, ...formDataWithoutImages } = formData
       const newTransaction: Omit<Transaction, 'transactionId' | 'createdAt'> = {
-        ...formData,
+        ...formDataWithoutImages,
         projectId: projectId,
         projectName: projectName,
         createdBy: user.id,
         taxRatePreset: isNoTaxSelection ? null : taxRatePreset ?? null,
         taxRatePct: isNoTaxSelection ? 0 : undefined,
-        subtotal: taxRatePreset === 'Other' ? subtotal : null
+        subtotal: taxRatePreset === 'Other' ? subtotal : null,
+        receiptEmailed: formData.receiptEmailed ?? false,
+        ...(processedReceiptImages && { receiptImages: processedReceiptImages })
       }
       await transactionService.createTransaction(currentAccountId, projectId, newTransaction, [])
+
+      // Remove tracked receipt image IDs after successful transaction creation
+      // This prevents them from being cleaned up by useOfflineMediaTracker on unmount
+      receiptOfflineMediaIds.forEach(mediaId => {
+        receiptTracker.removeMediaId(mediaId)
+      })
+
+      // Show offline feedback if any images were queued during transaction creation
+      if (receiptOfflineMediaIds.length > 0 && !isOnline) {
+        showOfflineSaved()
+      }
       try {
         await refreshCollections()
       } catch (error) {
@@ -442,41 +519,6 @@ export default function AddBusinessInventoryTransaction() {
             )}
           </div>
 
-          {/* Receipt Email Copy */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              Receipt Email Copy
-            </label>
-            <div className="flex items-center space-x-6">
-              <div className="flex items-center">
-                <input
-                  type="radio"
-                id="receipt_yes"
-                  name="receiptEmailed"
-                  checked={formData.receiptEmailed === true}
-                  onChange={() => handleInputChange('receiptEmailed', true)}
-                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
-                />
-                <label htmlFor="receipt_yes" className="ml-2 block text-sm text-gray-900">
-                  Yes
-                </label>
-              </div>
-              <div className="flex items-center">
-                <input
-                  type="radio"
-                id="receipt_no"
-                  name="receiptEmailed"
-                  checked={formData.receiptEmailed === false}
-                  onChange={() => handleInputChange('receiptEmailed', false)}
-                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
-                />
-                <label htmlFor="receipt_no" className="ml-2 block text-sm text-gray-900">
-                  No
-                </label>
-              </div>
-            </div>
-          </div>
-
           {/* Amount */}
           <div>
             <label htmlFor="amount" className="block text-sm font-medium text-gray-700">
@@ -625,6 +667,59 @@ export default function AddBusinessInventoryTransaction() {
             {formErrors.notes && (
               <p className="mt-1 text-sm text-red-600">{formErrors.notes}</p>
             )}
+          </div>
+
+          {/* Receipts */}
+          <div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">
+              Receipts
+            </h3>
+            <ImageUpload
+              onImagesChange={handleReceiptImagesChange}
+              maxImages={5}
+              maxFileSize={10}
+              acceptedTypes={['image/jpeg','image/jpg','image/png','image/gif','image/webp','image/heic','image/heif','application/pdf']}
+              disabled={isSubmitting}
+              className="mb-2"
+            />
+            {formErrors.receiptImages && (
+              <p className="mt-1 text-sm text-red-600">{formErrors.receiptImages}</p>
+            )}
+          </div>
+
+          {/* Receipt Email Copy */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-3">
+              Receipt Email Copy
+            </label>
+            <div className="flex items-center space-x-6">
+              <div className="flex items-center">
+                <input
+                  type="radio"
+                id="receipt_yes"
+                  name="receiptEmailed"
+                  checked={formData.receiptEmailed === true}
+                  onChange={() => handleInputChange('receiptEmailed', true)}
+                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
+                />
+                <label htmlFor="receipt_yes" className="ml-2 block text-sm text-gray-900">
+                  Yes
+                </label>
+              </div>
+              <div className="flex items-center">
+                <input
+                  type="radio"
+                id="receipt_no"
+                  name="receiptEmailed"
+                  checked={formData.receiptEmailed === false}
+                  onChange={() => handleInputChange('receiptEmailed', false)}
+                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
+                />
+                <label htmlFor="receipt_no" className="ml-2 block text-sm text-gray-900">
+                  No
+                </label>
+              </div>
+            </div>
           </div>
 
           {/* Form Actions */}
