@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { Receipt, MapPin, Tag, Trash2, X } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Receipt, MapPin, Tag, Trash2, X, MoreVertical } from 'lucide-react'
 import { Transaction } from '@/types'
 import { transactionService } from '@/services/inventoryService'
 import { DISPOSITION_OPTIONS, displayDispositionLabel } from '@/utils/dispositionUtils'
@@ -63,6 +63,18 @@ export default function BulkItemControls({
   const [selectedDisposition, setSelectedDisposition] = useState<ItemDisposition | ''>('')
   const [skuValue, setSkuValue] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setIsMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   // Load transactions when dialog opens
   useEffect(() => {
@@ -197,7 +209,7 @@ export default function BulkItemControls({
     <>
       {/* Sticky Bulk Controls Container */}
       <div className={containerClasses} style={containerStyle}>
-        <div className="px-4 py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
+        <div className="px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-gray-700">
               {selectedItemIds.size} item{selectedItemIds.size !== 1 ? 's' : ''} selected
@@ -211,60 +223,85 @@ export default function BulkItemControls({
             </button>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-            {/* Assign to Transaction */}
-            {canAssign && (
-              <button
-                onClick={() => setShowTransactionDialog(true)}
-                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-              >
-                <Receipt className="h-4 w-4" />
-                Assign to Transaction
-              </button>
-            )}
+          <div className="relative" ref={menuRef}>
+            <button
+              onClick={() => setIsMenuOpen(!isMenuOpen)}
+              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+              title="Bulk actions"
+            >
+              Bulk Actions
+              <MoreVertical className="h-4 w-4" />
+            </button>
 
-            {/* Set Space */}
-            {canSetLocation && (
-              <button
-                onClick={() => setShowLocationDialog(true)}
-                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-              >
-                <MapPin className="h-4 w-4" />
-                Set Space
-              </button>
-            )}
+            {isMenuOpen && (
+              <div className="absolute bottom-full right-0 mb-2 w-56 bg-white border border-gray-200 rounded-md shadow-lg z-50 overflow-hidden">
+                <div className="py-1">
+                  {canAssign && (
+                    <button
+                      onClick={() => {
+                        setShowTransactionDialog(true)
+                        setIsMenuOpen(false)
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    >
+                      <Receipt className="h-4 w-4" />
+                      Assign to Transaction
+                    </button>
+                  )}
 
-            {/* Set Disposition */}
-            {canSetDisposition && (
-              <button
-                onClick={() => setShowDispositionDialog(true)}
-                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-              >
-                <Tag className="h-4 w-4" />
-                Set Disposition
-              </button>
-            )}
+                  {canSetLocation && (
+                    <button
+                      onClick={() => {
+                        setShowLocationDialog(true)
+                        setIsMenuOpen(false)
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    >
+                      <MapPin className="h-4 w-4" />
+                      Set Space
+                    </button>
+                  )}
 
-            {/* Set SKU */}
-            {canSetSku && (
-              <button
-                onClick={() => setShowSkuDialog(true)}
-                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-              >
-                <Tag className="h-4 w-4" />
-                Set SKU
-              </button>
-            )}
+                  {canSetDisposition && (
+                    <button
+                      onClick={() => {
+                        setShowDispositionDialog(true)
+                        setIsMenuOpen(false)
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    >
+                      <Tag className="h-4 w-4" />
+                      Set Disposition
+                    </button>
+                  )}
 
-            {/* Delete */}
-            {canDelete && (
-              <button
-                onClick={() => setShowDeleteConfirm(true)}
-                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-700 bg-red-50 border border-red-300 rounded-md hover:bg-red-100 transition-colors"
-              >
-                <Trash2 className="h-4 w-4" />
-                {deleteButtonLabel}
-              </button>
+                  {canSetSku && (
+                    <button
+                      onClick={() => {
+                        setShowSkuDialog(true)
+                        setIsMenuOpen(false)
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    >
+                      <Tag className="h-4 w-4" />
+                      Set SKU
+                    </button>
+                  )}
+
+                  {canDelete && (
+                    <button
+                      onClick={() => {
+                        setShowDeleteConfirm(true)
+                        setIsMenuOpen(false)
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      {deleteButtonLabel}
+                    </button>
+                  )}
+                </div>
+              </div>
             )}
           </div>
         </div>
