@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Plus, Receipt, Camera, Search, Filter, ArrowUpDown } from 'lucide-react'
-import { TransactionItemFormData } from '@/types'
+import { ItemDisposition, TransactionItemFormData } from '@/types'
 import TransactionItemForm from './TransactionItemForm'
 import ItemDetail from '@/pages/ItemDetail'
 import { normalizeMoneyToTwoDecimalString } from '@/utils/money'
 import { getTransactionFormGroupKey } from '@/utils/itemGrouping'
 import CollapsedDuplicateGroup from './ui/CollapsedDuplicateGroup'
-import { unifiedItemsService, transactionService } from '@/services/inventoryService'
+import { unifiedItemsService, transactionService, integrationService } from '@/services/inventoryService'
 import { getTransactionDisplayInfo, getTransactionRoute } from '@/utils/transactionDisplayUtils'
 import { projectItemDetail } from '@/utils/routes'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
@@ -20,6 +20,7 @@ import { Combobox } from '@/components/ui/Combobox'
 import SpaceSelector from '@/components/spaces/SpaceSelector'
 import { supabase } from '@/services/supabase'
 import { lineageService } from '@/services/lineageService'
+import { useToast } from '@/components/ui/ToastContext'
 
 interface TransactionItemsListProps {
   items: TransactionItemFormData[]
@@ -129,6 +130,105 @@ export default function TransactionItemsList({
   const { currentAccountId } = useAccount()
   const { buildContextUrl } = useNavigationContext()
   const { refreshCollections: refreshProjectCollections } = useProjectRealtime(projectId)
+  const { showSuccess, showError } = useToast()
+
+  const handleBulkSetSpaceId = async (spaceId: string | null) => {
+    if (!onSetSpaceId) return
+    
+    const targetIds = Array.from(selectedItemIds)
+    const targetItems = items.filter(item => selectedItemIds.has(item.id))
+    
+    if (targetIds.length === 0) return
+
+    setBulkLocationError(null)
+    try {
+      await onSetSpaceId(spaceId, targetIds, targetItems)
+      showSuccess(`Updated space for ${targetIds.length} item${targetIds.length !== 1 ? 's' : ''}`)
+      setSelectedItemIds(new Set())
+    } catch (error) {
+      console.error('Failed to set space:', error)
+      setBulkLocationError('Failed to set space. Please try again.')
+    }
+  }
+
+  const handleBulkSetDisposition = async (disposition: ItemDisposition) => {
+    if (!currentAccountId) return
+
+    const itemIds = Array.from(selectedItemIds)
+    if (itemIds.length === 0) return
+
+    try {
+      const promises = itemIds.map(async (itemId) => {
+        const item = items.find(i => i.id === itemId)
+        if (!item) return
+
+        if (!itemId.startsWith('item-')) {
+             await unifiedItemsService.updateItem(currentAccountId, itemId, { disposition })
+
+             if (disposition === 'inventory') {
+                 try {
+                     await integrationService.handleItemDeallocation(
+                         currentAccountId,
+                         itemId,
+                         projectId || '', 
+                         disposition
+                     )
+                 } catch (err) {
+                     console.error('Deallocation failed', err)
+                     // Revert disposition update if deallocation fails
+                     await unifiedItemsService.updateItem(currentAccountId, itemId, { 
+                        disposition: item.disposition 
+                     })
+                     throw err
+                 }
+             }
+        }
+      })
+      
+      await Promise.all(promises)
+
+      // Update local state
+      const updatedItems = items.map(item => 
+        selectedItemIds.has(item.id) ? { ...item, disposition } : item
+      )
+      onItemsChange(updatedItems)
+      
+      showSuccess(`Updated disposition for ${itemIds.length} item${itemIds.length !== 1 ? 's' : ''}`)
+      setSelectedItemIds(new Set())
+    } catch (error) {
+        console.error('Failed to set disposition:', error)
+        setBulkActionError('Failed to set disposition. Please try again.')
+    }
+  }
+
+  const handleBulkSetSku = async (sku: string) => {
+    if (!currentAccountId) return
+
+    const itemIds = Array.from(selectedItemIds)
+    if (itemIds.length === 0) return
+
+    try {
+      const promises = itemIds.map(async (itemId) => {
+        if (!itemId.startsWith('item-')) {
+             await unifiedItemsService.updateItem(currentAccountId, itemId, { sku })
+        }
+      })
+      
+      await Promise.all(promises)
+
+      // Update local state
+      const updatedItems = items.map(item => 
+        selectedItemIds.has(item.id) ? { ...item, sku } : item
+      )
+      onItemsChange(updatedItems)
+      
+      showSuccess(`Updated SKU for ${itemIds.length} item${itemIds.length !== 1 ? 's' : ''}`)
+      setSelectedItemIds(new Set())
+    } catch (error) {
+        console.error('Failed to set SKU:', error)
+        setBulkActionError('Failed to set SKU. Please try again.')
+    }
+  }
 
   // Initialize bookmarked items from database
   useEffect(() => {
@@ -1661,10 +1761,13 @@ export default function TransactionItemsList({
             onClearSelection={() => setSelectedItemIds(new Set())}
             itemListContainerWidth={bulkControlsWidth}
             enableAssignToTransaction={false}
-            enableLocation={false}
-            enableDisposition={false}
-            enableSku={false}
-            deleteButtonLabel="Delete selected items"
+            enableLocation={enableLocation}
+            onSetSpaceId={handleBulkSetSpaceId}
+            enableDisposition={true}
+            onSetDisposition={handleBulkSetDisposition}
+            enableSku={true}
+            onSetSku={handleBulkSetSku}
+            deleteButtonLabel="Delete"
             placement="container"
           />
         )
