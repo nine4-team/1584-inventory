@@ -342,67 +342,63 @@ export default function ImageUpload({
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={handleAddButtonClick}
-            disabled={disabled}
-            className="inline-flex items-center justify-center px-4 py-2.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 mt-3 touch-manipulation"
-            title={supportsPdf ? 'Add receipts (photos or PDF)' : 'Add images from gallery or camera'}
-          >
-            <span className="relative add-attachment-menu-container inline-flex items-center">
+          <div className="relative add-attachment-menu-container inline-flex items-center mt-3">
+            <button
+              type="button"
+              onClick={handleAddButtonClick}
+              disabled={disabled}
+              className="inline-flex items-center justify-center px-4 py-2.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 touch-manipulation"
+              title={supportsPdf ? 'Add receipts (photos or PDF)' : 'Add images from gallery or camera'}
+            >
               <ImageIcon className="h-4 w-4 mr-2" />
               Add {supportsPdf ? 'Receipts' : 'Images'}
+              {supportsImages && <ChevronDown className="h-4 w-4 ml-2 text-gray-500" />}
+            </button>
 
-              {supportsImages && (
-                <>
-                  <ChevronDown className="h-4 w-4 ml-2 text-gray-500" />
-                  {isAddMenuOpen && (
-                    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-44 bg-white rounded-md shadow-lg border border-gray-200 py-1 z-50">
-                      <button
-                        type="button"
-                        onClick={async (ev) => {
-                          ev.stopPropagation()
-                          setIsAddMenuOpen(false)
-                          await handleCameraCapture()
-                        }}
-                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
-                      >
-                        <ImageIcon className="h-4 w-4 mr-2 text-gray-500" />
-                        Take photo
-                      </button>
-                      <button
-                        type="button"
-                        onClick={async (ev) => {
-                          ev.stopPropagation()
-                          setIsAddMenuOpen(false)
-                          await handleGallerySelect()
-                        }}
-                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
-                      >
-                        <ImageIcon className="h-4 w-4 mr-2 text-gray-500" />
-                        Photo library
-                      </button>
-                      {supportsPdf && (
-                        <button
-                          type="button"
-                          onClick={(ev) => {
-                            ev.stopPropagation()
-                            setIsAddMenuOpen(false)
-                            // Allow selecting PDFs (and images) from the same picker.
-                            fileInputRef.current?.click()
-                          }}
-                          className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
-                        >
-                          <FileText className="h-4 w-4 mr-2 text-gray-500" />
-                          PDF / Browse files
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
-            </span>
-          </button>
+            {supportsImages && isAddMenuOpen && (
+              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-44 bg-white rounded-md shadow-lg border border-gray-200 py-1 z-50">
+                <button
+                  type="button"
+                  onClick={async (ev) => {
+                    ev.stopPropagation()
+                    setIsAddMenuOpen(false)
+                    await handleCameraCapture()
+                  }}
+                  className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
+                >
+                  <ImageIcon className="h-4 w-4 mr-2 text-gray-500" />
+                  Take photo
+                </button>
+                <button
+                  type="button"
+                  onClick={async (ev) => {
+                    ev.stopPropagation()
+                    setIsAddMenuOpen(false)
+                    await handleGallerySelect()
+                  }}
+                  className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
+                >
+                  <ImageIcon className="h-4 w-4 mr-2 text-gray-500" />
+                  Photo library
+                </button>
+                {supportsPdf && (
+                  <button
+                    type="button"
+                    onClick={(ev) => {
+                      ev.stopPropagation()
+                      setIsAddMenuOpen(false)
+                      // Allow selecting PDFs (and images) from the same picker.
+                      fileInputRef.current?.click()
+                    }}
+                    className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
+                  >
+                    <FileText className="h-4 w-4 mr-2 text-gray-500" />
+                    PDF / Browse files
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
