@@ -135,6 +135,10 @@ function App() {
                         element={withRouteSuspense(<ImportWayfairInvoice />)}
                       />
                       <Route
+                        path="/project/:projectId/transactions/import-amazon"
+                        element={withRouteSuspense(<ImportAmazonInvoice />)}
+                      />
+                      <Route
                         path="/project/:projectId/transactions/:transactionId"
                         element={withRouteSuspense(<TransactionDetail />)}
                       />
@@ -258,6 +262,7 @@ const AddItem = lazy(() => import('./pages/AddItem'))
 const EditItem = lazy(() => import('./pages/EditItem'))
 const AddTransaction = lazy(() => import('./pages/AddTransaction'))
 const ImportWayfairInvoice = lazy(() => import('./pages/ImportWayfairInvoice'))
+const ImportAmazonInvoice = lazy(() => import('./pages/ImportAmazonInvoice'))
 const EditTransaction = lazy(() => import('./pages/EditTransaction'))
 const TransactionDetail = lazy(() => import('./pages/TransactionDetail'))
 const Settings = lazy(() => import('./pages/Settings'))

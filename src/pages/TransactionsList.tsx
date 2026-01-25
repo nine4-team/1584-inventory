@@ -9,7 +9,7 @@ import { transactionService, isCanonicalSaleOrPurchaseTransactionId, computeCano
 import type { Transaction as TransactionType } from '@/types'
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { useAccount } from '@/contexts/AccountContext'
-import { projectTransactionDetail, projectTransactionImport, projectTransactionNew } from '@/utils/routes'
+import { projectTransactionDetail, projectTransactionImport, projectTransactionImportAmazon, projectTransactionNew } from '@/utils/routes'
 import { budgetCategoriesService } from '@/services/budgetCategoriesService'
 import { hydrateProjectTransactionsCache } from '@/utils/hydrationHelpers'
 import { getGlobalQueryClient } from '@/utils/queryClient'
@@ -220,6 +220,8 @@ export default function TransactionsList({ projectId: propProjectId, transaction
 
   // Search and filter state
   const [searchQuery, setSearchQuery] = useState<string>(() => searchParams.get('txSearch') ?? '')
+  const [showAddMenu, setShowAddMenu] = useState(false)
+  const [showImportSubmenu, setShowImportSubmenu] = useState(false)
   const [showFilterMenu, setShowFilterMenu] = useState(false)
   const [filterMenuView, setFilterMenuView] = useState<
     'main'
@@ -739,7 +741,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     return Array.from(new Set(titles)).sort((a, b) => a.localeCompare(b))
   }, [transactions])
 
-  // Close filter menu when clicking outside
+  // Close menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (!event.target) return
@@ -751,11 +753,32 @@ export default function TransactionsList({ projectId: propProjectId, transaction
       if (!target.closest('.sort-menu') && !target.closest('.sort-button')) {
         setShowSortMenu(false)
       }
+      if (!target.closest('.add-menu') && !target.closest('.add-button')) {
+        setShowAddMenu(false)
+        setShowImportSubmenu(false)
+      }
     }
 
     document.addEventListener('mousedown', handleClickOutside)
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [])
+
+  // Close menus on Escape key
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowAddMenu(false)
+        setShowImportSubmenu(false)
+        setShowFilterMenu(false)
+        setShowSortMenu(false)
+      }
+    }
+
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('keydown', handleEscape)
     }
   }, [])
 
@@ -792,34 +815,73 @@ export default function TransactionsList({ projectId: propProjectId, transaction
       {/* Controls - Sticky Container */}
       <div className="sticky top-0 z-10 bg-white border-b border-gray-200 py-3 mb-2">
         <div className="flex flex-wrap items-center gap-3">
-          {/* Add Button */}
-          <ContextLink
-            to={buildContextUrl(projectTransactionNew(projectId), { project: projectId })}
-            className="inline-flex items-center justify-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 transition-colors duration-200 flex-shrink-0"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Add
-          </ContextLink>
+          {/* Add Menu */}
+          <div className="relative flex-shrink-0">
+            <button
+              onClick={() => {
+                const next = !showAddMenu
+                setShowAddMenu(next)
+                if (!next) setShowImportSubmenu(false)
+              }}
+              className="add-button inline-flex items-center justify-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 transition-colors duration-200 flex-shrink-0"
+              title="Add transaction"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add
+            </button>
 
-          {/* Import Wayfair Invoice Button */}
-          <ContextLink
-            to={buildContextUrl(projectTransactionImport(projectId), { project: projectId })}
-            className="inline-flex items-center justify-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 transition-colors duration-200 flex-shrink-0"
-            title="Import a Wayfair invoice PDF"
-          >
-            <FileUp className="h-4 w-4 mr-2" />
-            Import Wayfair Invoice
-          </ContextLink>
+            {showAddMenu && (
+              <div className="add-menu absolute top-full left-0 mt-1 w-[min(13rem,calc(100vw-2rem))] bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                <div className="py-1">
+                  <ContextLink
+                    to={buildContextUrl(projectTransactionNew(projectId), { project: projectId })}
+                    className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    onClick={() => {
+                      setShowAddMenu(false)
+                      setShowImportSubmenu(false)
+                    }}
+                  >
+                    Create Manually
+                  </ContextLink>
 
-          {/* Export CSV Button */}
-          <button
-            onClick={handleExportCsv}
-            className="inline-flex items-center justify-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 transition-colors duration-200 flex-shrink-0"
-            title="Export all transactions to CSV"
-          >
-            <FileDown className="h-4 w-4 mr-2" />
-            Export CSV
-          </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowImportSubmenu((prev) => !prev)}
+                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center justify-between"
+                    aria-expanded={showImportSubmenu}
+                  >
+                    <span>Import Invoice</span>
+                    <span className="text-gray-400">{showImportSubmenu ? '▾' : '▸'}</span>
+                  </button>
+
+                  {showImportSubmenu && (
+                    <div className="pb-1">
+                      <ContextLink
+                        to={buildContextUrl(projectTransactionImport(projectId), { project: projectId })}
+                        className="block w-full text-left px-6 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                        onClick={() => {
+                          setShowAddMenu(false)
+                          setShowImportSubmenu(false)
+                        }}
+                      >
+                        Wayfair
+                      </ContextLink>
+                      <ContextLink
+                        to={buildContextUrl(projectTransactionImportAmazon(projectId), { project: projectId })}
+                        className="block w-full text-left px-6 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                        onClick={() => {
+                          setShowAddMenu(false)
+                          setShowImportSubmenu(false)
+                        }}
+                      >
+                        Amazon
+                      </ContextLink>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Sort Button */}
           <div className="relative flex-shrink-0">
@@ -1492,6 +1554,17 @@ export default function TransactionsList({ projectId: propProjectId, transaction
               </div>
             )}
           </div>
+
+          {/* Search Bar - wraps onto its own line on mobile */}
+          {/* Export Button */}
+          <button
+            onClick={handleExportCsv}
+            className="inline-flex items-center justify-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 transition-colors duration-200 flex-shrink-0"
+            title="Export all transactions to CSV"
+          >
+            <FileDown className="h-4 w-4 mr-2" />
+            Export
+          </button>
 
           {/* Search Bar - wraps onto its own line on mobile */}
           <div className="relative flex-1 min-w-[200px] w-full sm:w-auto">
