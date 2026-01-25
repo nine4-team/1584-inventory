@@ -150,6 +150,10 @@ function App() {
                         path="/project/:projectId/spaces/:spaceId"
                         element={withRouteSuspense(<SpaceDetail />)}
                       />
+                      <Route
+                        path="/project/:projectId/spaces/:spaceId/edit"
+                        element={withRouteSuspense(<SpaceEdit />)}
+                      />
 
                       <Route
                         path="/project/:id/item/:itemId"
@@ -242,6 +246,7 @@ const ProjectItemsPage = lazy(() => import('./pages/ProjectItemsPage'))
 const ProjectTransactionsPage = lazy(() => import('./pages/ProjectTransactionsPage'))
 const ProjectSpacesPage = lazy(() => import('./pages/ProjectSpacesPage'))
 const SpaceDetail = lazy(() => import('./pages/SpaceDetail'))
+const SpaceEdit = lazy(() => import('./pages/SpaceEdit'))
 const SpaceNew = lazy(() => import('./pages/SpaceNew'))
 const ProjectBudgetPage = lazy(() => import('./pages/ProjectBudgetPage'))
 const ProjectLegacyTabRedirect = lazy(() => import('./pages/ProjectLegacyTabRedirect'))

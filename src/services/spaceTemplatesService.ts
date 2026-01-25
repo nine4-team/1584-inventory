@@ -1,6 +1,6 @@
 import { supabase } from './supabase'
 import { convertTimestamps, handleSupabaseError, ensureAuthenticatedForDatabase } from './databaseService'
-import { SpaceTemplate } from '@/types'
+import { SpaceTemplate, SpaceChecklist } from '@/types'
 
 /**
  * Space Templates Service
@@ -13,11 +13,13 @@ interface CreateTemplateInput {
   accountId: string
   name: string
   notes?: string | null
+  checklists?: SpaceChecklist[]
 }
 
 interface UpdateTemplateInput {
   name?: string
   notes?: string | null
+  checklists?: SpaceChecklist[]
   isArchived?: boolean
   metadata?: Record<string, any> | null
 }
@@ -31,6 +33,7 @@ function mapTemplateRowToTemplate(row: any): SpaceTemplate {
     accountId: row.account_id,
     name: row.name,
     notes: row.notes ?? null,
+    checklists: (row.checklists || []) as SpaceChecklist[],
     isArchived: row.is_archived ?? false,
     sortOrder: row.sort_order ?? null,
     metadata: row.metadata ?? null,
@@ -120,6 +123,7 @@ export const spaceTemplatesService = {
         account_id: input.accountId,
         name: input.name.trim(),
         notes: input.notes ?? null,
+        checklists: input.checklists || [],
         is_archived: false,
         sort_order: nextSortOrder,
         metadata: {},
@@ -159,6 +163,9 @@ export const spaceTemplatesService = {
     }
     if (updates.notes !== undefined) {
       updateData.notes = updates.notes
+    }
+    if (updates.checklists !== undefined) {
+      updateData.checklists = updates.checklists
     }
     if (updates.isArchived !== undefined) {
       updateData.is_archived = updates.isArchived
