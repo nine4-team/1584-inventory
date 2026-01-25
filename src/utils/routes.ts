@@ -27,6 +27,9 @@ export const projectTransactionNew = (projectId: string) => `${projectTransactio
 export const projectTransactionImport = (projectId: string) =>
   `${projectTransactions(projectId)}/import-wayfair`
 
+export const projectTransactionImportAmazon = (projectId: string) =>
+  `${projectTransactions(projectId)}/import-amazon`
+
 export const projectBudget = (projectId: string) => `${projectRoot(projectId)}/budget`
 
 export const projectInvoice = (projectId: string) => `${projectRoot(projectId)}/invoice`

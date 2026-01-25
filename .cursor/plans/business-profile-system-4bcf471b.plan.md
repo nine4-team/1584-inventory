@@ -1,4 +1,10 @@
-<!-- 4bcf471b-8b9e-4bad-bd36-904f652dd623 a807dd10-735a-4ff7-9eb4-716d6824359e -->
+---
+name: Multi-Tenant Hierarchical Data Structure & Business Profile
+overview: ""
+todos: []
+isProject: false
+---
+
 # Multi-Tenant Hierarchical Data Structure & Business Profile
 
 ## Overview
