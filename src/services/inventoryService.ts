@@ -4191,6 +4191,7 @@ export const unifiedItemsService = {
       disposition: converted.disposition || undefined,
       notes: converted.notes || undefined,
       space: converted.space || undefined,
+      spaceId: converted.space_id || null,
       qrKey: converted.qr_key || '',
       bookmark: converted.bookmark || false,
       dateCreated: converted.date_created || '',
