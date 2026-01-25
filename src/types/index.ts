@@ -110,6 +110,18 @@ export interface ProjectMetadata {
   completionPercentage: number;
 }
 
+export interface SpaceChecklistItem {
+  id: string; // UUID
+  text: string;
+  isChecked: boolean; // Space only; Template should store false for all items
+}
+
+export interface SpaceChecklist {
+  id: string; // UUID
+  name: string;
+  items: SpaceChecklistItem[];
+}
+
 export interface Space {
   id: string;
   accountId: string;
@@ -118,6 +130,7 @@ export interface Space {
   name: string;
   notes?: string | null;
   images?: ItemImage[]; // Reuse ItemImage shape; isPrimary determines representative image
+  checklists?: SpaceChecklist[]; // Multiple named checklists with completion state
   isArchived: boolean;
   metadata?: Record<string, any> | null;
   createdAt: Date;
@@ -132,6 +145,7 @@ export interface SpaceTemplate {
   accountId: string;
   name: string;
   notes?: string | null;
+  checklists?: SpaceChecklist[]; // Checklist defaults (all items should have isChecked=false)
   isArchived: boolean;
   sortOrder?: number | null;
   metadata?: Record<string, any> | null;

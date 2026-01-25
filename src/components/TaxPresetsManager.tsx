@@ -301,8 +301,9 @@ export default function TaxPresetsManager() {
       )}
 
       <div className={presetsTableStyles.wrapper}>
-        <table className={presetsTableStyles.table}>
-          <tbody className={presetsTableStyles.body}>
+        <div className={presetsTableStyles.scrollArea}>
+          <table className={presetsTableStyles.table}>
+            <tbody className={presetsTableStyles.body}>
             {presets.map((preset, index) => {
               const isDragging = draggedPresetId === preset.id
               const isDragOver = dragOverPresetId === preset.id
@@ -429,8 +430,9 @@ export default function TaxPresetsManager() {
                 </tr>
               )
             })}
-          </tbody>
-        </table>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   )

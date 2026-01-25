@@ -1,6 +1,6 @@
 import { supabase } from './supabase'
 import { convertTimestamps, handleSupabaseError, ensureAuthenticatedForDatabase } from './databaseService'
-import { Space, ItemImage } from '@/types'
+import { Space, ItemImage, SpaceChecklist } from '@/types'
 import { isNetworkOnline } from './networkStatusService'
 
 /**
@@ -17,12 +17,14 @@ interface CreateSpaceInput {
   name: string
   notes?: string | null
   images?: ItemImage[]
+  checklists?: SpaceChecklist[]
 }
 
 interface UpdateSpaceInput {
   name?: string
   notes?: string | null
   images?: ItemImage[]
+  checklists?: SpaceChecklist[]
   isArchived?: boolean
   metadata?: Record<string, any> | null
 }
@@ -39,6 +41,7 @@ function mapSpaceRowToSpace(row: any): Space {
     name: row.name,
     notes: row.notes ?? null,
     images: (row.images || []) as ItemImage[],
+    checklists: (row.checklists || []) as SpaceChecklist[],
     isArchived: row.is_archived ?? false,
     metadata: row.metadata ?? null,
     createdAt: convertTimestamps(row).created_at,
@@ -132,6 +135,7 @@ export const spaceService = {
         name: input.name.trim(),
         notes: input.notes ?? null,
         images: input.images || [],
+        checklists: input.checklists || [],
         is_archived: false,
         metadata: {},
         created_by: userId,
@@ -173,6 +177,9 @@ export const spaceService = {
     }
     if (updates.images !== undefined) {
       updateData.images = updates.images
+    }
+    if (updates.checklists !== undefined) {
+      updateData.checklists = updates.checklists
     }
     if (updates.isArchived !== undefined) {
       updateData.is_archived = updates.isArchived

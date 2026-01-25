@@ -456,8 +456,9 @@ export default function BudgetCategoriesManager() {
             </button>
           </div>
         )}
-        <table className={presetsTableStyles.table}>
-          <tbody className={presetsTableStyles.body}>
+        <div className={presetsTableStyles.scrollArea}>
+          <table className={presetsTableStyles.table}>
+            <tbody className={presetsTableStyles.body}>
             {activeCategories.length > 0 || creating ? (
               <tr>
                 <td className="py-2 bg-gray-100 pl-3 pr-2 sm:pl-4">
@@ -773,8 +774,9 @@ export default function BudgetCategoriesManager() {
                   ))}
               </>
             )}
-          </tbody>
-        </table>
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {creating &&
