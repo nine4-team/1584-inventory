@@ -49,6 +49,8 @@ interface TransactionItemsListProps {
     onRun: (selectedIds: string[], selectedItems: TransactionItemFormData[]) => Promise<void>
   }
   enableLocation?: boolean
+  enableDisposition?: boolean
+  enableSku?: boolean
   onSetSpaceId?: (spaceId: string | null, selectedIds: string[], selectedItems: TransactionItemFormData[]) => Promise<void> | void
   sentinelId?: string // ID of sentinel element to track sticky behavior
   context?: 'transaction' | 'space'
@@ -78,6 +80,8 @@ export default function TransactionItemsList({
   enableTransactionActions = true,
   bulkAction,
   enableLocation = false,
+  enableDisposition = true,
+  enableSku = true,
   onSetSpaceId,
   sentinelId = 'transaction-items-sentinel',
   context = 'transaction'
@@ -1763,9 +1767,9 @@ export default function TransactionItemsList({
             enableAssignToTransaction={false}
             enableLocation={enableLocation}
             onSetSpaceId={handleBulkSetSpaceId}
-            enableDisposition={true}
+            enableDisposition={enableDisposition}
             onSetDisposition={handleBulkSetDisposition}
-            enableSku={true}
+            enableSku={enableSku}
             onSetSku={handleBulkSetSku}
             deleteButtonLabel="Delete"
             placement="container"
