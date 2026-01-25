@@ -41,4 +41,7 @@ export const projectSpaces = (projectId: string) => `${projectRoot(projectId)}/s
 export const projectSpaceDetail = (projectId: string, spaceId: string) =>
   `${projectSpaces(projectId)}/${spaceId}`
 
+export const projectSpaceEdit = (projectId: string, spaceId: string) =>
+  `${projectSpaceDetail(projectId, spaceId)}/edit`
+
 export const projectSpaceNew = (projectId: string) => `${projectSpaces(projectId)}/new`

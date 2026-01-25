@@ -274,8 +274,9 @@ export default function VendorDefaultsManager() {
       )}
 
       <div className={presetsTableStyles.wrapper}>
-        <table className={presetsTableStyles.table}>
-          <tbody className={presetsTableStyles.body}>
+        <div className={presetsTableStyles.scrollArea}>
+          <table className={presetsTableStyles.table}>
+            <tbody className={presetsTableStyles.body}>
             {slots.map((slot, index) => {
               const isDragging = draggedSlotIndex === index
               const isDragOver = dragOverSlotIndex === index
@@ -394,8 +395,9 @@ export default function VendorDefaultsManager() {
                 </tr>
               )
             })}
-          </tbody>
-        </table>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   )

@@ -8,7 +8,7 @@ import { useAccount } from '@/contexts/AccountContext'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
 import { projectSpaces } from '@/utils/routes'
 import { navigateToReturnToOrFallback } from '@/utils/navigationReturnTo'
-import { SpaceTemplate } from '@/types'
+import { SpaceTemplate, SpaceChecklist, SpaceChecklistItem } from '@/types'
 
 export default function SpaceNew() {
   const { projectId } = useParams<{ projectId: string }>()
@@ -54,7 +54,7 @@ export default function SpaceNew() {
     loadTemplates()
   }, [currentAccountId])
 
-  // Prefill name and notes when template is selected
+  // Prefill name, notes, and checklists when template is selected
   useEffect(() => {
     if (selectedTemplateId) {
       const template = templates.find(t => t.id === selectedTemplateId)
@@ -62,8 +62,24 @@ export default function SpaceNew() {
         setName(template.name)
         setNotes(template.notes || '')
       }
+    } else {
+      // Reset when no template is selected
+      setName('')
+      setNotes('')
     }
   }, [selectedTemplateId, templates])
+
+  // Helper function to normalize checklists from template (set all items to unchecked)
+  const normalizeChecklistsFromTemplate = (checklists: SpaceChecklist[] | undefined): SpaceChecklist[] => {
+    if (!checklists || checklists.length === 0) return []
+    return checklists.map(checklist => ({
+      ...checklist,
+      items: checklist.items.map(item => ({
+        ...item,
+        isChecked: false, // Always start unchecked when creating from template
+      })),
+    }))
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -88,12 +104,21 @@ export default function SpaceNew() {
 
     setIsSaving(true)
     try {
+      // Get template checklists if a template is selected
+      const selectedTemplate = selectedTemplateId
+        ? templates.find(t => t.id === selectedTemplateId)
+        : null
+      const checklists = selectedTemplate
+        ? normalizeChecklistsFromTemplate(selectedTemplate.checklists)
+        : []
+
       const newSpace = await spaceService.createSpace({
         accountId: currentAccountId,
         projectId: projectId, // Always set projectId (never null)
         templateId: selectedTemplateId, // Set templateId if template was selected
         name: name.trim(),
         notes: notes.trim() || null,
+        checklists,
       })
 
       showSuccess('Space created')
