@@ -255,7 +255,6 @@ export default function ImportAmazonInvoice() {
     notesParts.push('Amazon import')
     if (result.orderNumber) notesParts.push(`Order # ${result.orderNumber}`)
     if (result.orderPlacedDate) notesParts.push(`Order date: ${result.orderPlacedDate}`)
-    if (result.projectCode) notesParts.push(`Project: ${result.projectCode}`)
     setNotes(notesParts.join(' • '))
 
     // Set payment method if found
@@ -797,9 +796,12 @@ export default function ImportAmazonInvoice() {
                   projectName={projectName}
                   totalAmount={amount}
                   enablePersistedItemFeatures={false}
+                  enableDisposition={false}
+                  enableSku={false}
+                  enableLocation={false}
                 />
 
-                <div className="flex justify-end">
+                <div className="sticky bottom-0 bg-white border-t border-gray-200 -mx-6 -mb-6 px-6 py-4 mt-6 flex justify-end">
                   <button
                     type="button"
                     onClick={handleCreate}
