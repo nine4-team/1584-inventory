@@ -19,6 +19,7 @@ interface DBItem {
   disposition?: string | null
   notes?: string
   space?: string
+  spaceId?: string | null
   qrKey: string
   bookmark: boolean
   dateCreated: string
@@ -2093,6 +2094,7 @@ export function mapItemToDBItem(item: any): DBItem {
     disposition: item.disposition ?? null,
     notes: item.notes ?? '',
     space: item.space ?? '',
+    spaceId: item.spaceId || item.space_id || null,
     qrKey: item.qrKey || item.qr_key || '',
     bookmark: item.bookmark ?? false,
     dateCreated: item.dateCreated || item.date_created || new Date().toISOString(),
