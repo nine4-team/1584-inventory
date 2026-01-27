@@ -2948,7 +2948,7 @@ export const transactionService = {
         } else {
           const createdItemIds = await unifiedItemsService.createTransactionItems(
             accountId,
-            projectId || '',
+            projectId ?? null,
             transactionId,
             transactionData.transactionDate,
             transactionData.source, // Pass transaction source to items
@@ -7214,7 +7214,7 @@ export const unifiedItemsService = {
   // Create multiple items linked to a transaction (unified collection version) (account-scoped)
   async createTransactionItems(
     accountId: string,
-    projectId: string,
+    projectId: string | null,
     transactionId: string,
     transaction_date: string,
     transactionSource: string,
@@ -7284,7 +7284,7 @@ export const unifiedItemsService = {
         qr_key: qrKey,
         bookmark: false,
         transaction_id: transactionId,
-        project_id: projectId,
+        project_id: projectId ?? null,
         inventory_status: 'allocated',
         date_created: transaction_date,
         last_updated: now.toISOString(),
