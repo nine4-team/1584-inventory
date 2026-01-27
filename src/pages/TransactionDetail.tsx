@@ -482,8 +482,8 @@ export default function TransactionDetail() {
     if (!currentAccountId || !transactionId) return
 
     const activeTransaction = transactionRef.current
-    const actualProjectId = projectId || activeTransaction?.projectId
-    if (!actualProjectId || !activeTransaction) return
+    const actualProjectId = projectId ?? activeTransaction?.projectId ?? null
+    if (!activeTransaction) return
 
     try {
       const transactionItems = await fetchItemsViaReconcile(actualProjectId)
@@ -713,7 +713,7 @@ export default function TransactionDetail() {
 
         // Prefer item IDs stored on the transaction record
         const itemIdsFromTransaction = Array.isArray(transactionData?.itemIds) ? transactionData.itemIds : []
-        if (itemIdsFromTransaction.length > 0 && actualProjectId) {
+        if (itemIdsFromTransaction.length > 0) {
           const itemsPromises = itemIdsFromTransaction.map((itemId: string) => unifiedItemsService.getItemById(currentAccountId, itemId))
           const items = await Promise.all(itemsPromises)
           let validItems = items.filter(item => item !== null) as Item[]
@@ -1939,13 +1939,17 @@ export default function TransactionDetail() {
   }
 
   const buildCreateItemPayload = (item: TransactionItemFormData) => {
-    if (!projectId || !transactionId || !transaction) {
+    if (!transactionId || !transaction) {
       throw new Error('Transaction context is missing for item creation')
     }
     const { disposition, ...rest } = item
+    const resolvedProjectId =
+      transaction.projectId && transaction.projectId !== 'null'
+        ? transaction.projectId
+        : projectId ?? null
     return {
       ...rest,
-      projectId,
+      projectId: resolvedProjectId,
       transactionId,
       dateCreated: transaction.transactionDate || new Date().toISOString(),
       source: transaction.source,
@@ -1983,7 +1987,7 @@ export default function TransactionDetail() {
   }
 
   const handleCreateItem = async (item: TransactionItemFormData) => {
-    if (!projectId || !transactionId || !transaction || !currentAccountId) return
+    if (!transactionId || !transaction || !currentAccountId) return
 
     try {
       const itemData = buildCreateItemPayload(item)
@@ -2011,7 +2015,7 @@ export default function TransactionDetail() {
   }
 
   const handleDuplicateTransactionItem = async (item: TransactionItemFormData, quantity = 1) => {
-    if (!projectId || !transactionId || !transaction || !currentAccountId) return
+    if (!transactionId || !transaction || !currentAccountId) return
 
     try {
       const duplicateCount = Math.max(0, Math.floor(quantity))
