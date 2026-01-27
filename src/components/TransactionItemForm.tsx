@@ -29,6 +29,13 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
     item?.id || `temp_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
     [item?.id]
   )
+  const descriptionInputId = `transaction-item-${stableTempId}-description`
+  const skuInputId = `transaction-item-${stableTempId}-sku`
+  const purchasePriceInputId = `transaction-item-${stableTempId}-purchasePrice`
+  const projectPriceInputId = `transaction-item-${stableTempId}-projectPrice`
+  const marketValueInputId = `transaction-item-${stableTempId}-marketValue`
+  const spaceInputId = `transaction-item-${stableTempId}-space`
+  const notesInputId = `transaction-item-${stableTempId}-notes`
 
   const buildFormData = (source?: TransactionItemFormData): TransactionItemFormData => ({
     id: source?.id || stableTempId,
@@ -300,12 +307,14 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
 
         {/* Description */}
         <div>
-          <label htmlFor="description" className="block text-sm font-medium text-gray-700">
+          <label htmlFor={descriptionInputId} className="block text-sm font-medium text-gray-700">
             Description
           </label>
           <input
             type="text"
-            id="description"
+            id={descriptionInputId}
+            name={`transaction_item_description_${stableTempId}`}
+            autoComplete="off"
             value={formData.description}
             onChange={(e) => handleInputChange('description', e.target.value)}
             placeholder="Item description"
@@ -320,12 +329,14 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
 
         {/* SKU */}
         <div>
-          <label htmlFor="sku" className="block text-sm font-medium text-gray-700">
+          <label htmlFor={skuInputId} className="block text-sm font-medium text-gray-700">
             SKU
           </label>
           <input
             type="text"
-            id="sku"
+            id={skuInputId}
+            name={`transaction_item_sku_${stableTempId}`}
+            autoComplete="off"
             value={formData.sku}
             onChange={(e) => handleInputChange('sku', e.target.value)}
             placeholder="Stock keeping unit"
@@ -340,7 +351,7 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
 
         {/* Purchase Price */}
         <div>
-          <label htmlFor="purchasePrice" className="block text-sm font-medium text-gray-700">
+          <label htmlFor={purchasePriceInputId} className="block text-sm font-medium text-gray-700">
             Purchase Price
           </label>
           <div className="mt-1 relative rounded-md shadow-sm">
@@ -350,7 +361,9 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
             <input
               type="number"
               step="0.01"
-              id="purchasePrice"
+              id={purchasePriceInputId}
+              name={`transaction_item_purchasePrice_${stableTempId}`}
+              autoComplete="off"
               value={formData.purchasePrice || ''}
               onChange={(e) => handleInputChange('purchasePrice', e.target.value)}
               placeholder="0.00"
@@ -366,7 +379,7 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
 
         {/* Project Price */}
         <div>
-          <label htmlFor="projectPrice" className="block text-sm font-medium text-gray-700">
+          <label htmlFor={projectPriceInputId} className="block text-sm font-medium text-gray-700">
             Project Price
           </label>
           <div className="mt-1 relative rounded-md shadow-sm">
@@ -376,7 +389,9 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
             <input
               type="number"
               step="0.01"
-              id="projectPrice"
+              id={projectPriceInputId}
+              name={`transaction_item_projectPrice_${stableTempId}`}
+              autoComplete="off"
               value={formData.projectPrice || ''}
               onChange={(e) => handleInputChange('projectPrice', e.target.value)}
               placeholder="0.00"
@@ -392,7 +407,7 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
 
         {/* Market Value */}
         <div>
-          <label htmlFor="marketValue" className="block text-sm font-medium text-gray-700">
+          <label htmlFor={marketValueInputId} className="block text-sm font-medium text-gray-700">
             Market Value
           </label>
           <div className="mt-1 relative rounded-md shadow-sm">
@@ -401,7 +416,9 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
             </div>
             <input
               type="text"
-              id="marketValue"
+              id={marketValueInputId}
+              name={`transaction_item_marketValue_${stableTempId}`}
+              autoComplete="off"
               value={formData.marketValue}
               onChange={(e) => handleInputChange('marketValue', e.target.value)}
               placeholder="0.00"
@@ -417,12 +434,14 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
 
         {/* Space */}
         <div>
-          <label htmlFor="space" className="block text-sm font-medium text-gray-700">
+          <label htmlFor={spaceInputId} className="block text-sm font-medium text-gray-700">
             Space
           </label>
           <input
             type="text"
-            id="space"
+            id={spaceInputId}
+            name={`transaction_item_space_${stableTempId}`}
+            autoComplete="off"
             value={formData.space}
             onChange={(e) => handleInputChange('space', e.target.value)}
             placeholder="e.g., Living Room, Master Bedroom, Kitchen"
@@ -432,11 +451,13 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
 
         {/* Notes */}
         <div>
-          <label htmlFor="notes" className="block text-sm font-medium text-gray-700">
+          <label htmlFor={notesInputId} className="block text-sm font-medium text-gray-700">
             Notes
           </label>
           <textarea
-            id="notes"
+            id={notesInputId}
+            name={`transaction_item_notes_${stableTempId}`}
+            autoComplete="off"
             rows={2}
             value={formData.notes}
             onChange={(e) => handleInputChange('notes', e.target.value)}
