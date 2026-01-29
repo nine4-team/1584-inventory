@@ -14,6 +14,8 @@ Produce parity-grade specs for `<feature_slug>`.
 
 ## Cross-cutting dependencies (link)
 - `40_features/_cross_cutting/<...>`
+  - If the feature touches Items or Transactions UI in any scope, include:
+    - `40_features/_cross_cutting/ui/shared_items_and_transactions_modules.md`
 
 ## Output files (this work order will produce)
 Minimum:

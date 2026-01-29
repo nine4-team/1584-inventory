@@ -1,94 +1,54 @@
-# Work order: `TransactionDetail` parity contracts
+## Goal
+Produce parity-grade specs for `project-transactions`.
 
-This work order turns the feature map into **implementation-grade specs** by producing the missing “screen contract” detail (the level needed to reproduce Ledger behaviors with the new architecture).
+## Inputs to review (source of truth)
+- Feature map entry: `40_features/feature_list.md` → **Feature 7: Project transactions** (`project-transactions`)
+- Sync engine spec: `40_features/sync_engine_spec.plan.md`
+- Relevant existing specs:
+  - Navigation + stacked back/scroll restore: `40_features/feature_list.md` → **Feature 15** (`navigation-stack-and-context-links`) (parity evidence in web)
+  - Canonical transaction semantics + item-driven attribution: `40_features/project-items/feature_spec.md`
 
----
+## Owned screens (list)
+- `ProjectTransactionsPage` / `TransactionsList` — contract required? **yes**
+  - why: high-branching list (search/filter/sort/export), state persistence, canonical total self-heal.
+- `AddTransaction` / `EditTransaction` — contract required? **yes**
+  - why: offline prerequisite gating + metadata dependencies + media uploads + itemization.
+- `TransactionDetail` — contract required? **yes**
+  - why: media upload + offline placeholders + delete semantics + image gallery/pinning + itemization + cross-scope actions.
 
-## Why this is the next step
+## Cross-cutting dependencies (link)
+- Sync architecture constraints (local-first + outbox + change-signal + delta): `40_features/sync_engine_spec.plan.md`
+- Image gallery/lightbox behavior (shared UI): `40_features/_cross_cutting/ui/components/image_gallery_lightbox.md`
+- Inventory operations + lineage (transaction↔item linking/move/sell semantics): `40_features/inventory-operations-and-lineage/README.md`
 
-`TransactionDetail` is a high-ambiguity screen with:
-- Media upload + offline placeholders + deletion semantics
-- A reusable lightbox/gallery with zoom/pan/pinch + keyboard controls
-- A nested transaction-items list with its own search/filter/sort, selection, bulk ops, merge, and per-item menus
+## Output files (this work order will produce)
+Minimum:
+- `README.md`
+- `feature_spec.md`
+- `acceptance_criteria.md`
 
-If we don’t capture this behavior explicitly, parity will drift across AI devs/teams.
+Screen contracts (required):
+- `ui/screens/TransactionsList.md`
+- `ui/screens/TransactionForm.md`
+- `ui/screens/TransactionDetail.md`
 
----
+Cross-cutting (required):
+- `40_features/_cross_cutting/ui/components/image_gallery_lightbox.md`
 
-## Output files to produce (first pass)
+## Prompt packs (copy/paste)
+Create `prompt_packs/` with 2–4 slices. Each slice must include:
+- exact output files
+- source-of-truth code pointers (file paths)
+- evidence rule
 
-Create these docs (paths are for the migration doc set, not the app code):
-
-1) `40_features/project-transactions/ui/screens/transaction_detail.md`
-2) `40_features/_cross_cutting/ui/components/image_gallery_lightbox.md`
-3) `40_features/_cross_cutting/ui/components/transaction_items_list.md`
-4) `40_features/_cross_cutting/ui/components/item_preview_card_actions.md`
-
-If conflicts/offline status patterns need explicit definition, also:
-- `40_features/_cross_cutting/flows/offline_mutation_lifecycle.md`
-
----
-
-## Canonical code pointers (parity evidence)
-
-These are the “truth” sources for this work:
-- `src/pages/TransactionDetail.tsx`
-- `src/components/ui/ImageGallery.tsx`
-- `src/components/ui/ImagePreview.tsx` (transaction image preview tile grid + menu hooks)
-- `src/components/TransactionItemsList.tsx`
-- `src/components/items/ItemPreviewCard.tsx`
-- `src/components/items/ItemActionsMenu.tsx`
-
----
-
-## How to execute (recommended: 2–3 separate AI chats)
-
-Use the copy/paste prompt packs here:
-- `40_features/project-transactions/prompt_packs/chat_a_image_gallery_lightbox.md`
-- `40_features/project-transactions/prompt_packs/chat_b_transaction_detail_images.md`
-- `40_features/project-transactions/prompt_packs/chat_c_transaction_detail_items.md`
-
-### Chat A — Lightbox/gallery contract
-Deliverables:
-- `image_gallery_lightbox.md`
-
-Must include:
-- How an image opens the gallery (tile → modal)
-- Close behavior (X, Esc; Esc resets zoom first)
-- Controls: prev/next, zoom in/out, reset zoom, pin, download/open
-- Gestures: pinch-to-zoom, pan, double-click/double-tap zoom toggle, wheel zoom
-- UI auto-hide rules
-- Accessibility expectations (focus/escape)
-
-### Chat B — Transaction image sections contract
-Deliverables:
-- `transaction_detail.md` (Images section)
-
-Must include:
-- Receipt images vs other images (both present)
-- Upload flows + “uploading” indicators
-- Offline placeholders + max image counts
-- Delete semantics (local removal, queued deletes, placeholder cleanup)
-- Pinning behavior (pinned image layout + how pin/unpin works)
-
-### Chat C — Transaction items section contract
-Deliverables:
-- `transaction_items_list.md`
-- `item_preview_card_actions.md`
-- `transaction_detail.md` (Items section, links to cross-cutting docs)
-
-Must include:
-- Search/filter/sort specific to the transaction detail’s items section
-- Selection UX: select all, per-group select, indeterminate
-- Bulk actions + error/pending behavior
-- Merge behavior (money aggregation + notes merge)
-- Per-item menus and which actions appear in transaction context
-
----
+Recommended slices:
+- Slice A: Transactions list (filters/sort/search/export + state persistence)
+- Slice B: Transaction form (create/edit + metadata gating + itemization + media)
+- Slice C: Transaction detail (media + gallery + items + action menu)
 
 ## Done when (quality gates)
-
-- Each doc includes explicit **states** (loading/empty/error/offline/pending).
-- Each non-obvious behavior has **parity evidence** (file + component/function).
-- The docs link to the sync engine spec for collaboration behavior constraints (change-signal + delta).
+- Acceptance criteria all have parity evidence or explicit deltas.
+- Offline behaviors are explicit (pending + retries + restart + reconnect).
+- Collaboration behavior references change-signal + delta (no large listeners).
+- Cross-links are complete (feature docs ↔ screen contracts ↔ sync engine spec ↔ cross-cutting docs).
 

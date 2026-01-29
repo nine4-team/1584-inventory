@@ -139,6 +139,8 @@ Spec home (cross-cutting): `40_features/_cross_cutting/billing-and-entitlements.
 
 These are not “features” by themselves, but **must be spec’d once and reused** across Project + Business Inventory contexts.
 
+- **Shared Items + Transactions modules**: required shared-component contract for lists, menus, details, and forms across scopes:
+  - `40_features/_cross_cutting/ui/shared_items_and_transactions_modules.md`
 - **List controls**: search/filter/sort/grouping, state persistence/restoration, large-list performance assumptions (SQLite indexes).
 - **Bulk selection + bulk actions**: select all / per-group select, bulk edit/assign/delete flows.
 - **Attachment/media UI**: capture/select, placeholder states (`local_only`/`uploading`/`uploaded`/`failed`), retry and cleanup.
@@ -359,7 +361,10 @@ Evidence sources (all in-repo):
     - View QR code (item detail) + “Generate QR Codes” (list action)
   - Disposition changes:
     - Changing disposition to `inventory` triggers deallocation behavior (see cross-cutting “allocation/deallocation”)
-- **Entities touched**: items, item images/media, spaces, transactions (link), projects, conflicts (item conflicts), outbox ops, QR key (`qrKey`)
+- Budget category attribution (canonical transactions):
+  - Each item must persist a stable `inheritedBudgetCategoryId` (see `inventory-operations-and-lineage` + canonical attribution rules).
+  - Canonical inventory transactions should not require a user-facing budget category; budgeting attribution is item-driven via linked items.
+- **Entities touched**: items, item images/media, spaces, transactions (link), projects, conflicts (item conflicts), outbox ops, QR key (`qrKey`), `inheritedBudgetCategoryId`
 - **Offline behaviors required**:
   - Create/edit/delete offline (local-first)
   - Bulk actions offline (queued ops; show partial failures)
@@ -414,6 +419,7 @@ Evidence sources (all in-repo):
   - Canonical transactions:
     - App has special casing for canonical inventory transactions (must preserve semantics in Firebase)
     - Budget/category attribution for canonical rows is **item-driven** (group linked items by `inheritedBudgetCategoryId`), not `transaction.budgetCategoryId`
+    - Canonical inventory transactions should not require a user-facing budget category (keep uncategorized; attribution is derived).
 - **Entities touched**: transactions, budget categories, vendor defaults, tax presets, attachments/media (receipts/other images), items (linked/itemized), conflicts, outbox ops
 - **Offline behaviors required**:
   - Create/edit offline (local-first) with pending markers
@@ -445,9 +451,13 @@ Evidence sources (all in-repo):
   - Move/sell items between project and business inventory
   - Deallocate when item disposition becomes `inventory`
   - Show lineage breadcrumbs / relationship cues (where present)
-- **Budget-category determinism constraints** (planned revision):
+- **Budget-category determinism constraints** (canonical; required):
   - Project → Business Inventory: do not allow deallocation/sell unless the item has a known `inheritedBudgetCategoryId` (it must have been linked to a transaction previously).
-  - Business Inventory → Project: prompt for a destination-project budget category (default to current inherited category if available/enabled; otherwise require selection) and persist it back onto the item.
+  - Business Inventory → Project: prompt for a destination-project budget category and persist it back onto the item.
+    - Defaulting: if the item already has `inheritedBudgetCategoryId` and that category is enabled/available for the destination project, preselect it.
+    - Required choice: if no valid default exists, require selection before completing the operation.
+    - Batch behavior: apply one category choice to the whole batch (fast path); optional future enhancement is per-item split.
+    - Persistence: on successful allocation/sale, set/update `item.inheritedBudgetCategoryId` to the chosen destination category so future canonical attribution is deterministic.
 - **Entities touched**: items, transactions, projects, spaces, lineage edges/pointers, canonical transaction ids, conflicts, outbox ops
 - **Offline behaviors required**:
   - Represent multi-entity changes as a single **idempotent operation** in the outbox
@@ -505,6 +515,8 @@ Evidence sources (all in-repo):
   - `AddBusinessInventoryTransaction`
   - `EditBusinessInventoryTransaction`
   - `TransactionDetail` (also routed under business inventory)
+  - Note: these may be separate *wrappers/routes*, but must reuse the **shared Items + Transactions module components** (lists/menus/details/forms) rather than reimplementing them per-scope:
+    - `40_features/_cross_cutting/ui/shared_items_and_transactions_modules.md`
 - **Primary user flows**:
   - Items tab:
     - Search + filter + sort (mirrors project items patterns)
@@ -550,6 +562,7 @@ Evidence sources (all in-repo):
   - Canonical inventory transactions contribute to category totals via **item-driven attribution** (`inheritedBudgetCategoryId` on linked items), not `transaction.budgetCategoryId`
   - Canonical inventory transactions contribute to category totals via **item-driven attribution** (`inheritedBudgetCategoryId` on linked items), not `transaction.budgetCategoryId`
   - Design fee progress is tracked as **received** (not “spent”) and excluded from spent totals/category sums
+  - Design fee “specialness” should be bound to a stable identifier (slug/metadata), not a mutable display name
   - Accounting view:
     - Rollups like “owed to business” and “owed to client” based on transactions (and excludes canceled)
     - Launch report generation screens (invoice/client/property management)

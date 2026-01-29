@@ -8,6 +8,8 @@ Mark a screen as **contract required** if any of these are true:
 - **Collaboration**: two-device propagation expectations, conflict UX, “stale vs fresh” rules.
 - **High branching**: multiple menus, modals, bulk actions, complex filtering/sorting/grouping.
 - **Multi-entity correctness**: one user action touches multiple entities (allocation/sell/deallocate/linking).
+- **Cross-scope reuse risk**: the screen exists in both project and business-inventory contexts (Items/Transactions lists, menus, detail, forms). In that case, require a contract and ensure it references the shared-module rule:
+  - `40_features/_cross_cutting/ui/shared_items_and_transactions_modules.md`
 
 Mark as **optional** if the screen is mostly presentational and only consumes already-defined patterns.
 

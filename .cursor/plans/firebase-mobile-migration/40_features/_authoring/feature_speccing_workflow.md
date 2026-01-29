@@ -17,6 +17,7 @@ You only come here when you want to create a *new* feature folder, create new pr
 
 - **Feature inventory + parity details**: `../feature_list.md` (includes an appendix with the observed existing-app inventory)
 - **Architecture constraints**: `../../sync_engine_spec.plan.md` (local-first, explicit outbox, delta sync, tiny change-signal; avoid large listeners)
+- **Shared module reuse rule (Items/Transactions)**: `../_cross_cutting/ui/shared_items_and_transactions_modules.md`
 
 ## Outputs (per feature)
 
@@ -75,6 +76,11 @@ If multiple features would otherwise duplicate a behavior/contract, create a sin
 Use: `templates/cross_cutting_template.md`
 
 Then link to it from feature specs instead of rewriting the same behavior.
+
+Additional rule for this migration:
+
+- For Items and Transactions, prefer one shared module implementation configured by scope (project vs inventory). Do not write specs that imply separate “project items” vs “inventory items” component sets. Use:
+  - `../_cross_cutting/ui/shared_items_and_transactions_modules.md`
 
 ### 6) Apply the evidence rule (anti-hallucination)
 
