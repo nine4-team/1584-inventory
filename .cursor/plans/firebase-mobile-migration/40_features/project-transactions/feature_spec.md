@@ -58,7 +58,9 @@ Screen contracts:
 ### 1) Browse transactions (list/search/sort/filter)
 Summary:
 - Transactions render as a list of preview cards with title, amount, payment method, date, notes preview, and badges (category/type + needs-review/missing-items).
-- List state (search, filters, sort) is persisted and restored when navigating to detail and back (web uses URL params + navigation stack scroll restoration).
+- List state (search, filters, sort) is persisted and restored when navigating to detail and back.
+  - Web parity mechanism: URL params + `restoreScrollY`.
+  - Mobile (Expo Router) mechanism: shared Transactions list module persists state via `ListStateStore[listStateKey]` and restores scroll best-effort (anchor-first).
 
 Filters/sorts/search (web parity):
 - Sort modes: date, created, source, amount.
@@ -77,7 +79,14 @@ Budget category filter behavior (required; intentional delta vs web):
 
 Parity evidence:
 - Filters/sorts/search state + URL params: `src/pages/TransactionsList.tsx` (searchParams `txSearch`, `txFilter`, `txSource`, `txReceipt`, `txType`, `txPurchaseMethod`, `txCategory`, `txCompleteness`, `txSort`)
-- Scroll restoration via stacked navigate: `src/pages/TransactionsList.tsx` (`useStackedNavigate`, `restoreScrollY`)
+- Scroll restoration (web): `src/pages/TransactionsList.tsx` (`restoreScrollY`)
+
+Mobile requirement (Expo Router; shared-module):
+- Do not re-implement “state persistence + scroll restoration” per scope.
+- Implement once in the shared Transactions list module, keyed by:
+  - `listStateKey = project:${projectId}:transactions` (project scope)
+  - `listStateKey = inventory:transactions` (inventory scope)
+- Restore behavior: anchor-id restore preferred (`anchorId = <opened transactionId>`), optional scroll-offset fallback.
 - Canonical title + computed totals + self-heal: `src/pages/TransactionsList.tsx` (`getCanonicalTransactionTitle`, `computeCanonicalTransactionTotal`, `transactionService.updateTransaction`)
 
 Firebase migration constraint:

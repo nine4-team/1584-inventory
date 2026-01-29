@@ -24,6 +24,34 @@ Primary parity evidence (web):
 
 List UI (search/filter/sort/group, selection, bulk actions) should match existing parity patterns. This doc focuses only on behaviors impacted by the canonical attribution rules.
 
+### List state + scroll restoration (required; Expo Router)
+
+We do **not** wire scroll restoration separately for:
+
+- project items
+- inventory items
+
+Instead, the shared Items list module owns:
+
+- persistence of search/filter/sort (debounced) via `ListStateStore[listStateKey]`
+- best-effort scroll restoration on return (anchor-first)
+
+Required keys:
+
+- Project items list: `listStateKey = project:${projectId}:items`
+- Inventory items list: `listStateKey = inventory:items`
+
+Restore behavior:
+
+- When navigating list → item detail, record:
+  - preferred: `anchorId = <opened itemId>`
+  - optional fallback: `scrollOffset`
+- When returning to the list, restore best-effort (anchor-first) and clear the restore hint after first attempt.
+
+Source of truth:
+- `40_features/_cross_cutting/ui/shared_items_and_transactions_modules.md` → “List state + scroll restoration”
+- `40_features/navigation-stack-and-context-links/feature_spec.md`
+
 ---
 
 ## Item action restrictions (required)

@@ -28,10 +28,11 @@ Primary screens/components:
 - `src/pages/TransactionsList.tsx`
 
 Related services/hooks:
-- `src/hooks/useStackedNavigate.ts`
-- `src/hooks/useNavigationContext.ts`
-- `src/contexts/NavigationStackContext.tsx`
-- `src/utils/navigationReturnTo.ts`
+- Web parity navigation helpers (evidence only; not the mobile mechanism):
+  - `src/hooks/useStackedNavigate.ts`
+  - `src/hooks/useNavigationContext.ts`
+  - `src/contexts/NavigationStackContext.tsx`
+  - `src/utils/navigationReturnTo.ts`
 - `src/utils/hydrationHelpers.ts` (transactions cache hydration)
 - `src/services/inventoryService.ts` (transaction service + canonical id helpers)
 
@@ -43,8 +44,8 @@ For the list contract and acceptance criteria, include:
   - search match rules
   - filter modes (including nested submenu behavior)
   - sort modes
-  - state persistence + restoration rules
-  - scroll restoration rules
+  - state persistence + restoration rules (mobile: `ListStateStore[listStateKey]`)
+  - scroll restoration rules (mobile: anchor-first restore; optional offset fallback)
 - CSV export:
   - columns
   - filename rules
@@ -69,3 +70,13 @@ For each non-obvious behavior:
 - Do not prescribe “subscribe to everything” listeners; realtime must use change-signal + delta.
 - Do not do pixel-perfect design specs.
 - Focus on behaviors where multiple implementations would diverge.
+
+## Mobile navigation note (Expo Router; required)
+
+The new app uses **Expo Router** (React Navigation). Therefore:
+
+- Do not specify a custom global navigation stack as the primary mechanism for Back.
+- Do specify that the shared Transactions list module owns list state + scroll restoration, keyed by:
+  - `listStateKey = project:${projectId}:transactions` (project scope)
+  - `listStateKey = inventory:transactions` (inventory scope)
+- Required restoration UX: when opening a transaction from the list, record `anchorId = transactionId` so Back restores to that row best-effort.

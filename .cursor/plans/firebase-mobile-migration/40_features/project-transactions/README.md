@@ -23,6 +23,8 @@ This folder defines the parity-grade behavior spec for Ledger’s **Project Tran
   - `ui/screens/TransactionsList.md`
   - `ui/screens/TransactionForm.md`
   - `ui/screens/TransactionDetail.md`
+- **Shared module contract**:
+  - `40_features/_cross_cutting/ui/shared_items_and_transactions_modules.md` → “Scope config object (contract)”
 
 ## Cross-cutting dependencies
 - Sync architecture constraints (change-signal + delta, local-first): `40_features/sync_engine_spec.plan.md`

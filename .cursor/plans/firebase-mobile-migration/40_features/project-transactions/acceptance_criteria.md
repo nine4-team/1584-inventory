@@ -26,9 +26,11 @@ Shared-module requirement:
   - Canonical inventory transactions match if the transaction has **any linked item** with `item.inheritedBudgetCategoryId === selectedCategoryId`.  
   Source of truth: `00_working_docs/BUDGET_CATEGORIES_CANONICAL_TRANSACTIONS_REVISIONS.md`.
 - [ ] **Filter state persistence**: list search/filter/sort state is persisted and restored when navigating away and back.  
-  Observed in `src/pages/TransactionsList.tsx` (URL params `txSearch`, `txFilter`, `txSource`, `txReceipt`, `txType`, `txPurchaseMethod`, `txCategory`, `txCompleteness`, `txSort` + `isSyncingFromUrlRef`).
-- [ ] **Scroll restoration**: navigating into a transaction and back restores list scroll position.  
-  Observed in `src/pages/TransactionsList.tsx` (`useStackedNavigate` storing `scrollY`; restore via `restoreScrollY` state).
+  Web parity evidence: `src/pages/TransactionsList.tsx` (URL params `txSearch`, `txFilter`, `txSource`, `txReceipt`, `txType`, `txPurchaseMethod`, `txCategory`, `txCompleteness`, `txSort` + `isSyncingFromUrlRef`).  
+  Mobile requirement (Expo Router): persisted via `ListStateStore[listStateKey]` in the shared Transactions list module.
+- [ ] **Scroll restoration (anchor-first)**: navigating into a transaction and back restores list scroll position best-effort, preferably by scrolling back to the opened transaction row (`anchorId = transactionId`).  
+  Web parity evidence: `src/pages/TransactionsList.tsx` (restore via `restoreScrollY`).  
+  Mobile requirement (Expo Router): restore by `anchorId` first, with optional scroll-offset fallback, and clear restore hint after first attempt.
 - [ ] **Empty state messaging**: empty state differentiates between “no transactions” and “no results due to filters/search”.  
   Observed in `src/pages/TransactionsList.tsx` (empty state copy based on active filters/search).
 - [ ] **Completeness indicator**: list shows “Needs Review” badge when `needsReview===true`, otherwise may show “Missing Items” based on completeness fetch.  
@@ -86,7 +88,8 @@ Shared-module requirement:
 - [ ] **Hydration behavior**: attempts to hydrate from cache first, then fetch latest transaction for attachments correctness.  
   Observed in `src/pages/EditTransaction.tsx` (`hydrateTransactionCache`, “Always fetch the latest transaction so attachments stay in sync”).
 - [ ] **Back navigation**: returnTo param and/or navigation stack back restores scroll where applicable.  
-  Observed in `src/pages/EditTransaction.tsx` (`getReturnToFromLocation`, `navigationStack.pop`, `restoreScrollY`).
+  Web parity evidence: `src/pages/EditTransaction.tsx` (`getReturnToFromLocation`, `navigationStack.pop`, `restoreScrollY`).  
+  Mobile requirement (Expo Router): use native back stack; list restoration is handled by the originating list via `ListStateStore[listStateKey]` (anchor-first).
 - [ ] **Existing image preview**: shows existing receipts and other images with remove controls and maxImages=5.  
   Observed in `src/pages/EditTransaction.tsx` (`TransactionImagePreview` usage).
 - [ ] **Status ↔ reimbursement rule**: status and reimbursement type are coupled as described in feature spec.  
