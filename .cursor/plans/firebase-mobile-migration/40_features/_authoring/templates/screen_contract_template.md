@@ -50,6 +50,11 @@ Bullet list of every important action and the resulting behavior/state changes.
 - Required indexes/search behavior
 - Virtualization/debouncing needs
 
+## Implementation reuse (porting) notes
+- Reusable logic to port (file paths + symbols):
+- Platform wrappers required (navigation, storage, media, share/print, background execution):
+- Any intentional deltas (why porting isn’t possible 1:1):
+
 ## Parity evidence
 List “Observed in …” bullets with file + component/function name for non-obvious behaviors.
 

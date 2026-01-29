@@ -89,6 +89,24 @@ For each **non-obvious** behavior or acceptance criterion, include one of:
 - **Parity evidence**: “Observed in …” with file + component/function name in the existing codebase, or
 - **Intentional delta**: explicitly state what changes and why.
 
+### 6.5) Apply the reuse rule (anti-rewrite)
+
+Default posture for this migration:
+
+- If a piece of behavior already exists as **pure TypeScript logic** (parsers, transforms, selectors, formatting, validation), we should **port/reuse it** rather than recreate it.
+- Specs must make it clear when something is expected to be **ported** (and from where), versus **re-implemented** due to platform constraints.
+
+Minimum requirement per feature:
+
+- Add a short **“Implementation reuse (porting) notes”** section to `feature_spec.md` (or the relevant screen contract) that lists:
+  - **Reusable logic** (file paths) that should be ported as-is or with minimal adaptation
+  - **Platform wrappers** needed (e.g., file picker, share sheet, background execution, SQLite persistence)
+  - Any **known deltas** required by offline-first architecture (outbox/delta/change-signal)
+
+Cross-cutting guidance:
+
+- See `40_features/_cross_cutting/code_reuse_and_porting_policy.md` (canonical).
+
 ### 7) Check “spec complete”
 
 Use: `templates/definition_of_done.md`
