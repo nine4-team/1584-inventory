@@ -11,19 +11,13 @@ Shared-module requirement:
 - Route params:
   - `scope`: `'project' | 'inventory'`
   - `projectId` (required when `scope === 'project'`; absent when `scope === 'inventory'`)
-- Query params (web parity; mobile equivalent must exist):
-  - `txSearch`
-  - `txFilter` (reimbursement)
-  - `txSource`
-  - `txReceipt`
-  - `txType`
-  - `txPurchaseMethod`
-  - `txCategory`
-  - `txCompleteness`
-  - `txSort`
+- Persisted list state (web parity uses query params; Expo Router mobile uses a list state store):
+  - `listStateKey` (required; stable per scope)
+  - list controls: search/filter/sort/menu state
+  - restore hint: anchor id (preferred) + optional scroll offset fallback
 - Entry points:
   - Project shell → Transactions tab (`ProjectTransactionsPage` renders this) OR Business inventory shell → Transactions tab (wrapper TBD)
-  - Return from `TransactionDetail` / `EditTransaction` via stacked back
+  - Return from `TransactionDetail` / `EditTransaction` via native back stack (Expo Router)
 
 ## Reads (local-first)
 - Local DB queries:
@@ -78,8 +72,10 @@ Rules:
 - **Search** → list filters by text/amount-like match and state persists.
 - **Export** → generate CSV from locally available transactions and share/save it (mobile).
 - **Open transaction**:
-  - Navigating into a transaction detail records current scroll offset.
-  - Returning restores scroll offset and previous list state.
+  - Navigating into a transaction detail records a restore hint for the current list:
+    - preferred: `anchorId = <opened transactionId>`
+    - optional fallback: `scrollOffset`
+  - Returning restores previous list controls and performs best-effort scroll restoration (anchor-first).
 - **Close menus**:
   - Clicking outside closes open menus.
   - Pressing Escape closes open menus.
@@ -123,8 +119,9 @@ Rules:
   - Optional: FTS for `source`/`notes`
 
 ## Parity evidence
-- State persistence (URL params): Observed in `src/pages/TransactionsList.tsx` (`useSearchParams` + sync effects).
-- Scroll restoration: Observed in `src/pages/TransactionsList.tsx` (`useStackedNavigate`, restore via `restoreScrollY` state).
+- State persistence (URL params; web): Observed in `src/pages/TransactionsList.tsx` (`useSearchParams` + sync effects).
+- Scroll restoration (web): Observed in `src/pages/TransactionsList.tsx` (restore via `location.state.restoreScrollY`).
+- Mobile target (Expo Router): list state + scroll restoration is owned by the shared Transactions list module via `listStateKey` (see `40_features/navigation-stack-and-context-links/feature_spec.md`).
 - Filters/sorts/search logic: Observed in `src/pages/TransactionsList.tsx` (`filteredTransactions` useMemo + menu UI).
 - Export CSV: Observed in `src/pages/TransactionsList.tsx` (`buildTransactionsCsv`, `handleExportCsv`).
 - Canonical title + totals + self-heal: Observed in `src/pages/TransactionsList.tsx` (`getCanonicalTransactionTitle`, `computeCanonicalTransactionTotal`, `updateTransaction`).

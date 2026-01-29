@@ -144,6 +144,10 @@ These are not “features” by themselves, but **must be spec’d once and reus
 - **List controls**: search/filter/sort/grouping, state persistence/restoration, large-list performance assumptions (SQLite indexes).
 - **Bulk selection + bulk actions**: select all / per-group select, bulk edit/assign/delete flows.
 - **Attachment/media UI**: capture/select, placeholder states (`local_only`/`uploading`/`uploaded`/`failed`), retry and cleanup.
+- **Offline media lifecycle (offline cache + uploads + cleanup)**:
+  - `40_features/_cross_cutting/offline_media_lifecycle.md`
+  - Guardrails subcomponent (global warning + offline attachment gating):
+    - `40_features/_cross_cutting/ui/components/storage_quota_warning.md`
 - **Cross-linking UI**: item ↔ transaction linking (“itemization”), item ↔ space assignment, pickers and browse-in-context behaviors.
 - **QR flows**: generate/show/print/share QR codes, and the navigation affordances around QR.
 - **Pending/sync/error UX**: consistent pending markers, error surfacing, retry affordances that map to outbox + delta sync.
@@ -243,24 +247,6 @@ Evidence sources (all in-repo):
 - **Architecture compatibility notes**:
   - The “sync status” UX must reflect **outbox + delta sync + `meta/sync` health**, not a web-style realtime subscription status.
   - “Retry sync” should trigger **foreground outbox flush + targeted delta catch-up**, not force large listeners.
-
-### 3) Local media storage quota + upload gating
-- **feature_slug**: `storage-quota-warning`
-- **Short description**: Warn when offline media storage is near full and prevent upload-heavy flows from failing silently.
-- **Owned components**:
-  - `StorageQuotaWarning` (global warning)
-- **Primary user flows**:
-  - Storage usage exceeds threshold → show warning (dismissible)
-  - At critical level → instruct user to delete media/free space before uploading more
-- **Entities touched**: local media store (offline media), local DB init state
-- **Offline behaviors required**:
-  - Quota checks must work offline
-  - Should gate/adjust media selection flows when `canUpload=false` (or show immediate error)
-- **Collaboration/realtime needs**: **No**
-- **Risk level**: **Med** — causes data loss/UX failure if not handled; platform differences (RN storage) matter.
-- **Dependencies**:
-  - Requires local media subsystem (file store + metadata)
-  - Requires local DB init lifecycle
 
 ### 4) Settings + admin/owner management
 - **feature_slug**: `settings-and-admin`
@@ -654,15 +640,18 @@ Evidence sources (all in-repo):
 
 ### 15) Context-aware navigation stack + scroll restoration (user-visible UX system)
 - **feature_slug**: `navigation-stack-and-context-links`
-- **Short description**: A global navigation stack preserves “return to” behavior and scroll position across deep screens (items/transactions) and across business-inventory ↔ project contexts.
-- **Owned components/hooks**:
+- **Short description**: Reliable “back to where I was” UX for long lists (items/transactions), including preserved list controls and best-effort scroll restoration (preferably back to the tapped row), across business-inventory ↔ project contexts.
+- **Mobile approach (Expo Router)**:
+  - **Back** is owned by React Navigation (no parallel custom history stack required for correctness).
+  - **List state + scroll restoration** are owned by shared list modules (Items/Transactions) via `ListStateStore[listStateKey]` (anchor-first restore + optional offset fallback).
+- **Parity evidence (web; not the mobile mechanism)**:
   - `NavigationStackProvider` + `useNavigationStack` (sessionStorage-backed stack)
   - `useStackedNavigate`, `useNavigationContext` (`buildContextUrl`, `getBackDestination`)
   - `ContextLink`, `ContextBackLink`
 - **Primary user flows**:
   - Click into item/transaction detail from a long list → back returns to the right list and restores scroll
-  - Cross-context navigation (e.g., business inventory → project transaction) preserves a correct back target via `returnTo`
-- **Entities touched**: sessionStorage-backed nav stack (`navStack:v1`), URL query params (`returnTo`, plus optional context params)
+  - Cross-context navigation (e.g., business inventory → project transaction) preserves a correct back target via native back stack; if entered via deep link/cold start, use `backTarget` fallback
+- **Entities touched (mobile)**: list-state store keys (`listStateKey`) and restore hints (e.g., `anchorId`, optional `scrollOffset`). (Expo Router navigation history is managed by the navigation library.)
 - **Offline behaviors required**: works fully offline (purely local state)
 - **Collaboration/realtime needs**: **No**
 - **Risk level**: **Med** — if parity is wrong, the app feels “lost” (especially on mobile).
@@ -700,10 +689,14 @@ These are flows/behaviors that span multiple features and should be spec’d onc
 
 ### F) Media lifecycle end-to-end
 - Capture/select → local store → placeholder render → upload → attach → cleanup (orphan removal).
-- Must include quota warning and failure handling.
+- Must include quota warning, offline attachment gating, and failure handling.
+- Canonical spec:
+  - `40_features/_cross_cutting/offline_media_lifecycle.md`
+- Subcomponent spec (shared UI/validation contract):
+  - `40_features/_cross_cutting/ui/components/storage_quota_warning.md`
 
 ### G) Search/filter/sort + state restoration
-- Today state is persisted via URL params; RN needs an equivalent (screen state persistence + deep links).
+- Web parity persists state via URL params; RN (Expo Router) must persist list state via `ListStateStore[listStateKey]` (and optionally support deep links).
 - Include list grouping + bulk selection persistence rules.
 
 ### H) Navigation + “return to” + stacked back + scroll restoration
@@ -734,7 +727,6 @@ These are flows/behaviors that span multiple features and should be spec’d onc
 - `_cross_cutting`
 - `auth-and-invitations`
 - `connectivity-and-sync-status`
-- `storage-quota-warning`
 - `settings-and-admin`
 - `projects`
 - `project-items`

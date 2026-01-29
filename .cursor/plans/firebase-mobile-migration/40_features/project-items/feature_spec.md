@@ -20,6 +20,7 @@ This spec is authored from the project entrypoints, but it is also the **canonic
 Source of truth:
 
 - `40_features/_cross_cutting/ui/shared_items_and_transactions_modules.md`
+  - See also: “Scope config object (contract)” (single config object consumed by shared Items + Transactions UI across project + inventory scopes)
 
 ---
 
