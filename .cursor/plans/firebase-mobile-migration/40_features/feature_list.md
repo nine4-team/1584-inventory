@@ -709,6 +709,8 @@ These are flows/behaviors that span multiple features and should be spec’d onc
 
 ### I) Roles/permissions gating
 - Owner/admin gating for settings, templates, user management, and destructive actions.
+- Canonical spec:
+  - `40_features/_cross_cutting/category-scoped-permissions-v2/feature_spec.md`
 
 ### J) Inventory operations semantics (allocation/sell/deallocate/canonical IDs/lineage)
 - Define canonical transaction IDs, lineage updates, and server-owned invariants for multi-entity correctness.
