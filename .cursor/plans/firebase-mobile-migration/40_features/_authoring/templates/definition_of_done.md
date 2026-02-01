@@ -23,3 +23,8 @@ A feature is “spec complete” only if:
   - cross-cutting docs they depend on
   - sync engine spec (when relevant)
 
+- **Shared-module reuse (when applicable)**:
+  - If the feature touches Items or Transactions UI (lists/menus/details/forms), the spec explicitly states whether it uses the shared modules.
+  - The spec must not introduce separate “project vs business inventory” implementations for Items/Transactions; it must reference:
+    - `40_features/_cross_cutting/ui/shared_items_and_transactions_modules.md`
+

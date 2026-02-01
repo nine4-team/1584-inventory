@@ -141,12 +141,17 @@ export default function TransactionDetail() {
   const transactionRef = useRef<Transaction | null>(null)
   const derivedRealtimeProjectId = projectId || transaction?.projectId || null
   const { refreshCollections: refreshRealtimeCollections, items: realtimeProjectItems } = useProjectRealtime(derivedRealtimeProjectId)
+  let refreshTransactionItems: (() => Promise<void>) | null = null
   const refreshRealtimeAfterWrite = useCallback(
-    (includeProject = false) => {
-      if (!derivedRealtimeProjectId) return Promise.resolve()
-      return refreshRealtimeCollections(includeProject ? { includeProject: true } : undefined).catch(err => {
-        console.debug('TransactionDetail: realtime refresh failed', err)
-      })
+    async (includeProject = false) => {
+      if (derivedRealtimeProjectId) {
+        return refreshRealtimeCollections(includeProject ? { includeProject: true } : undefined).catch(err => {
+          console.debug('TransactionDetail: realtime refresh failed', err)
+        })
+      }
+
+      // Business inventory fallback: refresh the transaction items directly.
+      return refreshTransactionItems?.()
     },
     [derivedRealtimeProjectId, refreshRealtimeCollections]
   )
@@ -478,7 +483,7 @@ export default function TransactionDetail() {
   )
 
   // Refresh transaction items
-  const refreshTransactionItems = useCallback(async () => {
+  const refreshTransactionItemsCallback = useCallback(async () => {
     if (!currentAccountId || !transactionId) return
 
     const activeTransaction = transactionRef.current
@@ -509,6 +514,7 @@ export default function TransactionDetail() {
       console.error('Error refreshing transaction items:', error)
     }
   }, [currentAccountId, projectId, transactionId, fetchItemsViaReconcile])
+  refreshTransactionItems = refreshTransactionItemsCallback
 
   useEffect(() => {
     if (!transactionId || !realtimeProjectItems || realtimeProjectItems.length === 0) {
@@ -1057,16 +1063,24 @@ export default function TransactionDetail() {
   useEffect(() => {
     if (!currentAccountId || !transactionId) return
     const resolvedProjectId = projectId || transaction?.projectId
-    if (!resolvedProjectId) return
-
-    const unsubscribe = transactionService.subscribeToTransaction(
-      currentAccountId,
-      resolvedProjectId,
-      transactionId,
-      updatedTransaction => {
-        setTransaction(updatedTransaction)
-      }
-    )
+    const unsubscribe = resolvedProjectId
+      ? transactionService.subscribeToTransaction(
+          currentAccountId,
+          resolvedProjectId,
+          transactionId,
+          updatedTransaction => {
+            setTransaction(updatedTransaction)
+          }
+        )
+      : transactionService.subscribeToBusinessInventoryTransactions(
+          currentAccountId,
+          transactionsSnapshot => {
+            const updatedTransaction =
+              transactionsSnapshot.find(tx => tx.transactionId === transactionId) ?? null
+            setTransaction(updatedTransaction)
+          },
+          transaction ? [transaction] : undefined
+        )
 
     return () => {
       try {
@@ -1075,20 +1089,18 @@ export default function TransactionDetail() {
         console.debug('TransactionDetail - failed to unsubscribe transaction realtime', err)
       }
     }
-  }, [currentAccountId, projectId, transaction?.projectId, transactionId])
+  }, [currentAccountId, projectId, transaction?.projectId, transactionId, transaction])
 
   useEffect(() => {
     if (!currentAccountId || !transactionId) return
     const resolvedProjectId = projectId || transaction?.projectId
-    if (!resolvedProjectId) return
-
-    const unsubscribe = unifiedItemsService.subscribeToProjectItems(
-      currentAccountId,
-      resolvedProjectId,
-      () => {
-        refreshTransactionItems()
-      }
-    )
+    const unsubscribe = resolvedProjectId
+      ? unifiedItemsService.subscribeToProjectItems(currentAccountId, resolvedProjectId, () => {
+          refreshTransactionItems()
+        })
+      : unifiedItemsService.subscribeToBusinessInventoryItems(currentAccountId, () => {
+          refreshTransactionItems()
+        })
 
     return () => {
       try {
@@ -2627,7 +2639,8 @@ export default function TransactionDetail() {
         {/* Transaction Audit */}
         {(() => {
           if (!transaction) return null
-          if (!(projectId || transaction.projectId)) return null
+          const resolvedProjectId = projectId || transaction.projectId
+          if (!resolvedProjectId) return null
           if (getCanonicalTransactionTitle(transaction) === COMPANY_INVENTORY_SALE || getCanonicalTransactionTitle(transaction) === COMPANY_INVENTORY_PURCHASE) return null
 
           const transactionCategory = getTransactionCategory(transaction, budgetCategories)
@@ -2642,7 +2655,7 @@ export default function TransactionDetail() {
             <div className="px-6 py-6 border-t border-gray-200">
               <TransactionAudit
                 transaction={transaction}
-                projectId={projectId || transaction.projectId || ''}
+                projectId={resolvedProjectId}
                 transactionItems={auditItems}
               />
             </div>

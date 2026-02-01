@@ -2,9 +2,9 @@
 
 These are **copy/paste ready** prompt packs for separate AI dev chats, so you don’t have to manually discover file paths.
 
-Use the one that matches the slice of work you want done.
+Use the one that matches the slice of work you want done:
 
-- `chat_a_image_gallery_lightbox.md`
-- `chat_b_transaction_detail_images.md`
-- `chat_c_transaction_detail_items.md`
+- `chat_a_transactions_list_filters_export.md`
+- `chat_b_transaction_form_create_edit.md`
+- `chat_c_transaction_detail_media_items_actions.md`
 

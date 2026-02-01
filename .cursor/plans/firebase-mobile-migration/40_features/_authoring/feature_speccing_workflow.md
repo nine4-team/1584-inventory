@@ -17,6 +17,7 @@ You only come here when you want to create a *new* feature folder, create new pr
 
 - **Feature inventory + parity details**: `../feature_list.md` (includes an appendix with the observed existing-app inventory)
 - **Architecture constraints**: `../../sync_engine_spec.plan.md` (local-first, explicit outbox, delta sync, tiny change-signal; avoid large listeners)
+- **Shared module reuse rule (Items/Transactions)**: `../_cross_cutting/ui/shared_items_and_transactions_modules.md`
 
 ## Outputs (per feature)
 
@@ -76,12 +77,35 @@ Use: `templates/cross_cutting_template.md`
 
 Then link to it from feature specs instead of rewriting the same behavior.
 
+Additional rule for this migration:
+
+- For Items and Transactions, prefer one shared module implementation configured by scope (project vs inventory). Do not write specs that imply separate “project items” vs “inventory items” component sets. Use:
+  - `../_cross_cutting/ui/shared_items_and_transactions_modules.md`
+
 ### 6) Apply the evidence rule (anti-hallucination)
 
 For each **non-obvious** behavior or acceptance criterion, include one of:
 
 - **Parity evidence**: “Observed in …” with file + component/function name in the existing codebase, or
 - **Intentional delta**: explicitly state what changes and why.
+
+### 6.5) Apply the reuse rule (anti-rewrite)
+
+Default posture for this migration:
+
+- If a piece of behavior already exists as **pure TypeScript logic** (parsers, transforms, selectors, formatting, validation), we should **port/reuse it** rather than recreate it.
+- Specs must make it clear when something is expected to be **ported** (and from where), versus **re-implemented** due to platform constraints.
+
+Minimum requirement per feature:
+
+- Add a short **“Implementation reuse (porting) notes”** section to `feature_spec.md` (or the relevant screen contract) that lists:
+  - **Reusable logic** (file paths) that should be ported as-is or with minimal adaptation
+  - **Platform wrappers** needed (e.g., file picker, share sheet, background execution, SQLite persistence)
+  - Any **known deltas** required by offline-first architecture (outbox/delta/change-signal)
+
+Cross-cutting guidance:
+
+- See `40_features/_cross_cutting/code_reuse_and_porting_policy.md` (canonical).
 
 ### 7) Check “spec complete”
 

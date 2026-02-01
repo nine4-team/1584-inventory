@@ -7,6 +7,7 @@ This folder is the **single source of truth** for migration planning docs. The g
 - **Workflow for feature specs (the only process doc)**: `40_features/_authoring/feature_speccing_workflow.md`
 - **Doc set roadmap (big-picture: what we’re doing + planned doc set / tree)**: `ROADMAP.md`
 - **Sync engine spec (delta sync + change-signal + outbox + conflicts + media)**: `sync_engine_spec.plan.md`
+- **Connectivity + sync status spec (global sync UX)**: `40_features/connectivity-and-sync-status/README.md`
 - **Single canonical feature list**: `40_features/feature_list.md`
 - **What moved/was deleted (so nothing feels “mysteriously gone”)**: `CHANGELOG.md`
 - **Reusable authoring templates (single home)**: `40_features/_authoring/templates/`
@@ -18,6 +19,13 @@ This folder is the **single source of truth** for migration planning docs. The g
   - `50_migration/`
   - `60_testing/`
   - `70_ops/`
+
+## Cross-cutting spec index (linked here for canonicality)
+
+- **Offline media lifecycle (attachments offline cache + uploads + cleanup)**: `40_features/_cross_cutting/offline-media-lifecycle/feature_spec.md`
+- **Billing + entitlements (RevenueCat; free tier gating)**: `40_features/_cross_cutting/billing-and-entitlements/feature_spec.md`
+- **Code reuse + porting policy (reuse-first; rewrite edges only)**: `40_features/_cross_cutting/code_reuse_and_porting_policy.md`
+- **Category-scoped access control (Roles v2)**: `40_features/_cross_cutting/category-scoped-permissions-v2/feature_spec.md`
 
 ## Core architecture invariant (correctness + cost control; do not violate)
 

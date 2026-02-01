@@ -119,7 +119,7 @@ Implementation constraints (high-level):
 - Firestore Rules cannot safely “count projects” (no server-side aggregate/query in rules), so **project creation must be a server-owned operation** (callable Function) when entitlements are enforced.
 - Offline behavior must be explicit: if the user is over the limit while offline, block creation or create a local-only draft that won’t sync until upgraded.
 
-Spec home (cross-cutting): `40_features/_cross_cutting/billing-and-entitlements.md` (create if/when the `_cross_cutting/` folder exists).
+Spec home (cross-cutting): `40_features/_cross_cutting/billing-and-entitlements/feature_spec.md`.
 
 ---
 
@@ -139,9 +139,15 @@ Spec home (cross-cutting): `40_features/_cross_cutting/billing-and-entitlements.
 
 These are not “features” by themselves, but **must be spec’d once and reused** across Project + Business Inventory contexts.
 
+- **Shared Items + Transactions modules**: required shared-component contract for lists, menus, details, and forms across scopes:
+  - `40_features/_cross_cutting/ui/shared_items_and_transactions_modules.md`
 - **List controls**: search/filter/sort/grouping, state persistence/restoration, large-list performance assumptions (SQLite indexes).
 - **Bulk selection + bulk actions**: select all / per-group select, bulk edit/assign/delete flows.
 - **Attachment/media UI**: capture/select, placeholder states (`local_only`/`uploading`/`uploaded`/`failed`), retry and cleanup.
+- **Offline media lifecycle (offline cache + uploads + cleanup)**:
+  - `40_features/_cross_cutting/offline-media-lifecycle/feature_spec.md`
+  - Guardrails subcomponent (global warning + offline attachment gating):
+    - `40_features/_cross_cutting/ui/components/storage_quota_warning.md`
 - **Cross-linking UI**: item ↔ transaction linking (“itemization”), item ↔ space assignment, pickers and browse-in-context behaviors.
 - **QR flows**: generate/show/print/share QR codes, and the navigation affordances around QR.
 - **Pending/sync/error UX**: consistent pending markers, error surfacing, retry affordances that map to outbox + delta sync.
@@ -242,24 +248,6 @@ Evidence sources (all in-repo):
   - The “sync status” UX must reflect **outbox + delta sync + `meta/sync` health**, not a web-style realtime subscription status.
   - “Retry sync” should trigger **foreground outbox flush + targeted delta catch-up**, not force large listeners.
 
-### 3) Local media storage quota + upload gating
-- **feature_slug**: `storage-quota-warning`
-- **Short description**: Warn when offline media storage is near full and prevent upload-heavy flows from failing silently.
-- **Owned components**:
-  - `StorageQuotaWarning` (global warning)
-- **Primary user flows**:
-  - Storage usage exceeds threshold → show warning (dismissible)
-  - At critical level → instruct user to delete media/free space before uploading more
-- **Entities touched**: local media store (offline media), local DB init state
-- **Offline behaviors required**:
-  - Quota checks must work offline
-  - Should gate/adjust media selection flows when `canUpload=false` (or show immediate error)
-- **Collaboration/realtime needs**: **No**
-- **Risk level**: **Med** — causes data loss/UX failure if not handled; platform differences (RN storage) matter.
-- **Dependencies**:
-  - Requires local media subsystem (file store + metadata)
-  - Requires local DB init lifecycle
-
 ### 4) Settings + admin/owner management
 - **feature_slug**: `settings-and-admin`
 - **Short description**: Settings hub for profile info plus admin/owner-managed configuration and presets that drive the rest of the product.
@@ -359,7 +347,10 @@ Evidence sources (all in-repo):
     - View QR code (item detail) + “Generate QR Codes” (list action)
   - Disposition changes:
     - Changing disposition to `inventory` triggers deallocation behavior (see cross-cutting “allocation/deallocation”)
-- **Entities touched**: items, item images/media, spaces, transactions (link), projects, conflicts (item conflicts), outbox ops, QR key (`qrKey`)
+- Budget category attribution (canonical transactions):
+  - Each item must persist a stable `inheritedBudgetCategoryId` (see `inventory-operations-and-lineage` + canonical attribution rules).
+  - Canonical inventory transactions should not require a user-facing budget category; budgeting attribution is item-driven via linked items.
+- **Entities touched**: items, item images/media, spaces, transactions (link), projects, conflicts (item conflicts), outbox ops, QR key (`qrKey`), `inheritedBudgetCategoryId`
 - **Offline behaviors required**:
   - Create/edit/delete offline (local-first)
   - Bulk actions offline (queued ops; show partial failures)
@@ -414,6 +405,7 @@ Evidence sources (all in-repo):
   - Canonical transactions:
     - App has special casing for canonical inventory transactions (must preserve semantics in Firebase)
     - Budget/category attribution for canonical rows is **item-driven** (group linked items by `inheritedBudgetCategoryId`), not `transaction.budgetCategoryId`
+    - Canonical inventory transactions should not require a user-facing budget category (keep uncategorized; attribution is derived).
 - **Entities touched**: transactions, budget categories, vendor defaults, tax presets, attachments/media (receipts/other images), items (linked/itemized), conflicts, outbox ops
 - **Offline behaviors required**:
   - Create/edit offline (local-first) with pending markers
@@ -445,9 +437,13 @@ Evidence sources (all in-repo):
   - Move/sell items between project and business inventory
   - Deallocate when item disposition becomes `inventory`
   - Show lineage breadcrumbs / relationship cues (where present)
-- **Budget-category determinism constraints** (planned revision):
+- **Budget-category determinism constraints** (canonical; required):
   - Project → Business Inventory: do not allow deallocation/sell unless the item has a known `inheritedBudgetCategoryId` (it must have been linked to a transaction previously).
-  - Business Inventory → Project: prompt for a destination-project budget category (default to current inherited category if available/enabled; otherwise require selection) and persist it back onto the item.
+  - Business Inventory → Project: prompt for a destination-project budget category and persist it back onto the item.
+    - Defaulting: if the item already has `inheritedBudgetCategoryId` and that category is enabled/available for the destination project, preselect it.
+    - Required choice: if no valid default exists, require selection before completing the operation.
+    - Batch behavior: apply one category choice to the whole batch (fast path); optional future enhancement is per-item split.
+    - Persistence: on successful allocation/sale, set/update `item.inheritedBudgetCategoryId` to the chosen destination category so future canonical attribution is deterministic.
 - **Entities touched**: items, transactions, projects, spaces, lineage edges/pointers, canonical transaction ids, conflicts, outbox ops
 - **Offline behaviors required**:
   - Represent multi-entity changes as a single **idempotent operation** in the outbox
@@ -505,6 +501,8 @@ Evidence sources (all in-repo):
   - `AddBusinessInventoryTransaction`
   - `EditBusinessInventoryTransaction`
   - `TransactionDetail` (also routed under business inventory)
+  - Note: these may be separate *wrappers/routes*, but must reuse the **shared Items + Transactions module components** (lists/menus/details/forms) rather than reimplementing them per-scope:
+    - `40_features/_cross_cutting/ui/shared_items_and_transactions_modules.md`
 - **Primary user flows**:
   - Items tab:
     - Search + filter + sort (mirrors project items patterns)
@@ -550,6 +548,7 @@ Evidence sources (all in-repo):
   - Canonical inventory transactions contribute to category totals via **item-driven attribution** (`inheritedBudgetCategoryId` on linked items), not `transaction.budgetCategoryId`
   - Canonical inventory transactions contribute to category totals via **item-driven attribution** (`inheritedBudgetCategoryId` on linked items), not `transaction.budgetCategoryId`
   - Design fee progress is tracked as **received** (not “spent”) and excluded from spent totals/category sums
+  - Design fee “specialness” should be bound to a stable identifier (slug/metadata), not a mutable display name
   - Accounting view:
     - Rollups like “owed to business” and “owed to client” based on transactions (and excludes canceled)
     - Launch report generation screens (invoice/client/property management)
@@ -641,15 +640,18 @@ Evidence sources (all in-repo):
 
 ### 15) Context-aware navigation stack + scroll restoration (user-visible UX system)
 - **feature_slug**: `navigation-stack-and-context-links`
-- **Short description**: A global navigation stack preserves “return to” behavior and scroll position across deep screens (items/transactions) and across business-inventory ↔ project contexts.
-- **Owned components/hooks**:
+- **Short description**: Reliable “back to where I was” UX for long lists (items/transactions), including preserved list controls and best-effort scroll restoration (preferably back to the tapped row), across business-inventory ↔ project contexts.
+- **Mobile approach (Expo Router)**:
+  - **Back** is owned by React Navigation (no parallel custom history stack required for correctness).
+  - **List state + scroll restoration** are owned by shared list modules (Items/Transactions) via `ListStateStore[listStateKey]` (anchor-first restore + optional offset fallback).
+- **Parity evidence (web; not the mobile mechanism)**:
   - `NavigationStackProvider` + `useNavigationStack` (sessionStorage-backed stack)
   - `useStackedNavigate`, `useNavigationContext` (`buildContextUrl`, `getBackDestination`)
   - `ContextLink`, `ContextBackLink`
 - **Primary user flows**:
   - Click into item/transaction detail from a long list → back returns to the right list and restores scroll
-  - Cross-context navigation (e.g., business inventory → project transaction) preserves a correct back target via `returnTo`
-- **Entities touched**: sessionStorage-backed nav stack (`navStack:v1`), URL query params (`returnTo`, plus optional context params)
+  - Cross-context navigation (e.g., business inventory → project transaction) preserves a correct back target via native back stack; if entered via deep link/cold start, use `backTarget` fallback
+- **Entities touched (mobile)**: list-state store keys (`listStateKey`) and restore hints (e.g., `anchorId`, optional `scrollOffset`). (Expo Router navigation history is managed by the navigation library.)
 - **Offline behaviors required**: works fully offline (purely local state)
 - **Collaboration/realtime needs**: **No**
 - **Risk level**: **Med** — if parity is wrong, the app feels “lost” (especially on mobile).
@@ -687,10 +689,14 @@ These are flows/behaviors that span multiple features and should be spec’d onc
 
 ### F) Media lifecycle end-to-end
 - Capture/select → local store → placeholder render → upload → attach → cleanup (orphan removal).
-- Must include quota warning and failure handling.
+- Must include quota warning, offline attachment gating, and failure handling.
+- Canonical spec:
+  - `40_features/_cross_cutting/offline-media-lifecycle/feature_spec.md`
+- Subcomponent spec (shared UI/validation contract):
+  - `40_features/_cross_cutting/ui/components/storage_quota_warning.md`
 
 ### G) Search/filter/sort + state restoration
-- Today state is persisted via URL params; RN needs an equivalent (screen state persistence + deep links).
+- Web parity persists state via URL params; RN (Expo Router) must persist list state via `ListStateStore[listStateKey]` (and optionally support deep links).
 - Include list grouping + bulk selection persistence rules.
 
 ### H) Navigation + “return to” + stacked back + scroll restoration
@@ -703,6 +709,8 @@ These are flows/behaviors that span multiple features and should be spec’d onc
 
 ### I) Roles/permissions gating
 - Owner/admin gating for settings, templates, user management, and destructive actions.
+- Canonical spec:
+  - `40_features/_cross_cutting/category-scoped-permissions-v2/feature_spec.md`
 
 ### J) Inventory operations semantics (allocation/sell/deallocate/canonical IDs/lineage)
 - Define canonical transaction IDs, lineage updates, and server-owned invariants for multi-entity correctness.
@@ -721,7 +729,6 @@ These are flows/behaviors that span multiple features and should be spec’d onc
 - `_cross_cutting`
 - `auth-and-invitations`
 - `connectivity-and-sync-status`
-- `storage-quota-warning`
 - `settings-and-admin`
 - `projects`
 - `project-items`
