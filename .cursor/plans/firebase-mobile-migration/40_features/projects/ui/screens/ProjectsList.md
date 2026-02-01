@@ -35,7 +35,7 @@ Web parity note:
 - Web supports offline-queued creation and returns an optimistic id (`projectService.createProject`).
 
 Firebase migration note:
-- Create must be server-enforced via callable `createProject` (entitlements + membership), per `40_features/_cross_cutting/billing-and-entitlements.md`.
+- Create must be server-enforced via callable `createProject` (entitlements + membership), per `40_features/_cross_cutting/billing-and-entitlements/feature_spec.md`.
 
 ## UI structure (high level)
 - Header: title “Projects” + “New” button
@@ -92,7 +92,7 @@ Parity evidence:
   - (Server-enforced in Firebase; client UX optional.)
 - **Quota / entitlements blocked**:
   - If create is blocked due to entitlements, show upgrade CTA and allow retry after entitlements refresh.
-  - Source: `40_features/_cross_cutting/billing-and-entitlements.md`.
+  - Source: `40_features/_cross_cutting/billing-and-entitlements/feature_spec.md`.
 
 ## Media
 - Main project image:

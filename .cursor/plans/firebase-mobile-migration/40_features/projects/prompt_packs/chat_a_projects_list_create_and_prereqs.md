@@ -21,7 +21,7 @@ Update or create:
 
 ## Cross-cutting constraints
 - Offline-first + change-signal + delta sync: `40_features/sync_engine_spec.plan.md`
-- Entitlements gating model: `40_features/_cross_cutting/billing-and-entitlements.md`
+- Entitlements gating model: `40_features/_cross_cutting/billing-and-entitlements/feature_spec.md`
 
 ## Evidence rule (anti-hallucination)
 For each non-obvious behavior, include one of:

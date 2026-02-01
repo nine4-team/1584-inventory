@@ -22,7 +22,8 @@ This folder is the **single source of truth** for migration planning docs. The g
 
 ## Cross-cutting spec index (linked here for canonicality)
 
-- **Offline media lifecycle (attachments offline cache + uploads + cleanup)**: `40_features/_cross_cutting/offline_media_lifecycle.md`
+- **Offline media lifecycle (attachments offline cache + uploads + cleanup)**: `40_features/_cross_cutting/offline-media-lifecycle/feature_spec.md`
+- **Billing + entitlements (RevenueCat; free tier gating)**: `40_features/_cross_cutting/billing-and-entitlements/feature_spec.md`
 - **Code reuse + porting policy (reuse-first; rewrite edges only)**: `40_features/_cross_cutting/code_reuse_and_porting_policy.md`
 - **Category-scoped access control (Roles v2)**: `40_features/_cross_cutting/category-scoped-permissions-v2/feature_spec.md`
 

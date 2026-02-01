@@ -17,7 +17,7 @@ Optionally (only if needed for clarity):
 
 ## Source-of-truth references
 - Migration architecture: `40_features/sync_engine_spec.plan.md`
-- Entitlements gating: `40_features/_cross_cutting/billing-and-entitlements.md`
+- Entitlements gating: `40_features/_cross_cutting/billing-and-entitlements/feature_spec.md`
 
 Web parity references (for what exists today)
 - Offline create fallback + optimistic id: `projectService.createProject` in `src/services/inventoryService.ts`

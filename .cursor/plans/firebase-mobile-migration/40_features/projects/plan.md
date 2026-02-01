@@ -25,7 +25,7 @@ Create parity-grade specs for the `projects` workspace shell (projects list + pr
 - Offline-first invariants + change-signal + delta sync: `40_features/sync_engine_spec.plan.md`
 
 ### Cross-cutting dependencies (migration)
-- Billing + entitlements gating (create project): `40_features/_cross_cutting/billing-and-entitlements.md`
+- Billing + entitlements gating (create project): `40_features/_cross_cutting/billing-and-entitlements/feature_spec.md`
 
 ## Owned screens (contracts required)
 - `ProjectsList` — **yes** — offline list states + create gating + optimistic/pending semantics are easy to get wrong.
