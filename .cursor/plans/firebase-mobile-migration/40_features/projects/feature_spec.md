@@ -43,7 +43,7 @@ Parity evidence:
 - Offline queue fallback + optimistic id: `projectService.createProject` in `src/services/inventoryService.ts`
 
 Firebase migration behavior (required delta: entitlements gating):
-- **Project creation MUST be server-enforced** via a callable Function `createProject(...)` (no direct client create), per `40_features/_cross_cutting/billing-and-entitlements.md`.
+- **Project creation MUST be server-enforced** via a callable Function `createProject(...)` (no direct client create), per `40_features/_cross_cutting/billing-and-entitlements/feature_spec.md`.
 - Function responsibilities:
   - verify membership/role for `accountId`
   - read `entitlements/current` for `accountId`

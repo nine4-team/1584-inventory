@@ -24,7 +24,7 @@ This folder defines the parity-grade behavior spec for Ledger’s **Projects** e
 
 ## Cross-cutting dependencies
 - Sync architecture constraints (change-signal + delta, local-first): `40_features/sync_engine_spec.plan.md`
-- Entitlements gating for create project (Firebase): `40_features/_cross_cutting/billing-and-entitlements.md`
+- Entitlements gating for create project (Firebase): `40_features/_cross_cutting/billing-and-entitlements/feature_spec.md`
 
 ## Parity evidence (web sources)
 - Routes/entrypoints: `src/App.tsx`, `src/utils/routes.ts`

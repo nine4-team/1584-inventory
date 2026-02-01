@@ -1,8 +1,23 @@
-# Offline media lifecycle (offline cache + uploads + cleanup)
+# Offline media lifecycle (attachments offline cache + uploads + cleanup) — Feature spec (cross-cutting)
 
 This doc defines the **cross-cutting offline media subsystem** used anywhere the app captures/selects attachments (images, PDFs, etc.).
 
-It is intentionally broader than the UI guardrail docs: it covers the end-to-end lifecycle from **selection** → **local persistence** → **upload queueing** → **remote attachment** → **cleanup**.
+It covers the end-to-end lifecycle from **selection** → **local persistence** → **upload queueing** → **remote attachment** → **cleanup**.
+
+---
+
+## Evidence / parity sources (current web app)
+Primary sources:
+- Local storage accounting and media persistence:
+  - `src/services/offlineStore.ts`
+  - `src/services/offlineMediaService.ts`
+  - `src/services/offlineAwareImageService.ts`
+- Attachment selection UI + offline gating integration:
+  - `src/components/ui/ImageUpload.tsx`
+- Global warning banner:
+  - `src/components/ui/StorageQuotaWarning.tsx` (mounted in `src/App.tsx`)
+
+---
 
 ## Scope (what this covers)
 - **Local media cache**: where selected/captured files are stored when offline (or before upload).
@@ -20,6 +35,8 @@ It is intentionally broader than the UI guardrail docs: it covers the end-to-end
 - Must be compatible with `sync_engine_spec.plan.md` (local-first + outbox + delta sync + no read amplification).
 - Must work across multiple features consistently (Items, Transactions, Spaces, Settings, Invoice import, QR exports, etc.).
 
+---
+
 ## Core lifecycle (happy path)
 1) **User selects/captures a file**
    - Validate file size/type limits (feature-specific) and cross-cutting offline constraints (see “Quota + guardrails” below).
@@ -36,6 +53,8 @@ It is intentionally broader than the UI guardrail docs: it covers the end-to-end
 6) **Cleanup (post-upload)**
    - Apply policy: keep or delete local cached blob after upload (implementation choice), but **must** prevent unbounded growth over time.
 
+---
+
 ## Required attachment state machine (UI contract)
 Any UI surface that renders attachments must handle these states:
 - **`local_only`**: file exists locally but not yet uploaded.
@@ -45,6 +64,8 @@ Any UI surface that renders attachments must handle these states:
 
 Additional internal states may exist (e.g. `orphaned`, `deleted`, `purge_pending`), but the UI contract above is the minimum.
 
+---
+
 ## Queueing + retries (behavior)
 - Upload work must be **durable** across app restarts (queued jobs persist in local storage).
 - Retries should be safe:
@@ -53,6 +74,8 @@ Additional internal states may exist (e.g. `orphaned`, `deleted`, `purge_pending
 - User-visible retry affordances:
   - Feature UIs may expose per-attachment retry.
   - Global “Retry sync” should also trigger pending media uploads (subject to platform constraints).
+
+---
 
 ## Cleanup / orphan handling (must not leak storage)
 The subsystem must define a cleanup strategy for:
@@ -64,28 +87,21 @@ The subsystem must define a cleanup strategy for:
 Minimum requirement:
 - There must be a best-effort garbage collection step that removes unreferenced blobs/jobs eventually.
 
+---
+
 ## Quota + guardrails (subcomponent)
 Selection-time validation and global warnings are specified separately as a reusable UI/validation contract:
 - `40_features/_cross_cutting/ui/components/storage_quota_warning.md`
 
 This lifecycle doc defines **where** those rules apply (at selection time and/or local-save time) but does not redefine thresholds/copy.
 
+---
+
 ## Platform notes (migration relevance)
-- **Web parity** uses IndexedDB-backed storage and a heuristic quota estimate (see evidence below).
+- **Web parity** uses IndexedDB-backed storage and a heuristic quota estimate (see evidence above).
 - **React Native** must use platform-appropriate file storage + accounting. Do **not** assume a fixed 50MB limit.
 - Regardless of platform, keep the **user-facing semantics** stable:
   - Warnings at “getting full”
   - Hard block before the system becomes unstable (near-full/offline selection gating)
   - Clear retry/error messaging
-
-## Parity evidence pointers (current web app)
-Primary sources:
-- Local storage accounting and media persistence:
-  - `src/services/offlineStore.ts`
-  - `src/services/offlineMediaService.ts`
-  - `src/services/offlineAwareImageService.ts`
-- Attachment selection UI + offline gating integration:
-  - `src/components/ui/ImageUpload.tsx`
-- Global warning banner:
-  - `src/components/ui/StorageQuotaWarning.tsx` (mounted in `src/App.tsx`)
 

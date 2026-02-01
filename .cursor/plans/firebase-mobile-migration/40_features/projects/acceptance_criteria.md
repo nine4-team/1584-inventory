@@ -30,9 +30,9 @@ Each non-obvious criterion includes **parity evidence** (web code pointer) or is
 - [ ] **Offline create (web parity)**: If offline or network create fails, creation is queued for offline sync and returns an optimistic project id.  
   Observed in `projectService.createProject` in `src/services/inventoryService.ts`.
 - [ ] **Entitlements enforcement (Firebase)**: Project creation is server-enforced by a callable Function `createProject(...)`; direct client creates are disallowed.  
-  **Intentional delta** required by `40_features/_cross_cutting/billing-and-entitlements.md`.
+  **Intentional delta** required by `40_features/_cross_cutting/billing-and-entitlements/feature_spec.md`.
 - [ ] **Offline policy for entitlements (Firebase)**: Over-limit project creation is blocked while offline; user is prompted to go online/upgrade.  
-  **Intentional delta** (explicitly chosen per `billing-and-entitlements.md` Option A).
+  **Intentional delta** (defined in `40_features/_cross_cutting/billing-and-entitlements/feature_spec.md`).
 
 ## Project shell (layout + navigation)
 - [ ] **Route parity**: Project shell is mounted at `/project/:projectId/*` and exposes tabs for `items`, `transactions`, `spaces`, `budget`.  

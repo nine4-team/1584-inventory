@@ -119,7 +119,7 @@ Implementation constraints (high-level):
 - Firestore Rules cannot safely “count projects” (no server-side aggregate/query in rules), so **project creation must be a server-owned operation** (callable Function) when entitlements are enforced.
 - Offline behavior must be explicit: if the user is over the limit while offline, block creation or create a local-only draft that won’t sync until upgraded.
 
-Spec home (cross-cutting): `40_features/_cross_cutting/billing-and-entitlements.md` (create if/when the `_cross_cutting/` folder exists).
+Spec home (cross-cutting): `40_features/_cross_cutting/billing-and-entitlements/feature_spec.md`.
 
 ---
 
@@ -145,7 +145,7 @@ These are not “features” by themselves, but **must be spec’d once and reus
 - **Bulk selection + bulk actions**: select all / per-group select, bulk edit/assign/delete flows.
 - **Attachment/media UI**: capture/select, placeholder states (`local_only`/`uploading`/`uploaded`/`failed`), retry and cleanup.
 - **Offline media lifecycle (offline cache + uploads + cleanup)**:
-  - `40_features/_cross_cutting/offline_media_lifecycle.md`
+  - `40_features/_cross_cutting/offline-media-lifecycle/feature_spec.md`
   - Guardrails subcomponent (global warning + offline attachment gating):
     - `40_features/_cross_cutting/ui/components/storage_quota_warning.md`
 - **Cross-linking UI**: item ↔ transaction linking (“itemization”), item ↔ space assignment, pickers and browse-in-context behaviors.
@@ -691,7 +691,7 @@ These are flows/behaviors that span multiple features and should be spec’d onc
 - Capture/select → local store → placeholder render → upload → attach → cleanup (orphan removal).
 - Must include quota warning, offline attachment gating, and failure handling.
 - Canonical spec:
-  - `40_features/_cross_cutting/offline_media_lifecycle.md`
+  - `40_features/_cross_cutting/offline-media-lifecycle/feature_spec.md`
 - Subcomponent spec (shared UI/validation contract):
   - `40_features/_cross_cutting/ui/components/storage_quota_warning.md`
 
