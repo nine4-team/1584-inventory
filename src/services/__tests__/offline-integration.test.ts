@@ -240,8 +240,8 @@ describe('Offline Integration Tests', () => {
     it('should handle storage quota limits', async () => {
       // Mock storage quota check to return high usage
       const quotaSpy = vi.spyOn(offlineStore, 'checkStorageQuota').mockResolvedValue({
-        usageBytes: 45 * 1024 * 1024, // 45MB
-        quotaBytes: 50 * 1024 * 1024,  // 50MB
+        usageBytes: 135 * 1024 * 1024, // 135MB
+        quotaBytes: 150 * 1024 * 1024,  // 150MB
         usageRatio: 0.9
       })
 
