@@ -1605,8 +1605,8 @@ class OfflineStore {
 
       const usageBytes = mediaEntries.reduce((total, entry) => total + entry.size, 0)
 
-      // Estimate quota (most browsers allow ~50MB for IndexedDB)
-      const estimatedQuotaBytes = 50 * 1024 * 1024 // 50MB
+      // Estimate quota (most browsers allow ~150MB for IndexedDB)
+      const estimatedQuotaBytes = 150 * 1024 * 1024 // 150MB
       const usageRatio = usageBytes / estimatedQuotaBytes
 
       return {
@@ -1618,7 +1618,7 @@ class OfflineStore {
       console.warn('Failed to check storage quota:', error)
       return {
         usageBytes: 0,
-        quotaBytes: 50 * 1024 * 1024,
+        quotaBytes: 150 * 1024 * 1024,
         usageRatio: 0
       }
     }
