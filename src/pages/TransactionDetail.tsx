@@ -178,13 +178,6 @@ export default function TransactionDetail() {
     transactionRef.current = transaction
   }, [transaction])
 
-  useEffect(() => {
-    if (!isEditingNotes) {
-      setNotesDraft(transaction?.notes ?? '')
-    }
-  }, [transaction?.notes, isEditingNotes])
-
-
   const snapshotInitialItems = (displayItems: TransactionItemFormData[]) => {
     try {
       initialItemsRef.current = displayItems.map(i => ({
@@ -218,6 +211,15 @@ export default function TransactionDetail() {
   const [isEditingNotes, setIsEditingNotes] = useState(false)
   const [notesDraft, setNotesDraft] = useState('')
   const [isSavingNotes, setIsSavingNotes] = useState(false)
+  const isSavingNotesRef = useRef(false)
+  useEffect(() => {
+    isSavingNotesRef.current = isSavingNotes
+  }, [isSavingNotes])
+  useEffect(() => {
+    if (!isEditingNotes) {
+      setNotesDraft(transaction?.notes ?? '')
+    }
+  }, [transaction?.notes, isEditingNotes])
   // Pin panel gesture state
   const [pinZoom, setPinZoom] = useState(1)
   const [pinPanX, setPinPanX] = useState(0)
@@ -1078,7 +1080,13 @@ export default function TransactionDetail() {
           resolvedProjectId,
           transactionId,
           updatedTransaction => {
-            setTransaction(updatedTransaction)
+            setTransaction(prev => {
+              if (isSavingNotesRef.current && prev && updatedTransaction) {
+                // If we are saving notes, ignore incoming notes updates to avoid flashing old content
+                return { ...updatedTransaction, notes: prev.notes }
+              }
+              return updatedTransaction
+            })
           }
         )
       : transactionService.subscribeToBusinessInventoryTransactions(
@@ -1086,7 +1094,13 @@ export default function TransactionDetail() {
           transactionsSnapshot => {
             const updatedTransaction =
               transactionsSnapshot.find(tx => tx.transactionId === transactionId) ?? null
-            setTransaction(updatedTransaction)
+            setTransaction(prev => {
+              if (isSavingNotesRef.current && prev && updatedTransaction) {
+                // If we are saving notes, ignore incoming notes updates to avoid flashing old content
+                return { ...updatedTransaction, notes: prev.notes }
+              }
+              return updatedTransaction
+            })
           },
           transaction ? [transaction] : undefined
         )
@@ -1098,7 +1112,7 @@ export default function TransactionDetail() {
         console.debug('TransactionDetail - failed to unsubscribe transaction realtime', err)
       }
     }
-  }, [currentAccountId, projectId, transaction?.projectId, transactionId, transaction])
+  }, [currentAccountId, projectId, transaction?.projectId, transactionId])
 
   useEffect(() => {
     if (!currentAccountId || !transactionId) return
@@ -1204,12 +1218,9 @@ export default function TransactionDetail() {
     }
 
     setIsSavingNotes(true)
+    setTransaction(prev => prev ? { ...prev, notes: nextNotes ?? undefined } : prev)
+    setIsEditingNotes(false)
     try {
-      const updateProjectId = transaction.projectId || projectId
-      await transactionService.updateTransaction(currentAccountId, updateProjectId || '', transactionId, {
-        notes: nextNotes
-      })
-
       const offlineTransaction = await offlineStore.getTransactionById(transactionId).catch(() => null)
       if (offlineTransaction) {
         await offlineStore.saveTransactions([{
@@ -1218,8 +1229,10 @@ export default function TransactionDetail() {
         }])
       }
 
-      setTransaction(prev => prev ? { ...prev, notes: nextNotes ?? undefined } : prev)
-      setIsEditingNotes(false)
+      const updateProjectId = transaction.projectId || projectId
+      await transactionService.updateTransaction(currentAccountId, updateProjectId || '', transactionId, {
+        notes: nextNotes
+      })
 
       if (!isOnline) {
         showOfflineSaved()
@@ -1228,6 +1241,8 @@ export default function TransactionDetail() {
       }
     } catch (error) {
       console.error('Failed to update notes:', error)
+      setTransaction(prev => prev ? { ...prev, notes: previousNotes || undefined } : prev)
+      setNotesDraft(previousNotes)
       showError('Failed to update notes. Please try again.')
     } finally {
       setIsSavingNotes(false)
