@@ -13,7 +13,7 @@ export interface NetworkStatusSnapshot {
 type NetworkStatusListener = (snapshot: NetworkStatusSnapshot) => void
 type ConnectivityCheckReason = 'init' | 'interval' | 'manual' | 'online-event' | 'retry'
 
-const REMOTE_HEALTH_URL = 'https://www.gstatic.com/generate_204'
+const REMOTE_HEALTH_URL = typeof window !== 'undefined' ? window.location.origin : 'https://www.google.com'
 
 let snapshot: NetworkStatusSnapshot = {
   isOnline: typeof navigator === 'undefined' ? true : navigator.onLine,
@@ -157,10 +157,9 @@ async function runConnectivityCheck(reason: ConnectivityCheckReason): Promise<vo
     const remotePingUrl = `${REMOTE_HEALTH_URL}?cb=${Date.now()}`
     try {
       const response = await fetch(remotePingUrl, {
-        method: 'GET',
+        method: 'HEAD',
         cache: 'no-store',
-        mode: 'no-cors',
-        signal: AbortSignal.timeout(5000)
+        signal: AbortSignal.timeout(10000)
       })
       const pingSucceeded = response.type === 'opaque' || response.ok
       actualOnline = pingSucceeded
