@@ -73,7 +73,9 @@ export class OfflineItemService {
 
         // Convert to DB format and cache
         const dbItems: DBItem[] = data.map(item => ({
-          itemId: item.id,
+          // `items.item_id` is the business identifier used throughout the app/offline cache.
+          // `items.id` is the row UUID; do not use it as OfflineStore key.
+          itemId: item.item_id ?? item.id,
           accountId: item.account_id,
           projectId: item.project_id,
           transactionId: item.transaction_id,
