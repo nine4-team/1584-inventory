@@ -2295,6 +2295,27 @@ export const transactionService = {
         const validMovedItems = movedItems.filter(mi => mi !== null) as Item[]
         combinedItems = combinedItems.concat(validMovedItems)
       }
+
+      // IMPORTANT: Avoid "ghost completeness".
+      // If a transaction row has stale/incorrect `itemIds`, those items may no longer be
+      // attached to this transaction AND may not have a lineage edge. In that case, the
+      // Transaction Detail UI will often show 0 items, but completeness would still count
+      // them unless we filter here.
+      //
+      // We only count an item if:
+      // - it is currently attached (item.transactionId === transactionId), OR
+      // - it is explicitly moved-out via lineage (edge from this transaction), OR
+      // - it has legacy lineage pointers indicating association (latest/origin/previous).
+      const movedOutSet = new Set<string>(movedOutItemIds)
+      combinedItems = combinedItems.filter(item => {
+        const currentTxId = (item as any).transactionId ?? null
+        if (currentTxId === transactionId) return true
+        if (movedOutSet.has(item.itemId)) return true
+        const latestTxId = (item as any).latestTransactionId ?? null
+        const originTxId = (item as any).originTransactionId ?? null
+        const previousProjectTxId = (item as any).previousProjectTransactionId ?? null
+        return latestTxId === transactionId || originTxId === transactionId || previousProjectTxId === transactionId
+      })
     } catch (edgeErr) {
       // Non-fatal: if lineage lookup fails, fall back to items returned by getItemsForTransaction
       console.debug('getTransactionCompleteness - failed to fetch lineage edges:', edgeErr)
@@ -5439,30 +5460,16 @@ export const unifiedItemsService = {
 
     await ensureAuthenticatedForDatabase()
 
-    // Online: Use updateItem + lineage edge preservation for moves
+    // Online: corrective reassignment (do NOT record lineage).
+    // Lineage edges should be created only by explicit business flows (allocations, sales, returns),
+    // not by "change transaction" fixes, otherwise the source transaction will show "moved out"
+    // items that were simply corrected.
     await Promise.all(itemIds.map(itemId =>
       this.updateItem(accountId, itemId, {
         transactionId: transactionId,
         latestTransactionId: transactionId,
       })
     ))
-
-    if (itemPreviousTransactionId && itemPreviousTransactionId !== transactionId) {
-      await Promise.all(itemIds.map(async (itemId) => {
-        try {
-          await lineageService.appendItemLineageEdge(
-            accountId,
-            itemId,
-            itemPreviousTransactionId,
-            transactionId,
-            'Moved to transaction'
-          )
-          await lineageService.updateItemLineagePointers(accountId, itemId, transactionId)
-        } catch (lineageError) {
-          console.warn('assignItemsToTransaction - failed to append lineage edge:', lineageError)
-        }
-      }))
-    }
 
     // Update target transaction
     try {
