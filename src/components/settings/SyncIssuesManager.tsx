@@ -46,7 +46,22 @@ function formatOperationType(operation: Operation): string {
 }
 
 export default function SyncIssuesManager() {
-  const [operations, setOperations] = useState<Operation[]>(() => operationQueue.getPendingOperations())
+  const [operations, setOperations] = useState<Operation[]>(() => {
+    // Avoid hard dependency on newer operationQueue methods (service worker caches can
+    // temporarily serve mixed versions of JS bundles during updates).
+    try {
+      const anyQueue = operationQueue as any
+      if (typeof anyQueue?.getSnapshot === 'function') {
+        return (anyQueue.getSnapshot()?.operations ?? []) as Operation[]
+      }
+      if (typeof anyQueue?.getPendingOperations === 'function') {
+        return (anyQueue.getPendingOperations() ?? []) as Operation[]
+      }
+    } catch {
+      // best-effort
+    }
+    return []
+  })
   const [itemCache, setItemCache] = useState<Map<string, DBItem | null>>(() => new Map())
   const [selectedOperationIds, setSelectedOperationIds] = useState<Set<string>>(() => new Set())
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false)
@@ -54,8 +69,13 @@ export default function SyncIssuesManager() {
   const [isRecreating, setIsRecreating] = useState(false)
 
   useEffect(() => {
-    const unsubscribe = operationQueue.subscribe(snapshot => {
-      setOperations(snapshot.operations ?? operationQueue.getPendingOperations())
+    const anyQueue = operationQueue as any
+    if (typeof anyQueue?.subscribe !== 'function') {
+      return
+    }
+
+    const unsubscribe = anyQueue.subscribe((snapshot: any) => {
+      setOperations((snapshot?.operations ?? []) as Operation[])
     })
     return () => unsubscribe()
   }, [])
