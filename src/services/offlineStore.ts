@@ -2081,7 +2081,8 @@ export function mapItemToDBItem(item: any): DBItem {
   const taxAmountPurchasePrice = item.taxAmountPurchasePrice ?? item.tax_amount_purchase_price
   const taxAmountProjectPrice = item.taxAmountProjectPrice ?? item.tax_amount_project_price
   return {
-    itemId: item.itemId || item.id || item.item_id,
+    // Prefer business identifier (`item_id`) over row UUID (`id`)
+    itemId: item.itemId || item.item_id || item.id,
     accountId: item.accountId || item.account_id,
     projectId: item.projectId || item.project_id || null,
     transactionId: item.transactionId || item.transaction_id || null,

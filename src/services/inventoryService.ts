@@ -13,6 +13,7 @@ import { OfflineQueueUnavailableError } from './offlineItemService'
 import { operationQueue, OfflineContextError } from './operationQueue'
 import { refreshBusinessInventorySnapshot, refreshProjectSnapshot } from '@/utils/realtimeSnapshotUpdater'
 import { removeTransactionFromCaches, removeItemFromCaches } from '@/utils/queryCacheHelpers'
+import { looksLikeUuid } from '@/utils/idUtils'
 import type { Item, Project, FilterOptions, PaginationOptions, Transaction, TransactionItemFormData, TransactionCompleteness, CompletenessStatus, ItemImage, ItemDisposition } from '@/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import type { QueryClient } from '@tanstack/react-query'
@@ -5259,13 +5260,14 @@ export const unifiedItemsService = {
       dbUpdates.tax_amount_project_price = computeTaxString(effectiveProject, effectiveRate)
     }
 
-    const { data, error } = await supabase
+    let updateQuery = supabase
       .from('items')
       .update(dbUpdates)
       .eq('account_id', accountId)
-      .eq('item_id', itemId)
-      .select()
-      .single()
+
+    updateQuery = looksLikeUuid(itemId) ? updateQuery.eq('id', itemId) : updateQuery.eq('item_id', itemId)
+
+    const { data, error } = await updateQuery.select().single()
 
     if (error) throw error
 
@@ -5538,7 +5540,7 @@ export const unifiedItemsService = {
         .from('items')
         .delete()
         .eq('account_id', accountId)
-        .eq('item_id', itemId)
+        .eq(looksLikeUuid(itemId) ? 'id' : 'item_id', itemId)
 
       if (error) throw error
 
@@ -7148,12 +7150,9 @@ export const unifiedItemsService = {
       try {
         await ensureAuthenticatedForDatabase()
 
-        const { data, error } = await supabase
-          .from('items')
-          .select('*')
-          .eq('account_id', accountId)
-          .eq('item_id', itemId)
-          .maybeSingle()
+        let query = supabase.from('items').select('*').eq('account_id', accountId)
+        query = looksLikeUuid(itemId) ? query.eq('id', itemId) : query.eq('item_id', itemId)
+        const { data, error } = await query.maybeSingle()
 
         if (error) {
           throw error
