@@ -5460,30 +5460,16 @@ export const unifiedItemsService = {
 
     await ensureAuthenticatedForDatabase()
 
-    // Online: Use updateItem + lineage edge preservation for moves
+    // Online: corrective reassignment (do NOT record lineage).
+    // Lineage edges should be created only by explicit business flows (allocations, sales, returns),
+    // not by "change transaction" fixes, otherwise the source transaction will show "moved out"
+    // items that were simply corrected.
     await Promise.all(itemIds.map(itemId =>
       this.updateItem(accountId, itemId, {
         transactionId: transactionId,
         latestTransactionId: transactionId,
       })
     ))
-
-    if (itemPreviousTransactionId && itemPreviousTransactionId !== transactionId) {
-      await Promise.all(itemIds.map(async (itemId) => {
-        try {
-          await lineageService.appendItemLineageEdge(
-            accountId,
-            itemId,
-            itemPreviousTransactionId,
-            transactionId,
-            'Moved to transaction'
-          )
-          await lineageService.updateItemLineagePointers(accountId, itemId, transactionId)
-        } catch (lineageError) {
-          console.warn('assignItemsToTransaction - failed to append lineage edge:', lineageError)
-        }
-      }))
-    }
 
     // Update target transaction
     try {
