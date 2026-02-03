@@ -359,8 +359,8 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
               <span className="text-gray-500 sm:text-sm">$</span>
             </div>
             <input
-              type="number"
-              step="0.01"
+              type="text"
+              inputMode="decimal"
               id={purchasePriceInputId}
               name={`transaction_item_purchasePrice_${stableTempId}`}
               autoComplete="off"
@@ -387,8 +387,8 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
               <span className="text-gray-500 sm:text-sm">$</span>
             </div>
             <input
-              type="number"
-              step="0.01"
+              type="text"
+              inputMode="decimal"
               id={projectPriceInputId}
               name={`transaction_item_projectPrice_${stableTempId}`}
               autoComplete="off"

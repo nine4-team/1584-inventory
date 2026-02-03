@@ -474,7 +474,8 @@ export default function ProjectForm({ onSubmit, onCancel, isLoading = false, ini
                             <DollarSign className="h-4 w-4 text-gray-400" />
                           </div>
                           <input
-                            type="number"
+                            type="text"
+                            inputMode="decimal"
                             id={`budgetCategories.${categoryId}`}
                             value={currentValue > 0 ? currentValue.toString() : ''}
                             onChange={(e) => {
@@ -491,8 +492,6 @@ export default function ProjectForm({ onSubmit, onCancel, isLoading = false, ini
                             }}
                             className="w-full pl-10 pr-4 py-2.5 rounded-lg border-2 border-gray-200 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 transition-all"
                             placeholder="0.00"
-                            min="0"
-                            step="0.01"
                           />
                         </div>
                       </div>

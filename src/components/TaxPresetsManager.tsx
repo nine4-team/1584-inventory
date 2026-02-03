@@ -353,8 +353,8 @@ export default function TaxPresetsManager() {
                   <td className="whitespace-nowrap px-2 py-2 text-sm text-gray-500">
                     {isEditing ? (
                       <input
-                        type="number"
-                        step="0.01"
+                        type="text"
+                        inputMode="decimal"
                         min="0"
                         max="100"
                         value={editingValue?.rate ?? 0}
