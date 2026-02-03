@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Plus, Search, RotateCcw, Camera, Trash2, QrCode, Filter, ArrowUpDown, Receipt } from 'lucide-react'
 import ContextLink from '@/components/ContextLink'
@@ -238,14 +238,14 @@ export default function InventoryList({ projectId, projectName, items: propItems
     setItems(propItems || [])
   }, [propItems])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (hasRestoredScrollRef.current || isLoading) return
     const state = location.state && typeof location.state === 'object' ? (location.state as Record<string, unknown>) : null
     const restoreScrollY = state?.restoreScrollY
     if (!Number.isFinite(restoreScrollY)) return
 
     hasRestoredScrollRef.current = true
-    requestAnimationFrame(() => window.scrollTo(0, restoreScrollY as number))
+    window.scrollTo({ top: restoreScrollY as number, behavior: 'auto' })
 
     const { restoreScrollY: _restoreScrollY, ...rest } = state || {}
     const nextState = Object.keys(rest).length > 0 ? rest : undefined

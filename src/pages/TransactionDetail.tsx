@@ -178,7 +178,6 @@ export default function TransactionDetail() {
     transactionRef.current = transaction
   }, [transaction])
 
-
   const snapshotInitialItems = (displayItems: TransactionItemFormData[]) => {
     try {
       initialItemsRef.current = displayItems.map(i => ({
@@ -209,6 +208,18 @@ export default function TransactionDetail() {
   const transactionItemsContainerRef = useRef<HTMLDivElement>(null)
   const [isImagePinned, setIsImagePinned] = useState(false)
   const [pinnedImage, setPinnedImage] = useState<ItemImage | null>(null)
+  const [isEditingNotes, setIsEditingNotes] = useState(false)
+  const [notesDraft, setNotesDraft] = useState('')
+  const [isSavingNotes, setIsSavingNotes] = useState(false)
+  const isSavingNotesRef = useRef(false)
+  useEffect(() => {
+    isSavingNotesRef.current = isSavingNotes
+  }, [isSavingNotes])
+  useEffect(() => {
+    if (!isEditingNotes) {
+      setNotesDraft(transaction?.notes ?? '')
+    }
+  }, [transaction?.notes, isEditingNotes])
   // Pin panel gesture state
   const [pinZoom, setPinZoom] = useState(1)
   const [pinPanX, setPinPanX] = useState(0)
@@ -1069,7 +1080,13 @@ export default function TransactionDetail() {
           resolvedProjectId,
           transactionId,
           updatedTransaction => {
-            setTransaction(updatedTransaction)
+            setTransaction(prev => {
+              if (isSavingNotesRef.current && prev && updatedTransaction) {
+                // If we are saving notes, ignore incoming notes updates to avoid flashing old content
+                return { ...updatedTransaction, notes: prev.notes }
+              }
+              return updatedTransaction
+            })
           }
         )
       : transactionService.subscribeToBusinessInventoryTransactions(
@@ -1077,7 +1094,13 @@ export default function TransactionDetail() {
           transactionsSnapshot => {
             const updatedTransaction =
               transactionsSnapshot.find(tx => tx.transactionId === transactionId) ?? null
-            setTransaction(updatedTransaction)
+            setTransaction(prev => {
+              if (isSavingNotesRef.current && prev && updatedTransaction) {
+                // If we are saving notes, ignore incoming notes updates to avoid flashing old content
+                return { ...updatedTransaction, notes: prev.notes }
+              }
+              return updatedTransaction
+            })
           },
           transaction ? [transaction] : undefined
         )
@@ -1089,7 +1112,7 @@ export default function TransactionDetail() {
         console.debug('TransactionDetail - failed to unsubscribe transaction realtime', err)
       }
     }
-  }, [currentAccountId, projectId, transaction?.projectId, transactionId, transaction])
+  }, [currentAccountId, projectId, transaction?.projectId, transactionId])
 
   useEffect(() => {
     if (!currentAccountId || !transactionId) return
@@ -1171,6 +1194,71 @@ export default function TransactionDetail() {
     if (!editTransactionUrl) return
     navigate(buildContextUrl(editTransactionUrl))
   }, [editTransactionUrl, navigate, buildContextUrl])
+
+  const handleNotesEditStart = useCallback(() => {
+    setNotesDraft(transaction?.notes ?? '')
+    setIsEditingNotes(true)
+  }, [transaction?.notes])
+
+  const handleNotesCancel = useCallback(() => {
+    setNotesDraft(transaction?.notes ?? '')
+    setIsEditingNotes(false)
+  }, [transaction?.notes])
+
+  const handleNotesSave = useCallback(async () => {
+    if (!transactionId || !transaction || !currentAccountId || isSavingNotes) return
+
+    const normalizedNotes = notesDraft.trim()
+    const nextNotes = normalizedNotes.length > 0 ? notesDraft : null
+    const previousNotes = transaction.notes ?? ''
+    const nextNotesForCompare = nextNotes ?? ''
+    if (previousNotes === nextNotesForCompare) {
+      setIsEditingNotes(false)
+      return
+    }
+
+    setIsSavingNotes(true)
+    setTransaction(prev => prev ? { ...prev, notes: nextNotes ?? undefined } : prev)
+    setIsEditingNotes(false)
+    try {
+      const offlineTransaction = await offlineStore.getTransactionById(transactionId).catch(() => null)
+      if (offlineTransaction) {
+        await offlineStore.saveTransactions([{
+          ...offlineTransaction,
+          notes: nextNotes ?? undefined
+        }])
+      }
+
+      const updateProjectId = transaction.projectId || projectId
+      await transactionService.updateTransaction(currentAccountId, updateProjectId || '', transactionId, {
+        notes: nextNotes
+      })
+
+      if (!isOnline) {
+        showOfflineSaved()
+      } else {
+        showSuccess('Notes updated.')
+      }
+    } catch (error) {
+      console.error('Failed to update notes:', error)
+      setTransaction(prev => prev ? { ...prev, notes: previousNotes || undefined } : prev)
+      setNotesDraft(previousNotes)
+      showError('Failed to update notes. Please try again.')
+    } finally {
+      setIsSavingNotes(false)
+    }
+  }, [
+    transactionId,
+    transaction,
+    currentAccountId,
+    isSavingNotes,
+    notesDraft,
+    projectId,
+    isOnline,
+    showOfflineSaved,
+    showSuccess,
+    showError
+  ])
 
   const handleDelete = useCallback(async () => {
     if (!transactionId || !transaction || !currentAccountId) return
@@ -2397,12 +2485,64 @@ export default function TransactionDetail() {
               </dd>
             </div>
 
-            {transaction.notes && (
-              <div className="sm:col-span-2">
+            <div className="sm:col-span-2">
+              <div className="flex items-center justify-between">
                 <dt className="text-sm font-medium text-gray-500">Notes</dt>
-                <dd className="mt-1 text-sm text-gray-900 whitespace-pre-wrap">{transaction.notes}</dd>
+                {!isEditingNotes ? (
+                  <button
+                    type="button"
+                    onClick={handleNotesEditStart}
+                    className="text-xs font-medium text-primary-600 hover:text-primary-700"
+                  >
+                    {transaction.notes ? 'Edit' : 'Add'}
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleNotesCancel}
+                      className="text-xs font-medium text-gray-500 hover:text-gray-700 disabled:opacity-50"
+                      disabled={isSavingNotes}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleNotesSave}
+                      className="text-xs font-medium text-primary-600 hover:text-primary-700 disabled:opacity-50"
+                      disabled={isSavingNotes}
+                    >
+                      Save
+                    </button>
+                  </div>
+                )}
               </div>
-            )}
+              <dd className="mt-1">
+                {isEditingNotes ? (
+                  <textarea
+                    rows={3}
+                    value={notesDraft}
+                    onChange={(event) => setNotesDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') {
+                        event.preventDefault()
+                        handleNotesCancel()
+                      }
+                      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                        event.preventDefault()
+                        handleNotesSave()
+                      }
+                    }}
+                    placeholder="Add notes about this transaction..."
+                    className="block w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 border-gray-300 text-sm text-gray-900"
+                  />
+                ) : transaction.notes ? (
+                  <p className="text-sm text-gray-900 whitespace-pre-wrap">{transaction.notes}</p>
+                ) : (
+                  <p className="text-sm text-gray-400 italic">No notes yet</p>
+                )}
+              </dd>
+            </div>
           </dl>
         </div>
 

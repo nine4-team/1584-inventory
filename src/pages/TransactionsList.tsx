@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useParams, useSearchParams } from 'react-rout
 import ContextLink from '@/components/ContextLink'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react'
 import { Transaction, TransactionCompleteness, BudgetCategory } from '@/types'
 import { transactionService, isCanonicalSaleOrPurchaseTransactionId, computeCanonicalTransactionTotal } from '@/services/inventoryService'
 import type { Transaction as TransactionType } from '@/types'
@@ -362,14 +362,14 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     transactionTypeFilter,
   ])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (hasRestoredScrollRef.current || isLoading) return
     const state = location.state && typeof location.state === 'object' ? (location.state as Record<string, unknown>) : null
     const restoreScrollY = state?.restoreScrollY
     if (!Number.isFinite(restoreScrollY)) return
 
     hasRestoredScrollRef.current = true
-    requestAnimationFrame(() => window.scrollTo(0, restoreScrollY as number))
+    window.scrollTo({ top: restoreScrollY as number, behavior: 'auto' })
 
     const { restoreScrollY: _restoreScrollY, ...rest } = state || {}
     const nextState = Object.keys(rest).length > 0 ? rest : undefined
