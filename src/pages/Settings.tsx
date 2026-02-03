@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { User, Settings as SettingsIcon, Building2, Upload, Tag } from 'lucide-react'
+import { User, Building2, Upload, Wrench } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useAccount } from '../contexts/AccountContext'
 import { useBusinessProfile } from '../contexts/BusinessProfileContext'
@@ -11,7 +11,7 @@ import TaxPresetsManager from '../components/TaxPresetsManager'
 import VendorDefaultsManager from '../components/VendorDefaultsManager'
 import BudgetCategoriesManager from '../components/BudgetCategoriesManager'
 import SpaceTemplatesManager from '../components/spaces/SpaceTemplatesManager'
-import SyncIssuesManager from '../components/settings/SyncIssuesManager'
+import TroubleshootingTab from '../components/settings/TroubleshootingTab'
 import { Button } from '../components/ui/Button'
 
 export default function Settings() {
@@ -24,7 +24,7 @@ export default function Settings() {
   const [isSavingProfile, setIsSavingProfile] = useState(false)
   const [profileError, setProfileError] = useState<string | null>(null)
   const [profileSuccess, setProfileSuccess] = useState(false)
-  const [activeTab, setActiveTab] = useState<'general' | 'presets' | 'account' | 'users'>('general')
+  const [activeTab, setActiveTab] = useState<'general' | 'presets' | 'troubleshooting' | 'account' | 'users'>('general')
   const [activePresetTab, setActivePresetTab] = useState<'budget-categories' | 'vendor-defaults' | 'tax-presets' | 'space-templates'>('budget-categories')
 
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -111,6 +111,12 @@ export default function Settings() {
               className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'presets' ? 'border-primary-500 text-gray-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
             >
               Presets
+            </button>
+            <button
+              onClick={() => setActiveTab('troubleshooting')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'troubleshooting' ? 'border-primary-500 text-gray-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+            >
+              Troubleshooting
             </button>
             {(isOwner() || isAdmin) && (
               <button
@@ -276,8 +282,6 @@ export default function Settings() {
                 </div>
               )}
             </div>
-
-            <SyncIssuesManager />
           </div>
         )}
 
@@ -357,6 +361,28 @@ export default function Settings() {
                 <p className="text-sm text-gray-600">Presets are only configurable by account administrators.</p>
               </div>
             )}
+          </div>
+        )}
+
+        {activeTab === 'troubleshooting' && (
+          <div className="space-y-6">
+            <div className="bg-white overflow-hidden shadow rounded-lg">
+              <div className="p-6">
+                <div className="flex items-center mb-4">
+                  <div className="flex-shrink-0">
+                    <Wrench className="h-8 w-8 text-gray-400" />
+                  </div>
+                  <div className="ml-4 flex-1">
+                    <h3 className="text-lg font-medium text-gray-900">Troubleshooting</h3>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Tools to diagnose sync issues and export offline data for support.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <TroubleshootingTab currentAccountId={currentAccountId} currentUserId={user?.id ?? null} />
           </div>
         )}
 
