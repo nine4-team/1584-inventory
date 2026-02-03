@@ -742,6 +742,22 @@ export default function TransactionDetail() {
             const edgesFromTransaction = await lineageService.getEdgesFromTransaction(transactionId, currentAccountId)
             const movedOutItemIds = Array.from(new Set(edgesFromTransaction.map(edge => edge.itemId)))
 
+            // Detect "ghost references": items fetched via transaction.itemIds that are neither
+            // currently attached to this transaction nor present in lineage. Without this,
+            // users can see an empty items list even though audit/completeness thinks the
+            // transaction has items.
+            const ghostReferencedItemIds = validItems
+              .filter(it => (it as any).transactionId !== transactionId && !movedOutItemIds.includes(it.itemId))
+              .map(it => it.itemId)
+
+            if (ghostReferencedItemIds.length > 0) {
+              console.warn('TransactionDetail - found ghost-referenced items (treating as moved out for display):', {
+                transactionId,
+                count: ghostReferencedItemIds.length,
+                itemIds: ghostReferencedItemIds.slice(0, 10)
+              })
+            }
+
             // Fetch any moved item records that aren't already in the items list
             const missingMovedItemIds = movedOutItemIds.filter(id => !validItems.some(it => it.itemId === id))
             if (missingMovedItemIds.length > 0) {
@@ -752,7 +768,8 @@ export default function TransactionDetail() {
               console.log('TransactionDetail - added moved items:', validMovedItems.length)
             }
 
-            setLoadedItems(validItems, new Set<string>(movedOutItemIds))
+            const movedOutPlusGhost = new Set<string>([...movedOutItemIds, ...ghostReferencedItemIds])
+            setLoadedItems(validItems, movedOutPlusGhost)
           } catch (edgeErr) {
             console.error('TransactionDetail - failed to fetch lineage edges:', edgeErr)
             setLoadedItems(validItems, new Set<string>())
