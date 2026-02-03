@@ -12,7 +12,15 @@ interface AccountContextType {
   loading: boolean
 }
 
-const AccountContext = createContext<AccountContextType | undefined>(undefined)
+const defaultAccountContext: AccountContextType = {
+  currentAccountId: null,
+  currentAccount: null,
+  isOwner: false,
+  isAdmin: false,
+  loading: true
+}
+
+const AccountContext = createContext<AccountContextType>(defaultAccountContext)
 
 interface AccountProviderProps {
   children: ReactNode
@@ -193,10 +201,13 @@ export function AccountProvider({ children }: AccountProviderProps) {
   )
 }
 
+let hasWarnedMissingProvider = false
+
 export function useAccount() {
   const context = useContext(AccountContext)
-  if (context === undefined) {
-    throw new Error('useAccount must be used within an AccountProvider')
+  if (context === defaultAccountContext && !hasWarnedMissingProvider) {
+    hasWarnedMissingProvider = true
+    console.warn('useAccount was called outside of AccountProvider. Using fallback context.')
   }
   return context
 }
