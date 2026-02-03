@@ -102,6 +102,11 @@ interface DBOperation {
   timestamp: string
   retryCount: number
   lastError?: string
+  syncStatus?: 'pending' | 'requires_intervention'
+  interventionReason?: 'missing_item_on_server'
+  pausedAt?: string
+  errorCode?: string
+  errorDetails?: string
   accountId: string
   updatedBy: string
   version: number

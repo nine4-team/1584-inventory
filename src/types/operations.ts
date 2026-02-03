@@ -12,12 +12,38 @@ export type OperationType =
   | 'ALLOCATE_ITEM_TO_PROJECT'
   | 'SELL_ITEM_TO_PROJECT'
 
+export type OperationSyncStatus = 'pending' | 'requires_intervention'
+
+export type OperationInterventionReason = 'missing_item_on_server'
+
 export interface BaseOperation {
   id: string
   type: OperationType
   timestamp: string
   retryCount: number
   lastError?: string
+  /**
+   * Sync processing state.
+   * - pending: normal queue processing
+   * - requires_intervention: paused until user resolves it in the UI
+   */
+  syncStatus?: OperationSyncStatus
+  /**
+   * Narrow reason code for UI + handling.
+   */
+  interventionReason?: OperationInterventionReason
+  /**
+   * When the operation was paused for manual resolution.
+   */
+  pausedAt?: string
+  /**
+   * Optional machine-readable error code (e.g. PGRST116).
+   */
+  errorCode?: string
+  /**
+   * Optional extra error details (best-effort).
+   */
+  errorDetails?: string
   // Required metadata for offline sync
   accountId: string
   updatedBy: string
