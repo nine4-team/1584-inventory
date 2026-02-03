@@ -1005,62 +1005,27 @@ class OperationQueue {
           updated_by: updatedBy,
           version: version
         })
+        .eq('item_id', data.id)
+        .select()
+        .single()
+
       if (error) {
         // If the update failed because the item is missing on server (PGRST116/0 rows),
-        // we should try to re-create it (upsert) using the full local item data.
+        // it means the item was deleted on the server.
+        // The user has requested NOT to re-create these items ("zombies").
+        // We treat this as a "successful" sync (in that we are done with this operation)
+        // by returning true, which removes it from the queue.
         if (error.code === 'PGRST116' || (error.details && error.details.includes('0 rows'))) {
-          console.warn(`Item ${data.id} missing on server during update, attempting to re-create...`)
+          console.warn(`Item ${data.id} missing on server during update. Assuming server deletion takes precedence. Skipping update and clearing operation.`)
           
-          const { data: insertedItem, error: insertError } = await supabase
-            .from('items')
-            .insert({
-              item_id: data.id,
-              account_id: accountId,
-              project_id: updatedLocalItem.projectId ?? null,
-              transaction_id: updatedLocalItem.transactionId ?? null,
-              previous_project_transaction_id: updatedLocalItem.previousProjectTransactionId ?? null,
-              previous_project_id: updatedLocalItem.previousProjectId ?? null,
-              name: updatedLocalItem.name ?? null,
-              description: updatedLocalItem.description ?? null,
-              source: updatedLocalItem.source ?? null,
-              sku: updatedLocalItem.sku ?? null,
-              payment_method: updatedLocalItem.paymentMethod ?? null,
-              qr_key: updatedLocalItem.qrKey ?? null,
-              bookmark: updatedLocalItem.bookmark ?? false,
-              disposition: updatedLocalItem.disposition ?? null,
-              notes: updatedLocalItem.notes ?? undefined,
-              space: updatedLocalItem.space ?? undefined,
-              purchase_price: updatedLocalItem.purchasePrice ?? undefined,
-              project_price: updatedLocalItem.projectPrice ?? undefined,
-              market_value: updatedLocalItem.marketValue ?? undefined,
-              tax_rate_pct: updatedLocalItem.taxRatePct ?? undefined,
-              tax_amount_purchase_price: updatedLocalItem.taxAmountPurchasePrice ?? undefined,
-              tax_amount_project_price: updatedLocalItem.taxAmountProjectPrice ?? undefined,
-              inventory_status: updatedLocalItem.inventoryStatus ?? undefined,
-              business_inventory_location: updatedLocalItem.businessInventoryLocation ?? undefined,
-              origin_transaction_id: updatedLocalItem.originTransactionId ?? null,
-              latest_transaction_id: updatedLocalItem.latestTransactionId ?? null,
-              images: updatedLocalItem.images ?? [],
-              last_updated: updatedLocalItem.lastUpdated || new Date().toISOString(),
-              created_at: updatedLocalItem.createdAt || new Date().toISOString(), // Preserve creation time if known
-              updated_by: updatedBy,
-              created_by: updatedLocalItem.createdBy || updatedBy,
-              version: version
-            })
-            .select()
-            .single()
-
-          if (insertError) {
-             console.error(`Failed to re-create item ${data.id} during update recovery:`, insertError)
-             throw error // Throw original error if recovery fails
-          }
-
-          // Use the inserted item as the server response
-          serverItem = insertedItem
-          console.info(`Successfully re-created item ${data.id} during update recovery`)
-        } else {
-          throw error
+          // We might want to locally delete it too, to match server state?
+          // For now, just clearing the stuck operation is the priority.
+          // If we wanted to be thorough: await offlineStore.deleteItem(data.id)
+          
+          return true
         }
+        
+        throw error
       }
 
       // Update local store with server response (which should match what we sent)
