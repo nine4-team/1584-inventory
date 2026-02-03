@@ -43,12 +43,69 @@ This is intended to recover from “missing ~57 sync changes” where older code
 You need **a browser session** on the affected device/profile (the one that has the IndexedDB data).
 
 ### Option A (preferred): add an in-app “Export offline data” debug action
-Add a debug-only button / command that:
-- calls `offlineStore.getAllItems()`
-- reads all queued ops (there should already be a `getAllOperations()`/snapshot function in `operationQueue` or you can add one)
-- reads offline context (accountId/userId)
-- downloads a single JSON blob:
-  - `{ exportedAt, context, items, operations, conflicts? }`
+Build a debug-only export so we can pull **exactly** what reconciliation needs, without DevTools.
+
+#### Where to put it
+Pick one:
+- **Debug page**: `src/pages/DebugOffline.tsx` (create if it doesn’t exist) and link it from an existing debug/settings area.
+- **Settings “Advanced” panel**: add a button behind a dev flag.
+
+Guard it behind DEV so it cannot be used accidentally in prod:
+- show the button only when `import.meta.env.DEV` is true, or when a hidden “debug mode” toggle is enabled.
+
+#### What it should export (single JSON file)
+Shape:
+- `{ exportedAt, context, items, operations, conflicts?, transactions?, projects? }`
+
+Required fields:
+- `exportedAt`: ISO timestamp
+- `context`: `{ userId, accountId, updatedAt }` (read from offline context + current auth if available)
+- `items`: `offlineStore.getAllItems()`
+- `operations`: all queued ops from IndexedDB (`operations` store)
+
+Nice-to-have:
+- `conflicts` (conflicts store)
+- `transactions` (transactions store)
+- `projects` (projects store)
+
+#### Implementation notes (copy/paste)
+1) Add a tiny download helper (you can inline it in the page):
+
+```ts
+function downloadJson(filename: string, payload: unknown) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+```
+
+2) In the click handler:
+- `await offlineStore.init()`
+- `const items = await offlineStore.getAllItems()`
+- `const operations = await operationQueue.getAllOperationsForExport()` (add this if missing; see below)
+- `const context = await offlineStore.getOfflineContextRecord()` (add if missing) OR use existing offlineContext service and include the `accountId`/`userId` it returns
+- optionally include conflicts/transactions/projects via simple `getAll()` helpers
+- call `downloadJson()`
+
+Example payload:
+
+```ts
+const exportedAt = new Date().toISOString()
+const payload = { exportedAt, context, items, operations }
+downloadJson(`ledger-offline-export-${exportedAt}.json`, payload)
+```
+
+3) If `operationQueue` doesn’t have a full export method, add a simple one that reads the IndexedDB `operations` store via `offlineStore` (or directly in operationQueue if it already knows how).
+
+Minimum acceptable implementation:
+- `operationQueue.getAllOperationsForExport(): Promise<DBOperation[]>`
+- This should read *all* records from the `operations` object store and return them unmodified.
 
 Benefits: easy for support/debug, no manual DevTools work, consistent shape for scripts.
 
