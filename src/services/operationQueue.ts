@@ -31,7 +31,7 @@ import {
 } from './offlineContext'
 import type { ConflictItem } from '../types/conflicts'
 import { isNetworkOnline } from './networkStatusService'
-import { refreshProjectSnapshot } from '../utils/realtimeSnapshotUpdater'
+import { refreshBusinessInventorySnapshot, refreshProjectSnapshot } from '../utils/realtimeSnapshotUpdater'
 import type { QueryClient } from '@tanstack/react-query'
 import { removeItemFromCaches, removeTransactionFromCaches } from '@/utils/queryCacheHelpers'
 
@@ -334,6 +334,11 @@ class OperationQueue {
         timestamp: op.timestamp,
         retryCount: op.retryCount,
         lastError: op.lastError,
+        syncStatus: op.syncStatus,
+        interventionReason: op.interventionReason,
+        pausedAt: op.pausedAt,
+        errorCode: op.errorCode,
+        errorDetails: op.errorDetails,
         accountId: op.accountId,
         updatedBy: op.updatedBy,
         version: op.version,
@@ -469,7 +474,14 @@ class OperationQueue {
         return
       }
 
-      const operation = this.queue[0] // Process FIFO
+      const runnableIndex = this.queue.findIndex(op => !this.isOperationPaused(op))
+      if (runnableIndex === -1) {
+        // All remaining operations require manual intervention. Do not hammer the server.
+        this.isProcessing = false
+        return
+      }
+
+      const operation = this.queue[runnableIndex]
 
       // Validate that the current user matches the operation's updatedBy
       // This ensures offline-queued operations can only be processed by the user who created them
@@ -487,7 +499,7 @@ class OperationQueue {
       const success = await this.executeOperation(operation)
 
       if (success) {
-        this.queue.shift() // Remove completed operation
+        this.queue.splice(runnableIndex, 1) // Remove completed operation
         await this.persistQueue()
         this.emitQueueChange()
 
@@ -500,12 +512,21 @@ class OperationQueue {
         // Process next operation
         setTimeout(() => this.processQueue(), 100)
       } else {
+        // If the executor marked the operation as paused (requires intervention),
+        // persist it and continue processing other queued work.
+        if (this.isOperationPaused(operation)) {
+          await this.persistQueue()
+          this.emitQueueChange()
+          setTimeout(() => this.processQueue(), 100)
+          return
+        }
+
         // Mark for retry with exponential backoff
         // Note: Conflict checking is done BEFORE execution (in executeOperation),
         // so we don't need to check again here. If conflicts were blocking,
         // executeOperation would have returned false before attempting execution.
         operation.retryCount++
-        operation.lastError = 'Sync failed'
+        operation.lastError = operation.lastError ?? 'Sync failed'
 
         if (operation.retryCount >= 5) {
           const message = `Operation ${operation.id} has failed ${operation.retryCount} times. Keeping it queued for retry.`
@@ -532,6 +553,35 @@ class OperationQueue {
       }
     } finally {
       this.isProcessing = false
+    }
+  }
+
+  private isOperationPaused(operation: Operation): boolean {
+    return (operation as any).syncStatus === 'requires_intervention'
+  }
+
+  private unpauseMissingItemOperationsForItem(itemId: string): void {
+    if (!itemId) return
+    let changed = false
+
+    for (const op of this.queue) {
+      if (op.type !== 'UPDATE_ITEM') continue
+      if (op.data.id !== itemId) continue
+      if ((op as any).syncStatus !== 'requires_intervention') continue
+      if ((op as any).interventionReason !== 'missing_item_on_server') continue
+
+      ;(op as any).syncStatus = 'pending'
+      ;(op as any).interventionReason = undefined
+      ;(op as any).pausedAt = undefined
+      ;(op as any).errorCode = undefined
+      ;(op as any).errorDetails = undefined
+      op.lastError = undefined
+      op.retryCount = 0
+      changed = true
+    }
+
+    if (changed) {
+      this.emitQueueChange()
     }
   }
 
@@ -615,9 +665,11 @@ class OperationQueue {
           return await this.executeAllocateItemToProject(operation)
         case 'SELL_ITEM_TO_PROJECT':
           return await this.executeSellItemToProject(operation)
-        default:
-          console.error('Unknown operation type:', operation.type)
+        default: {
+          const opType = (operation as any)?.type
+          console.error('Unknown operation type:', opType)
           return false
+        }
       }
     } catch (error) {
       if (error instanceof FatalError) throw error
@@ -704,7 +756,7 @@ class OperationQueue {
       // This ensures source, sku, paymentMethod, qrKey, etc. match what user entered
       const { data: serverItem, error } = await supabase
         .from('items')
-        .insert({
+        .upsert({
           item_id: data.id, // CRITICAL: item_id is required and must be provided
           account_id: accountId,
           project_id: localItem.projectId ?? data.projectId,
@@ -738,7 +790,8 @@ class OperationQueue {
           created_by: localItem.createdBy || updatedBy,
           updated_by: updatedBy,
           version: version
-        })
+        }, { onConflict: 'item_id' })
+        // Make CREATE idempotent (helps recreate + retries).
         .select()
         .single()
 
@@ -783,6 +836,10 @@ class OperationQueue {
         last_synced_at: cachedAt
       }
       await offlineStore.saveItems([dbItem])
+
+      // If the user chose "Recreate" from Sync Issues, there may be paused UPDATE_ITEM ops
+      // for this item. Now that CREATE succeeded, unpause them so the rest of the queue can proceed.
+      this.unpauseMissingItemOperationsForItem(data.id)
 
       return true
     } catch (error: any) {
@@ -1010,19 +1067,24 @@ class OperationQueue {
         .single()
 
       if (error) {
-        // If the update failed because the item is missing on server (PGRST116/0 rows),
-        // it means the item was deleted on the server.
-        // The user has requested NOT to re-create these items ("zombies").
-        // We treat this as a "successful" sync (in that we are done with this operation)
-        // by returning true, which removes it from the queue.
-        if (error.code === 'PGRST116' || (error.details && error.details.includes('0 rows'))) {
-          console.warn(`Item ${data.id} missing on server during update. Assuming server deletion takes precedence. Skipping update and clearing operation.`)
-          
-          // We might want to locally delete it too, to match server state?
-          // For now, just clearing the stuck operation is the priority.
-          // If we wanted to be thorough: await offlineStore.deleteItem(data.id)
-          
-          return true
+        // If the update failed because the item is missing on server (PGRST116 / 0 rows),
+        // it likely means the item was deleted on the server. Do NOT retry indefinitely,
+        // and do NOT auto-skip. Pause and let the user decide (discard vs recreate).
+        const zeroRows =
+          (typeof error.details === 'string' && error.details.includes('0 rows')) ||
+          (typeof error.message === 'string' && error.message.includes('0 rows'))
+        if (error.code === 'PGRST116' || zeroRows) {
+          ;(operation as any).syncStatus = 'requires_intervention'
+          ;(operation as any).interventionReason = 'missing_item_on_server'
+          ;(operation as any).pausedAt = new Date().toISOString()
+          ;(operation as any).errorCode = error.code
+          ;(operation as any).errorDetails = error.details
+          operation.lastError = 'Item not found on server (likely deleted). Action required.'
+          console.warn(
+            `[operationQueue] UPDATE_ITEM paused: item missing on server (requires intervention)`,
+            { operationId: operation.id, itemId: data.id }
+          )
+          return false
         }
         
         throw error
@@ -2001,6 +2063,11 @@ class OperationQueue {
         timestamp: op.timestamp,
         retryCount: op.retryCount,
         lastError: op.lastError,
+        syncStatus: (op as any).syncStatus,
+        interventionReason: (op as any).interventionReason,
+        pausedAt: (op as any).pausedAt,
+        errorCode: (op as any).errorCode,
+        errorDetails: (op as any).errorDetails,
         accountId: op.accountId,
         updatedBy: op.updatedBy,
         version: op.version,
@@ -2014,6 +2081,10 @@ class OperationQueue {
 
   getQueueLength(): number {
     return this.queue.length
+  }
+
+  getRunnableQueueLength(): number {
+    return this.queue.filter(op => !this.isOperationPaused(op)).length
   }
 
   getSnapshot(): OperationQueueSnapshot {
@@ -2036,6 +2107,11 @@ class OperationQueue {
       timestamp: op.timestamp,
       retryCount: op.retryCount,
       lastError: op.lastError,
+      syncStatus: (op as any).syncStatus,
+      interventionReason: (op as any).interventionReason,
+      pausedAt: (op as any).pausedAt,
+      errorCode: (op as any).errorCode,
+      errorDetails: (op as any).errorDetails,
       accountId: op.accountId,
       updatedBy: op.updatedBy,
       version: op.version,
@@ -2114,6 +2190,133 @@ class OperationQueue {
     this.queue.splice(index, 1)
     await this.persistQueue()
     this.emitQueueChange()
+    return true
+  }
+
+  /**
+   * Discard a paused "missing item on server" issue:
+   * - Removes ALL queued operations targeting the item
+   * - Deletes the local item (best-effort) so local matches the server
+   */
+  async discardMissingItemSyncIssue(operationId: string): Promise<boolean> {
+    await this.init()
+
+    const operation = this.queue.find(op => op.id === operationId) ?? null
+    if (!operation) {
+      // If it isn't in memory, it's likely already been deleted.
+      return true
+    }
+
+    const itemId = this.getOperationTargetItemId(operation)
+    if (!itemId) {
+      return this.removeOperation(operationId)
+    }
+
+    const accountId = operation.accountId
+    let localItem: DBItem | null = null
+    try {
+      localItem = await offlineStore.getItemById(itemId)
+    } catch {
+      localItem = null
+    }
+
+    // Remove any queued operations for this item so we don't keep failing.
+    this.queue = this.queue.filter(op => this.getOperationTargetItemId(op) !== itemId)
+    await this.persistQueue()
+    this.emitQueueChange()
+
+    // Best-effort local cleanup.
+    try {
+      await offlineStore.deleteItem(itemId)
+      if (accountId) {
+        await offlineStore.deleteConflictsForItems(accountId, [itemId])
+      }
+    } catch (cleanupError) {
+      console.warn('[operationQueue] Failed to delete local item during discard (non-fatal)', {
+        itemId,
+        cleanupError
+      })
+    }
+
+    try {
+      const queryClient = this.getQueryClient()
+      if (queryClient) {
+        removeItemFromCaches(queryClient, accountId, itemId, {
+          projectId: localItem?.projectId ?? null,
+          transactionId: localItem?.transactionId ?? null
+        })
+      }
+    } catch (cacheError) {
+      console.warn('[operationQueue] Failed to clear query caches during discard (non-fatal)', {
+        itemId,
+        cacheError
+      })
+    }
+
+    if (localItem?.projectId) {
+      refreshProjectSnapshot(localItem.projectId)
+    } else {
+      refreshBusinessInventorySnapshot(accountId)
+    }
+
+    return true
+  }
+
+  /**
+   * Convert a paused UPDATE_ITEM (missing on server) into a CREATE_ITEM so the
+   * item can be restored from offline data. Other paused UPDATE_ITEM ops for the
+   * same item will be automatically unpaused after the create succeeds.
+   */
+  async recreateMissingItemSyncIssue(operationId: string): Promise<boolean> {
+    await this.init()
+
+    const index = this.queue.findIndex(op => op.id === operationId)
+    if (index === -1) {
+      return false
+    }
+
+    const operation = this.queue[index]
+    if (operation.type !== 'UPDATE_ITEM') {
+      return false
+    }
+
+    const itemId = operation.data.id
+    const localItem = await offlineStore.getItemById(itemId)
+    if (!localItem) {
+      operation.lastError = 'Cannot recreate: item is missing locally.'
+      await this.persistQueue()
+      this.emitQueueChange()
+      return false
+    }
+
+    const createOperation: CreateItemOperation = {
+      ...(operation as any),
+      type: 'CREATE_ITEM',
+      retryCount: 0,
+      lastError: undefined,
+      syncStatus: 'pending',
+      interventionReason: undefined,
+      pausedAt: undefined,
+      errorCode: undefined,
+      errorDetails: undefined,
+      data: {
+        id: itemId,
+        accountId: operation.accountId,
+        projectId: localItem.projectId ?? '',
+        name: localItem.name ?? '',
+        description: localItem.description ?? undefined,
+        purchasePrice: localItem.purchasePrice ?? undefined
+      }
+    }
+
+    this.queue[index] = createOperation
+    await this.persistQueue()
+    this.emitQueueChange()
+
+    if (isNetworkOnline()) {
+      void this.processQueue()
+    }
+
     return true
   }
 

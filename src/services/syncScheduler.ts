@@ -127,6 +127,14 @@ class SyncScheduler {
       return
     }
 
+    const runnable = operationQueue.getRunnableQueueLength()
+    if (runnable === 0) {
+      // Queue is present but fully paused for manual intervention.
+      // Do not schedule retries (would just loop forever).
+      this.resetBackoff()
+      return
+    }
+
     if (this.isRunning) {
       return
     }
@@ -149,6 +157,12 @@ class SyncScheduler {
       return
     }
 
+    const runnable = operationQueue.getRunnableQueueLength()
+    if (runnable === 0) {
+      this.resetBackoff()
+      return
+    }
+
     this.isRunning = true
     this.lastTrigger = trigger
     this.lastError = null
@@ -167,9 +181,13 @@ class SyncScheduler {
     } finally {
       this.isRunning = false
       const remaining = operationQueue.getQueueLength()
+      const remainingRunnable = operationQueue.getRunnableQueueLength()
       if (remaining === 0) {
         this.resetBackoff()
         notifySyncComplete({ source, pendingOperations: 0 })
+      } else if (remainingRunnable === 0) {
+        // Everything left requires intervention; don't schedule retries.
+        this.resetBackoff()
       } else {
         this.scheduleRetry()
         if (this.lastError) {

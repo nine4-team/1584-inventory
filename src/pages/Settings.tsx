@@ -11,6 +11,7 @@ import TaxPresetsManager from '../components/TaxPresetsManager'
 import VendorDefaultsManager from '../components/VendorDefaultsManager'
 import BudgetCategoriesManager from '../components/BudgetCategoriesManager'
 import SpaceTemplatesManager from '../components/spaces/SpaceTemplatesManager'
+import SyncIssuesManager from '../components/settings/SyncIssuesManager'
 import { Button } from '../components/ui/Button'
 
 export default function Settings() {
@@ -134,145 +135,149 @@ export default function Settings() {
       {/* Tab content */}
       <div>
         {activeTab === 'general' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Profile Section */}
-            <div className="bg-white overflow-hidden shadow rounded-lg">
-              <div className="p-6">
-                <div className="flex items-center mb-4">
-                  <div className="flex-shrink-0">
-                    <User className="h-8 w-8 text-gray-400" />
-                  </div>
-                  <div className="ml-4 flex-1">
-                    <h3 className="text-lg font-medium text-gray-900">
-                      Profile
-                    </h3>
-                    <p className="mt-1 text-sm text-gray-500">
-                      Manage your account settings and preferences
-                    </p>
-                  </div>
-                </div>
-                <div className="space-y-4">
-                  <div>
-                    <h4 className="text-lg font-medium text-gray-900">Profile Information</h4>
-                    <div className="mt-4 space-y-3">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">Full Name</label>
-                        <div className="mt-1 p-2 bg-gray-50 rounded-md text-sm text-gray-900">{user?.fullName}</div>
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">Email</label>
-                        <div className="mt-1 p-2 bg-gray-50 rounded-md text-sm text-gray-900">{user?.email}</div>
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">Role</label>
-                        <div className="mt-1 p-2 bg-gray-50 rounded-md text-sm text-gray-900 capitalize">
-                          {user?.role}
-                        </div>
-                        <p className="mt-1 text-xs text-gray-500">
-                          Contact an administrator to change your role.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Business Profile Section - Only for admins */}
-            {isAdmin && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Profile Section */}
               <div className="bg-white overflow-hidden shadow rounded-lg">
                 <div className="p-6">
                   <div className="flex items-center mb-4">
                     <div className="flex-shrink-0">
-                      <Building2 className="h-8 w-8 text-gray-400" />
+                      <User className="h-8 w-8 text-gray-400" />
                     </div>
                     <div className="ml-4 flex-1">
                       <h3 className="text-lg font-medium text-gray-900">
-                        Business Profile
+                        Profile
                       </h3>
                       <p className="mt-1 text-sm text-gray-500">
-                        Manage your business name and logo for invoices and branding
+                        Manage your account settings and preferences
                       </p>
                     </div>
                   </div>
-
                   <div className="space-y-4">
-                    {/* Business Name */}
                     <div>
-                      <label htmlFor="businessName" className="block text-sm font-medium text-gray-700 mb-1">
-                        Business Name
-                      </label>
-                      <input
-                        type="text"
-                        id="businessName"
-                        value={businessNameInput}
-                        onChange={(e) => setBusinessNameInput(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                        placeholder="Enter business name"
-                      />
-                    </div>
-
-                    {/* Logo Upload */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Business Logo
-                      </label>
-                      <div className="flex items-start space-x-4">
-                        {logoPreview && (
-                          <div className="flex-shrink-0">
-                            <img
-                              src={logoPreview}
-                              alt="Business logo preview"
-                              className="h-24 w-24 object-contain border border-gray-300 rounded"
-                            />
+                      <h4 className="text-lg font-medium text-gray-900">Profile Information</h4>
+                      <div className="mt-4 space-y-3">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700">Full Name</label>
+                          <div className="mt-1 p-2 bg-gray-50 rounded-md text-sm text-gray-900">{user?.fullName}</div>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700">Email</label>
+                          <div className="mt-1 p-2 bg-gray-50 rounded-md text-sm text-gray-900">{user?.email}</div>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700">Role</label>
+                          <div className="mt-1 p-2 bg-gray-50 rounded-md text-sm text-gray-900 capitalize">
+                            {user?.role}
                           </div>
-                        )}
-                        <div className="flex-1">
-                          <label className="cursor-pointer">
-                            <input
-                              type="file"
-                              accept="image/*"
-                              onChange={handleLogoChange}
-                              className="hidden"
-                            />
-                            <div className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
-                              <Upload className="h-4 w-4 mr-2" />
-                              {logoFile ? 'Change Logo' : logoPreview ? 'Change Logo' : 'Upload Logo'}
-                            </div>
-                          </label>
-                          <p className="mt-2 text-xs text-gray-500">
-                            Recommended: Square image, at least 200x200px. Max size: 10MB
+                          <p className="mt-1 text-xs text-gray-500">
+                            Contact an administrator to change your role.
                           </p>
                         </div>
                       </div>
                     </div>
-
-                    {/* Error/Success Messages */}
-                    {profileError && (
-                      <div className="p-3 bg-red-50 border border-red-200 rounded-md">
-                        <p className="text-sm text-red-800">{profileError}</p>
-                      </div>
-                    )}
-                    {profileSuccess && (
-                      <div className="p-3 bg-green-50 border border-green-200 rounded-md">
-                        <p className="text-sm text-green-800">Business profile saved successfully!</p>
-                      </div>
-                    )}
-
-                    {/* Save Button */}
-                    <div className="pt-4">
-                      <Button
-                        onClick={handleSaveProfile}
-                        disabled={isSavingProfile || !businessNameInput.trim()}
-                        className="w-full sm:w-auto"
-                      >
-                        {isSavingProfile ? 'Saving...' : 'Save Business Profile'}
-                      </Button>
-                    </div>
                   </div>
                 </div>
               </div>
-            )}
+
+              {/* Business Profile Section - Only for admins */}
+              {isAdmin && (
+                <div className="bg-white overflow-hidden shadow rounded-lg">
+                  <div className="p-6">
+                    <div className="flex items-center mb-4">
+                      <div className="flex-shrink-0">
+                        <Building2 className="h-8 w-8 text-gray-400" />
+                      </div>
+                      <div className="ml-4 flex-1">
+                        <h3 className="text-lg font-medium text-gray-900">
+                          Business Profile
+                        </h3>
+                        <p className="mt-1 text-sm text-gray-500">
+                          Manage your business name and logo for invoices and branding
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      {/* Business Name */}
+                      <div>
+                        <label htmlFor="businessName" className="block text-sm font-medium text-gray-700 mb-1">
+                          Business Name
+                        </label>
+                        <input
+                          type="text"
+                          id="businessName"
+                          value={businessNameInput}
+                          onChange={(e) => setBusinessNameInput(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                          placeholder="Enter business name"
+                        />
+                      </div>
+
+                      {/* Logo Upload */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Business Logo
+                        </label>
+                        <div className="flex items-start space-x-4">
+                          {logoPreview && (
+                            <div className="flex-shrink-0">
+                              <img
+                                src={logoPreview}
+                                alt="Business logo preview"
+                                className="h-24 w-24 object-contain border border-gray-300 rounded"
+                              />
+                            </div>
+                          )}
+                          <div className="flex-1">
+                            <label className="cursor-pointer">
+                              <input
+                                type="file"
+                                accept="image/*"
+                                onChange={handleLogoChange}
+                                className="hidden"
+                              />
+                              <div className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
+                                <Upload className="h-4 w-4 mr-2" />
+                                {logoFile ? 'Change Logo' : logoPreview ? 'Change Logo' : 'Upload Logo'}
+                              </div>
+                            </label>
+                            <p className="mt-2 text-xs text-gray-500">
+                              Recommended: Square image, at least 200x200px. Max size: 10MB
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Error/Success Messages */}
+                      {profileError && (
+                        <div className="p-3 bg-red-50 border border-red-200 rounded-md">
+                          <p className="text-sm text-red-800">{profileError}</p>
+                        </div>
+                      )}
+                      {profileSuccess && (
+                        <div className="p-3 bg-green-50 border border-green-200 rounded-md">
+                          <p className="text-sm text-green-800">Business profile saved successfully!</p>
+                        </div>
+                      )}
+
+                      {/* Save Button */}
+                      <div className="pt-4">
+                        <Button
+                          onClick={handleSaveProfile}
+                          disabled={isSavingProfile || !businessNameInput.trim()}
+                          className="w-full sm:w-auto"
+                        >
+                          {isSavingProfile ? 'Saving...' : 'Save Business Profile'}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <SyncIssuesManager />
           </div>
         )}
 
