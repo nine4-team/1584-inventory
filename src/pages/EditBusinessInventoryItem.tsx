@@ -440,8 +440,8 @@ export default function EditBusinessInventoryItem() {
                   <span className="text-gray-500 sm:text-sm">$</span>
                 </div>
                 <input
-                  type="number"
-                  step="0.01"
+                  type="text"
+                  inputMode="decimal"
                   id="purchasePrice"
                   value={formData.purchasePrice}
                   onChange={(e) => handleInputChange('purchasePrice', e.target.value)}
@@ -467,8 +467,8 @@ export default function EditBusinessInventoryItem() {
                 <span className="text-gray-500 sm:text-sm">$</span>
               </div>
               <input
-                type="number"
-                step="0.01"
+                type="text"
+                inputMode="decimal"
                 id="projectPrice"
                 value={formData.projectPrice}
                 onChange={(e) => handleInputChange('projectPrice', e.target.value)}
@@ -494,8 +494,8 @@ export default function EditBusinessInventoryItem() {
                   <span className="text-gray-500 sm:text-sm">$</span>
                 </div>
                 <input
-                  type="number"
-                  step="0.01"
+                  type="text"
+                  inputMode="decimal"
                   id="marketValue"
                   value={formData.marketValue}
                   onChange={(e) => handleInputChange('marketValue', e.target.value)}
