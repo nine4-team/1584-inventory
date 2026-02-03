@@ -1281,13 +1281,12 @@ export default function TransactionDetail() {
     if (!transactionId || !transaction || !currentAccountId) return
 
     const resolvedProjectId = projectId || transaction.projectId
-    if (!resolvedProjectId) return
 
     if (window.confirm('Are you sure you want to delete this transaction? This action cannot be undone.')) {
       try {
-        await transactionService.deleteTransaction(currentAccountId, resolvedProjectId, transactionId)
+        await transactionService.deleteTransaction(currentAccountId, resolvedProjectId ?? '', transactionId)
         await refreshRealtimeAfterWrite(true)
-        navigate(resolvedProjectId ? projectTransactions(resolvedProjectId) : '/projects')
+        navigate(resolvedProjectId ? projectTransactions(resolvedProjectId) : '/business-inventory')
       } catch (error) {
         console.error('Error deleting transaction:', error)
         showError('Failed to delete transaction. Please try again.')
