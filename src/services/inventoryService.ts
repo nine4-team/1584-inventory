@@ -2295,6 +2295,27 @@ export const transactionService = {
         const validMovedItems = movedItems.filter(mi => mi !== null) as Item[]
         combinedItems = combinedItems.concat(validMovedItems)
       }
+
+      // IMPORTANT: Avoid "ghost completeness".
+      // If a transaction row has stale/incorrect `itemIds`, those items may no longer be
+      // attached to this transaction AND may not have a lineage edge. In that case, the
+      // Transaction Detail UI will often show 0 items, but completeness would still count
+      // them unless we filter here.
+      //
+      // We only count an item if:
+      // - it is currently attached (item.transactionId === transactionId), OR
+      // - it is explicitly moved-out via lineage (edge from this transaction), OR
+      // - it has legacy lineage pointers indicating association (latest/origin/previous).
+      const movedOutSet = new Set<string>(movedOutItemIds)
+      combinedItems = combinedItems.filter(item => {
+        const currentTxId = (item as any).transactionId ?? null
+        if (currentTxId === transactionId) return true
+        if (movedOutSet.has(item.itemId)) return true
+        const latestTxId = (item as any).latestTransactionId ?? null
+        const originTxId = (item as any).originTransactionId ?? null
+        const previousProjectTxId = (item as any).previousProjectTransactionId ?? null
+        return latestTxId === transactionId || originTxId === transactionId || previousProjectTxId === transactionId
+      })
     } catch (edgeErr) {
       // Non-fatal: if lineage lookup fails, fall back to items returned by getItemsForTransaction
       console.debug('getTransactionCompleteness - failed to fetch lineage edges:', edgeErr)
