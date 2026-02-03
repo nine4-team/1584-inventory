@@ -1,0 +1,51 @@
+{
+  "exportedAt": "2026-02-03T21:54:34.152Z",
+  "context": {
+    "id": "active-context",
+    "userId": "4ef35958-597c-4aea-b99e-1ef62352a72d",
+    "accountId": "1dd4fd75-8eea-4f7a-98e7-bf45b987ae94",
+    "updatedAt": "2026-02-02T23:48:25.405Z"
+  },
+  "operations": [
+    {
+      "id": "0652d150-da6c-4492-9709-fde3b616b126",
+      "type": "UPDATE_ITEM",
+      "timestamp": "2026-02-03T05:14:57.978Z",
+      "retryCount": 25421,
+      "lastError": "Item not found on server (likely deleted). Action required.",
+      "syncStatus": "requires_intervention",
+      "interventionReason": "missing_item_on_server",
+      "pausedAt": "2026-02-03T21:10:42.115Z",
+      "errorCode": "PGRST116",
+      "errorDetails": "The result contains 0 rows",
+      "accountId": "1dd4fd75-8eea-4f7a-98e7-bf45b987ae94",
+      "updatedBy": "4ef35958-597c-4aea-b99e-1ef62352a72d",
+      "version": 2,
+      "data": {
+        "id": "e26fd3a6-510c-4caf-90f7-395e01b089ca",
+        "accountId": "1dd4fd75-8eea-4f7a-98e7-bf45b987ae94",
+        "updates": {}
+      }
+    },
+    {
+      "id": "b51cf5b3-6cbd-4e52-95b0-98d4f1e0c016",
+      "type": "UPDATE_ITEM",
+      "timestamp": "2026-02-03T05:14:57.991Z",
+      "retryCount": 0,
+      "lastError": "Item not found on server (likely deleted). Action required.",
+      "syncStatus": "requires_intervention",
+      "interventionReason": "missing_item_on_server",
+      "pausedAt": "2026-02-03T21:10:42.748Z",
+      "errorCode": "PGRST116",
+      "errorDetails": "The result contains 0 rows",
+      "accountId": "1dd4fd75-8eea-4f7a-98e7-bf45b987ae94",
+      "updatedBy": "4ef35958-597c-4aea-b99e-1ef62352a72d",
+      "version": 2,
+      "data": {
+        "id": "e65771fe-6d72-43b1-b255-307ac5d21adf",
+        "accountId": "1dd4fd75-8eea-4f7a-98e7-bf45b987ae94",
+        "updates": {}
+      }
+    }
+  ]
+}

@@ -34,6 +34,7 @@ import { isNetworkOnline } from './networkStatusService'
 import { refreshBusinessInventorySnapshot, refreshProjectSnapshot } from '../utils/realtimeSnapshotUpdater'
 import type { QueryClient } from '@tanstack/react-query'
 import { removeItemFromCaches, removeTransactionFromCaches } from '@/utils/queryCacheHelpers'
+import { looksLikeUuid } from '@/utils/idUtils'
 
 type QueryClientGetter = () => QueryClient
 
@@ -962,11 +963,9 @@ class OperationQueue {
       if (!localItem) {
         // Try to resurrect from server to prevent data loss
         console.warn(`Local item ${data.id} missing for update, attempting to fetch from server...`)
-        const { data: serverItem, error: fetchError } = await supabase
-          .from('items')
-          .select()
-          .eq('item_id', data.id)
-          .single()
+        let fetchQuery = supabase.from('items').select().eq('account_id', accountId)
+        fetchQuery = looksLikeUuid(data.id) ? fetchQuery.eq('id', data.id) : fetchQuery.eq('item_id', data.id)
+        const { data: serverItem, error: fetchError } = await fetchQuery.single()
 
         if (serverItem && !fetchError) {
           console.info(`Resurrected item ${data.id} from server`)
@@ -1029,7 +1028,7 @@ class OperationQueue {
       // Update on server using the FULL item data from local store, not just operation updates
       // This ensures source, sku, paymentMethod, qrKey, purchasePrice, projectPrice, etc. 
       // all match what user actually entered
-      let { data: serverItem, error } = await supabase
+      let updateQuery = supabase
         .from('items')
         .update({
           // Send all fields from the updated local item, not just the 4 simplified fields
@@ -1062,7 +1061,11 @@ class OperationQueue {
           updated_by: updatedBy,
           version: version
         })
-        .eq('item_id', data.id)
+        .eq('account_id', accountId)
+
+      updateQuery = looksLikeUuid(data.id) ? updateQuery.eq('id', data.id) : updateQuery.eq('item_id', data.id)
+
+      let { data: serverItem, error } = await updateQuery
         .select()
         .single()
 
@@ -1134,15 +1137,25 @@ class OperationQueue {
       // This resolves conflicts that were detected before the UPDATE executed
       try {
         if (accountId) {
-          await offlineStore.deleteConflictsForItems(accountId, [data.id])
-          console.log('Cleared conflicts for item after successful UPDATE', { itemId: data.id })
+          await offlineStore.deleteConflictsForItems(accountId, [dbItem.itemId])
+          console.log('Cleared conflicts for item after successful UPDATE', { itemId: dbItem.itemId })
         }
       } catch (conflictClearError) {
         // Non-fatal: log but don't fail the operation
         console.warn('Failed to clear conflicts after UPDATE (non-fatal)', {
-          itemId: data.id,
+          itemId: dbItem.itemId,
           error: conflictClearError
         })
+      }
+
+      // Hygiene: if this operation referenced a row UUID, attempt to remove any UUID-keyed
+      // offline duplicate now that we've saved the canonical `item_id` record.
+      if (looksLikeUuid(data.id) && dbItem.itemId !== data.id) {
+        try {
+          await offlineStore.deleteItem(data.id)
+        } catch {
+          // Non-fatal: best-effort cleanup only
+        }
       }
 
       return true
@@ -1175,10 +1188,14 @@ class OperationQueue {
       }
 
       // Delete from server
-      const { error } = await supabase
+      let deleteQuery = supabase
         .from('items')
         .delete()
-        .eq('item_id', data.id)
+        .eq('account_id', accountId)
+
+      deleteQuery = looksLikeUuid(data.id) ? deleteQuery.eq('id', data.id) : deleteQuery.eq('item_id', data.id)
+
+      const { error } = await deleteQuery
 
       if (error) throw error
 

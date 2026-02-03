@@ -1,0 +1,1 @@
+select item_id from public.items where account_id = '1dd4fd75-8eea-4f7a-98e7-bf45b987ae94'::uuid and item_id = any(array['ecc33a2b-6c32-422a-b358-ca022c8fc986', 'ed1eba4b-4d64-4c9d-980e-faf296ff3f36', 'f0b0cb16-bb82-4e2a-abcb-7a3d02afea54', 'f9c0e07e-5385-447c-8cf9-dcd4a0f49105']::text[]);
