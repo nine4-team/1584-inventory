@@ -972,7 +972,7 @@ class OperationQueue {
       // Update on server using the FULL item data from local store, not just operation updates
       // This ensures source, sku, paymentMethod, qrKey, purchasePrice, projectPrice, etc. 
       // all match what user actually entered
-      const { data: serverItem, error } = await supabase
+      let { data: serverItem, error } = await supabase
         .from('items')
         .update({
           // Send all fields from the updated local item, not just the 4 simplified fields
@@ -1005,11 +1005,63 @@ class OperationQueue {
           updated_by: updatedBy,
           version: version
         })
-        .eq('item_id', data.id)
-        .select()
-        .single()
+      if (error) {
+        // If the update failed because the item is missing on server (PGRST116/0 rows),
+        // we should try to re-create it (upsert) using the full local item data.
+        if (error.code === 'PGRST116' || (error.details && error.details.includes('0 rows'))) {
+          console.warn(`Item ${data.id} missing on server during update, attempting to re-create...`)
+          
+          const { data: insertedItem, error: insertError } = await supabase
+            .from('items')
+            .insert({
+              item_id: data.id,
+              account_id: accountId,
+              project_id: updatedLocalItem.projectId ?? null,
+              transaction_id: updatedLocalItem.transactionId ?? null,
+              previous_project_transaction_id: updatedLocalItem.previousProjectTransactionId ?? null,
+              previous_project_id: updatedLocalItem.previousProjectId ?? null,
+              name: updatedLocalItem.name ?? null,
+              description: updatedLocalItem.description ?? null,
+              source: updatedLocalItem.source ?? null,
+              sku: updatedLocalItem.sku ?? null,
+              payment_method: updatedLocalItem.paymentMethod ?? null,
+              qr_key: updatedLocalItem.qrKey ?? null,
+              bookmark: updatedLocalItem.bookmark ?? false,
+              disposition: updatedLocalItem.disposition ?? null,
+              notes: updatedLocalItem.notes ?? undefined,
+              space: updatedLocalItem.space ?? undefined,
+              purchase_price: updatedLocalItem.purchasePrice ?? undefined,
+              project_price: updatedLocalItem.projectPrice ?? undefined,
+              market_value: updatedLocalItem.marketValue ?? undefined,
+              tax_rate_pct: updatedLocalItem.taxRatePct ?? undefined,
+              tax_amount_purchase_price: updatedLocalItem.taxAmountPurchasePrice ?? undefined,
+              tax_amount_project_price: updatedLocalItem.taxAmountProjectPrice ?? undefined,
+              inventory_status: updatedLocalItem.inventoryStatus ?? undefined,
+              business_inventory_location: updatedLocalItem.businessInventoryLocation ?? undefined,
+              origin_transaction_id: updatedLocalItem.originTransactionId ?? null,
+              latest_transaction_id: updatedLocalItem.latestTransactionId ?? null,
+              images: updatedLocalItem.images ?? [],
+              last_updated: updatedLocalItem.lastUpdated || new Date().toISOString(),
+              created_at: updatedLocalItem.createdAt || new Date().toISOString(), // Preserve creation time if known
+              updated_by: updatedBy,
+              created_by: updatedLocalItem.createdBy || updatedBy,
+              version: version
+            })
+            .select()
+            .single()
 
-      if (error) throw error
+          if (insertError) {
+             console.error(`Failed to re-create item ${data.id} during update recovery:`, insertError)
+             throw error // Throw original error if recovery fails
+          }
+
+          // Use the inserted item as the server response
+          serverItem = insertedItem
+          console.info(`Successfully re-created item ${data.id} during update recovery`)
+        } else {
+          throw error
+        }
+      }
 
       // Update local store with server response (which should match what we sent)
       // This ensures local and server are in sync
