@@ -14,6 +14,7 @@ import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
 import { useNetworkState } from '@/hooks/useNetworkState'
 import { useBusinessInventoryRealtime } from '@/contexts/BusinessInventoryRealtimeContext'
 import { formatCurrency, formatDate } from '@/utils/dateUtils'
+import { normalizeMoneyToTwoDecimalString } from '@/utils/money'
 import { COMPANY_INVENTORY, COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { supabase } from '@/services/supabase'
 import { useBookmark } from '@/hooks/useBookmark'
@@ -48,7 +49,17 @@ const BUSINESS_TX_REIMBURSEMENT_FILTER_MODES = ['all', 'we-owe', 'client-owes'] 
 const BUSINESS_TX_RECEIPT_FILTER_MODES = ['all', 'yes', 'no'] as const
 const BUSINESS_TX_TYPE_FILTER_MODES = ['all', 'purchase', 'return'] as const
 const BUSINESS_TX_COMPLETENESS_FILTER_MODES = ['all', 'needs-review', 'complete'] as const
-const BUSINESS_TX_SORT_MODES = ['date-desc', 'date-asc', 'created-desc', 'created-asc'] as const
+const BUSINESS_TX_PURCHASE_METHOD_FILTER_MODES = ['all', 'client-card', 'design-business', 'missing'] as const
+const BUSINESS_TX_SORT_MODES = [
+  'date-desc',
+  'date-asc',
+  'created-desc',
+  'created-asc',
+  'source-asc',
+  'source-desc',
+  'amount-desc',
+  'amount-asc',
+] as const
 
 const DEFAULT_BUSINESS_ITEM_FILTER = 'all'
 const DEFAULT_BUSINESS_ITEM_SORT = 'creationDate'
@@ -59,6 +70,7 @@ const DEFAULT_BUSINESS_TX_TYPE_FILTER = 'all'
 const DEFAULT_BUSINESS_TX_BUDGET_CATEGORY_FILTER = 'all'
 const DEFAULT_BUSINESS_TX_COMPLETENESS_FILTER = 'all'
 const DEFAULT_BUSINESS_TX_SOURCE_FILTER = 'all'
+const DEFAULT_BUSINESS_TX_PURCHASE_METHOD_FILTER = 'all'
 const DEFAULT_BUSINESS_TX_SORT = 'date-desc'
 const DEFAULT_BUSINESS_TAB = 'inventory'
 
@@ -93,6 +105,11 @@ const parseBusinessTxTypeFilterMode = (value: string | null) =>
   BUSINESS_TX_TYPE_FILTER_MODES.includes(value as (typeof BUSINESS_TX_TYPE_FILTER_MODES)[number])
     ? (value as (typeof BUSINESS_TX_TYPE_FILTER_MODES)[number])
     : DEFAULT_BUSINESS_TX_TYPE_FILTER
+
+const parseBusinessTxPurchaseMethodFilterMode = (value: string | null) =>
+  BUSINESS_TX_PURCHASE_METHOD_FILTER_MODES.includes(value as (typeof BUSINESS_TX_PURCHASE_METHOD_FILTER_MODES)[number])
+    ? (value as (typeof BUSINESS_TX_PURCHASE_METHOD_FILTER_MODES)[number])
+    : DEFAULT_BUSINESS_TX_PURCHASE_METHOD_FILTER
 
 const parseBusinessTxCompletenessFilterMode = (value: string | null) =>
   BUSINESS_TX_COMPLETENESS_FILTER_MODES.includes(value as (typeof BUSINESS_TX_COMPLETENESS_FILTER_MODES)[number])
@@ -169,6 +186,7 @@ export default function BusinessInventory() {
     | 'email-receipt'
     | 'budget-category'
     | 'completeness'
+    | 'purchase-method'
   >('main')
   const [transactionStatusFilter, setTransactionStatusFilter] = useState<'all' | 'pending' | 'completed' | 'canceled' | 'inventory-only'>(() =>
     parseBusinessTxStatusFilterMode(searchParams.get('bizTxFilter'))
@@ -182,6 +200,9 @@ export default function BusinessInventory() {
   const [transactionTypeFilter, setTransactionTypeFilter] = useState<'all' | 'purchase' | 'return'>(() =>
     parseBusinessTxTypeFilterMode(searchParams.get('bizTxType'))
   )
+  const [transactionPurchaseMethodFilter, setTransactionPurchaseMethodFilter] = useState<
+    'all' | 'client-card' | 'design-business' | 'missing'
+  >(() => parseBusinessTxPurchaseMethodFilterMode(searchParams.get('bizTxPurchaseMethod')))
   const [transactionBudgetCategoryFilter, setTransactionBudgetCategoryFilter] = useState<string>(() =>
     parseBusinessTxBudgetCategoryFilter(searchParams.get('bizTxCategory'))
   )
@@ -191,9 +212,9 @@ export default function BusinessInventory() {
   const [transactionSourceFilter, setTransactionSourceFilter] = useState<string>(() =>
     parseBusinessTxSourceFilter(searchParams.get('bizTxSource'))
   )
-  const [transactionSortMode, setTransactionSortMode] = useState<'date-desc' | 'date-asc' | 'created-desc' | 'created-asc'>(() =>
-    parseBusinessTxSortMode(searchParams.get('bizTxSort'))
-  )
+  const [transactionSortMode, setTransactionSortMode] = useState<
+    'date-desc' | 'date-asc' | 'created-desc' | 'created-asc' | 'source-asc' | 'source-desc' | 'amount-desc' | 'amount-asc'
+  >(() => parseBusinessTxSortMode(searchParams.get('bizTxSort')))
   const [showTransactionSortMenu, setShowTransactionSortMenu] = useState(false)
 
   // Image upload state
@@ -248,6 +269,7 @@ export default function BusinessInventory() {
     const nextTxReimbursementFilter = parseBusinessTxReimbursementFilterMode(searchParams.get('bizTxReimbursement'))
     const nextTxReceiptFilter = parseBusinessTxReceiptFilterMode(searchParams.get('bizTxReceipt'))
     const nextTxTypeFilter = parseBusinessTxTypeFilterMode(searchParams.get('bizTxType'))
+    const nextTxPurchaseMethodFilter = parseBusinessTxPurchaseMethodFilterMode(searchParams.get('bizTxPurchaseMethod'))
     const nextTxBudgetCategoryFilter = parseBusinessTxBudgetCategoryFilter(searchParams.get('bizTxCategory'))
     const nextTxCompletenessFilter = parseBusinessTxCompletenessFilterMode(searchParams.get('bizTxCompleteness'))
     const nextTxSourceFilter = parseBusinessTxSourceFilter(searchParams.get('bizTxSource'))
@@ -263,6 +285,7 @@ export default function BusinessInventory() {
       transactionReimbursementFilter !== nextTxReimbursementFilter ||
       transactionReceiptFilter !== nextTxReceiptFilter ||
       transactionTypeFilter !== nextTxTypeFilter ||
+      transactionPurchaseMethodFilter !== nextTxPurchaseMethodFilter ||
       transactionBudgetCategoryFilter !== nextTxBudgetCategoryFilter ||
       transactionCompletenessFilter !== nextTxCompletenessFilter ||
       transactionSourceFilter !== nextTxSourceFilter ||
@@ -280,6 +303,9 @@ export default function BusinessInventory() {
     if (transactionReimbursementFilter !== nextTxReimbursementFilter) setTransactionReimbursementFilter(nextTxReimbursementFilter)
     if (transactionReceiptFilter !== nextTxReceiptFilter) setTransactionReceiptFilter(nextTxReceiptFilter)
     if (transactionTypeFilter !== nextTxTypeFilter) setTransactionTypeFilter(nextTxTypeFilter)
+    if (transactionPurchaseMethodFilter !== nextTxPurchaseMethodFilter) {
+      setTransactionPurchaseMethodFilter(nextTxPurchaseMethodFilter)
+    }
     if (transactionBudgetCategoryFilter !== nextTxBudgetCategoryFilter) setTransactionBudgetCategoryFilter(nextTxBudgetCategoryFilter)
     if (transactionCompletenessFilter !== nextTxCompletenessFilter) setTransactionCompletenessFilter(nextTxCompletenessFilter)
     if (transactionSourceFilter !== nextTxSourceFilter) setTransactionSourceFilter(nextTxSourceFilter)
@@ -313,6 +339,7 @@ export default function BusinessInventory() {
       setParam('bizTxReimbursement', transactionReimbursementFilter, DEFAULT_BUSINESS_TX_REIMBURSEMENT_FILTER)
       setParam('bizTxReceipt', transactionReceiptFilter, DEFAULT_BUSINESS_TX_RECEIPT_FILTER)
       setParam('bizTxType', transactionTypeFilter, DEFAULT_BUSINESS_TX_TYPE_FILTER)
+      setParam('bizTxPurchaseMethod', transactionPurchaseMethodFilter, DEFAULT_BUSINESS_TX_PURCHASE_METHOD_FILTER)
       setParam('bizTxCategory', transactionBudgetCategoryFilter, DEFAULT_BUSINESS_TX_BUDGET_CATEGORY_FILTER)
       setParam('bizTxCompleteness', transactionCompletenessFilter, DEFAULT_BUSINESS_TX_COMPLETENESS_FILTER)
       setParam('bizTxSource', transactionSourceFilter, DEFAULT_BUSINESS_TX_SOURCE_FILTER)
@@ -347,6 +374,7 @@ export default function BusinessInventory() {
     transactionReceiptFilter,
     transactionSearchQuery,
     transactionTypeFilter,
+    transactionPurchaseMethodFilter,
     transactionBudgetCategoryFilter,
     transactionCompletenessFilter,
     transactionSourceFilter,
@@ -708,6 +736,18 @@ export default function BusinessInventory() {
       filtered = filtered.filter(t => (t.transactionType ?? '').toLowerCase() === filterValue)
     }
 
+    if (transactionPurchaseMethodFilter !== 'all') {
+      const normalized = (tValue: string | null | undefined) => (tValue ?? '').trim().toLowerCase()
+      const clientValue = normalized('client')
+      const designBusinessValue = normalized('design business')
+      filtered = filtered.filter(t => {
+        const value = normalized(t.paymentMethod)
+        if (transactionPurchaseMethodFilter === 'missing') return value.length === 0
+        if (transactionPurchaseMethodFilter === 'client-card') return value.includes(clientValue)
+        return value.includes(designBusinessValue)
+      })
+    }
+
     if (transactionReceiptFilter === 'yes') {
       filtered = filtered.filter(t => t.receiptEmailed)
     } else if (transactionReceiptFilter === 'no') {
@@ -731,15 +771,30 @@ export default function BusinessInventory() {
       }
     }
 
-    // Apply search filter
+    // Apply search filter (source/title/type/project/notes/amount)
     if (transactionSearchQuery) {
-      const query = transactionSearchQuery.toLowerCase()
+      const rawQuery = transactionSearchQuery.trim()
+      const query = rawQuery.toLowerCase()
+      const hasDigit = /\d/.test(rawQuery)
+      const allowedOnly = /^[0-9\s,().$-]+$/.test(rawQuery)
+      const isAmountQuery = hasDigit && allowedOnly
+      const normalizedQuery = isAmountQuery ? normalizeMoneyToTwoDecimalString(rawQuery) : undefined
+      const normalizedQueryNumeric = normalizedQuery?.replace(/[^0-9-]/g, '') ?? ''
       filtered = filtered.filter(t =>
         getCanonicalTransactionTitle(t).toLowerCase().includes(query) ||
         t.source?.toLowerCase().includes(query) ||
         t.transactionType?.toLowerCase().includes(query) ||
         t.projectName?.toLowerCase().includes(query) ||
-        t.notes?.toLowerCase().includes(query)
+        t.notes?.toLowerCase().includes(query) ||
+        (() => {
+          if (!isAmountQuery || !normalizedQuery) return false
+          const normalizedAmount = normalizeMoneyToTwoDecimalString((t.amount ?? '').toString())
+          if (!normalizedAmount) return false
+          if (normalizedAmount === normalizedQuery) return true
+          if (!normalizedQueryNumeric || normalizedQueryNumeric === '-') return false
+          const normalizedAmountNumeric = normalizedAmount.replace(/[^0-9-]/g, '')
+          return normalizedAmountNumeric.includes(normalizedQueryNumeric)
+        })()
       )
     }
 
@@ -751,6 +806,21 @@ export default function BusinessInventory() {
       if (transactionSortMode === 'created-desc' || transactionSortMode === 'created-asc') {
         const createdDiff = parseDate(a.createdAt) - parseDate(b.createdAt)
         if (createdDiff !== 0) return transactionSortMode === 'created-asc' ? createdDiff : -createdDiff
+      }
+      if (transactionSortMode === 'source-asc' || transactionSortMode === 'source-desc') {
+        const aTitle = getCanonicalTransactionTitle(a)
+        const bTitle = getCanonicalTransactionTitle(b)
+        const diff = aTitle.localeCompare(bTitle)
+        if (diff !== 0) return transactionSortMode === 'source-asc' ? diff : -diff
+      }
+      if (transactionSortMode === 'amount-desc' || transactionSortMode === 'amount-asc') {
+        const parseMoney = (value?: string | null): number => {
+          if (!value) return 0
+          const n = Number.parseFloat(value)
+          return Number.isFinite(n) ? n : 0
+        }
+        const diff = parseMoney(a.amount) - parseMoney(b.amount)
+        if (diff !== 0) return transactionSortMode === 'amount-asc' ? diff : -diff
       }
       const createdDiff = parseDate(a.createdAt) - parseDate(b.createdAt)
       if (createdDiff !== 0) return -createdDiff
@@ -766,6 +836,7 @@ export default function BusinessInventory() {
     transactionSearchQuery,
     transactionSortMode,
     transactionTypeFilter,
+    transactionPurchaseMethodFilter,
     transactionBudgetCategoryFilter,
     transactionCompletenessFilter,
     transactionSourceFilter,
@@ -1897,7 +1968,7 @@ export default function BusinessInventory() {
                     <input
                       type="text"
                       className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-base"
-                      placeholder="Search transactions by source, type, project, or notes..."
+                      placeholder="Search transactions by source, type, project, notes, or amount..."
                       value={transactionSearchQuery || ''}
                       onChange={(e) => setTransactionSearchQuery(e.target.value)}
                     />
@@ -1921,7 +1992,7 @@ export default function BusinessInventory() {
                       </button>
 
                       {showTransactionSortMenu && (
-                        <div className="transaction-sort-menu absolute top-full right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                        <div className="transaction-sort-menu absolute top-full right-0 mt-1 w-48 bg-white border border-gray-200 rounded-md shadow-lg z-10">
                           <div className="py-1">
                             <button
                               onClick={() => {
@@ -1971,6 +2042,54 @@ export default function BusinessInventory() {
                               <span>Created Date (oldest)</span>
                               {transactionSortMode === 'created-asc' ? <Check className="h-4 w-4" /> : null}
                             </button>
+                            <button
+                              onClick={() => {
+                                setTransactionSortMode('source-asc')
+                                setShowTransactionSortMenu(false)
+                              }}
+                              className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                transactionSortMode === 'source-asc' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                              }`}
+                            >
+                              <span>Source (A→Z)</span>
+                              {transactionSortMode === 'source-asc' ? <Check className="h-4 w-4" /> : null}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setTransactionSortMode('source-desc')
+                                setShowTransactionSortMenu(false)
+                              }}
+                              className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                transactionSortMode === 'source-desc' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                              }`}
+                            >
+                              <span>Source (Z→A)</span>
+                              {transactionSortMode === 'source-desc' ? <Check className="h-4 w-4" /> : null}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setTransactionSortMode('amount-desc')
+                                setShowTransactionSortMenu(false)
+                              }}
+                              className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                transactionSortMode === 'amount-desc' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                              }`}
+                            >
+                              <span>Price (high→low)</span>
+                              {transactionSortMode === 'amount-desc' ? <Check className="h-4 w-4" /> : null}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setTransactionSortMode('amount-asc')
+                                setShowTransactionSortMenu(false)
+                              }}
+                              className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                transactionSortMode === 'amount-asc' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                              }`}
+                            >
+                              <span>Price (low→high)</span>
+                              {transactionSortMode === 'amount-asc' ? <Check className="h-4 w-4" /> : null}
+                            </button>
                           </div>
                         </div>
                       )}
@@ -1989,6 +2108,7 @@ export default function BusinessInventory() {
                           transactionReimbursementFilter === 'all' &&
                           transactionReceiptFilter === 'all' &&
                           transactionTypeFilter === 'all' &&
+                          transactionPurchaseMethodFilter === 'all' &&
                           transactionBudgetCategoryFilter === 'all' &&
                           transactionCompletenessFilter === 'all' &&
                           transactionSourceFilter === 'all'
@@ -2012,6 +2132,7 @@ export default function BusinessInventory() {
                                   setTransactionReimbursementFilter('all')
                                   setTransactionReceiptFilter('all')
                                   setTransactionTypeFilter('all')
+                                  setTransactionPurchaseMethodFilter('all')
                                   setTransactionBudgetCategoryFilter('all')
                                   setTransactionCompletenessFilter('all')
                                   setTransactionSourceFilter('all')
@@ -2022,6 +2143,7 @@ export default function BusinessInventory() {
                                   transactionReimbursementFilter === 'all' &&
                                   transactionReceiptFilter === 'all' &&
                                   transactionTypeFilter === 'all' &&
+                                  transactionPurchaseMethodFilter === 'all' &&
                                   transactionBudgetCategoryFilter === 'all' &&
                                   transactionCompletenessFilter === 'all' &&
                                   transactionSourceFilter === 'all'
@@ -2034,6 +2156,7 @@ export default function BusinessInventory() {
                                 transactionReimbursementFilter === 'all' &&
                                 transactionReceiptFilter === 'all' &&
                                 transactionTypeFilter === 'all' &&
+                                transactionPurchaseMethodFilter === 'all' &&
                                 transactionBudgetCategoryFilter === 'all' &&
                                 transactionCompletenessFilter === 'all' &&
                                 transactionSourceFilter === 'all' ? (
@@ -2115,6 +2238,29 @@ export default function BusinessInventory() {
                                   <span>Email Receipt</span>
                                   <span className="text-xs text-gray-500 truncate max-w-[10rem]">
                                     {transactionReceiptFilter === 'all' ? 'All' : transactionReceiptFilter === 'yes' ? 'Yes' : 'No'}
+                                  </span>
+                                </div>
+                              </button>
+
+                              <div className="my-1 border-t border-gray-100" />
+
+                              <button
+                                onClick={() => setTransactionFilterMenuView('purchase-method')}
+                                className={`w-full px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionPurchaseMethodFilter !== 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                                aria-label="Purchased by"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span>Purchased By</span>
+                                  <span className="text-xs text-gray-500 truncate max-w-[10rem]">
+                                    {transactionPurchaseMethodFilter === 'all'
+                                      ? 'All'
+                                      : transactionPurchaseMethodFilter === 'client-card'
+                                      ? 'Client'
+                                      : transactionPurchaseMethodFilter === 'missing'
+                                      ? 'Not Set'
+                                      : 'Design Business'}
                                   </span>
                                 </div>
                               </button>
@@ -2394,6 +2540,76 @@ export default function BusinessInventory() {
                               >
                                 <span>Return</span>
                                 {transactionTypeFilter === 'return' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                            </div>
+                          ) : transactionFilterMenuView === 'purchase-method' ? (
+                            <div className="py-1">
+                              <button
+                                onClick={() => setTransactionFilterMenuView('main')}
+                                className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                              >
+                                ← Back
+                              </button>
+
+                              <div className="my-1 border-t border-gray-100" />
+
+                              <button
+                                onClick={() => {
+                                  setTransactionPurchaseMethodFilter('all')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionPurchaseMethodFilter === 'all' ? 'bg-primary-50 text-primary-600' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>All</span>
+                                {transactionPurchaseMethodFilter === 'all' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setTransactionPurchaseMethodFilter('client-card')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionPurchaseMethodFilter === 'client-card'
+                                    ? 'bg-primary-50 text-primary-600'
+                                    : 'text-gray-700'
+                                }`}
+                              >
+                                <span>Client</span>
+                                {transactionPurchaseMethodFilter === 'client-card' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setTransactionPurchaseMethodFilter('design-business')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionPurchaseMethodFilter === 'design-business'
+                                    ? 'bg-primary-50 text-primary-600'
+                                    : 'text-gray-700'
+                                }`}
+                              >
+                                <span>Design Business</span>
+                                {transactionPurchaseMethodFilter === 'design-business' ? <Check className="h-4 w-4" /> : null}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setTransactionPurchaseMethodFilter('missing')
+                                  setShowTransactionFilterMenu(false)
+                                  setTransactionFilterMenuView('main')
+                                }}
+                                className={`flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 ${
+                                  transactionPurchaseMethodFilter === 'missing'
+                                    ? 'bg-primary-50 text-primary-600'
+                                    : 'text-gray-700'
+                                }`}
+                              >
+                                <span>Not Set</span>
+                                {transactionPurchaseMethodFilter === 'missing' ? <Check className="h-4 w-4" /> : null}
                               </button>
                             </div>
                           ) : transactionFilterMenuView === 'completeness' ? (
