@@ -15,8 +15,10 @@ import { projectService, unifiedItemsService } from '@/services/inventoryService
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { projectSpaces, projectSpaceEdit } from '@/utils/routes'
 import TransactionItemsList from '@/components/TransactionItemsList'
-import SpaceItemPicker from '@/components/spaces/SpaceItemPicker'
+import AddExistingItemsModal from '@/components/items/AddExistingItemsModal'
+import ExistingItemsPicker from '@/components/items/ExistingItemsPicker'
 import { mapItemToTransactionItemFormData, mapTransactionItemFormDataToItemUpdate } from '@/utils/spaceItemFormMapping'
+import { ensureItemInProjectForSpace } from '@/services/itemPullInService'
 
 export default function SpaceDetail() {
   const { projectId, spaceId } = useParams<{ projectId: string; spaceId: string }>()
@@ -294,6 +296,33 @@ export default function SpaceDetail() {
       showSuccess(selectedIds.length === 1 ? 'Removed item from space' : `Removed ${selectedIds.length} items from space`)
     }
   }
+
+  const handleAddExistingItems = useCallback(async (items: Item[]) => {
+    if (!currentAccountId || !projectId || !spaceId || items.length === 0) return
+    try {
+      for (const item of items) {
+        await ensureItemInProjectForSpace(currentAccountId, item, projectId, { spaceName: space?.name })
+        await unifiedItemsService.updateItem(currentAccountId, item.itemId, { spaceId })
+      }
+      showSuccess(items.length === 1 ? 'Item added to space' : `Added ${items.length} items to space`)
+      setShowExistingItemsModal(false)
+      await fetchSpace()
+    } catch (error) {
+      console.error('SpaceDetail: failed to add existing items', error)
+      throw error
+    }
+  }, [currentAccountId, fetchSpace, projectId, showSuccess, space?.name, spaceId])
+
+  const getExistingItemDisableState = useCallback((item: Item) => {
+    const isOutsideItem = item.projectId !== projectId
+    if (isOutsideItem && item.transactionId) {
+      return {
+        disabled: true,
+        reason: 'This item is tied to a transaction; move the transaction instead.'
+      }
+    }
+    return { disabled: false }
+  }, [projectId])
 
   const updateChecklists = useCallback(
     async (nextChecklists: SpaceChecklist[]) => {
@@ -932,31 +961,24 @@ export default function SpaceDetail() {
 
       {/* Add Existing Items Modal */}
       {showExistingItemsModal && projectId && spaceId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl mx-4 h-[66vh] max-h-[66vh] flex flex-col overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-              <h3 className="text-lg font-medium text-gray-900">Add Existing Items</h3>
-              <button
-                type="button"
-                onClick={() => setShowExistingItemsModal(false)}
-                className="text-sm font-medium text-gray-600 hover:text-gray-900"
-              >
-                Close
-              </button>
-            </div>
-            <div id="space-items-picker-modal" className="overflow-y-auto flex-1 flex flex-col">
-              <SpaceItemPicker
-                projectId={projectId}
-                spaceId={spaceId}
-                excludedItemIds={new Set(associatedItems.map(item => item.itemId))}
-                onItemsAdded={async () => {
-                  setShowExistingItemsModal(false)
-                  await fetchSpace()
-                }}
-              />
-            </div>
+        <AddExistingItemsModal
+          open={showExistingItemsModal}
+          onClose={() => setShowExistingItemsModal(false)}
+          contentId="space-items-picker-modal"
+        >
+          <div className="flex flex-col flex-1 px-6 py-4">
+            <ExistingItemsPicker
+              mode="space"
+              projectId={projectId}
+              includeOutside
+              includeSuggested={false}
+              excludedItemIds={new Set(associatedItems.map(item => item.itemId))}
+              isItemDisabled={getExistingItemDisableState}
+              onAddItems={handleAddExistingItems}
+              stickyMode="sticky"
+            />
           </div>
-        </div>
+        </AddExistingItemsModal>
       )}
 
       {/* Delete confirmation */}
