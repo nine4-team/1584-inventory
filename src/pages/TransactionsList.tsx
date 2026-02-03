@@ -21,6 +21,7 @@ const getCanonicalTransactionTitle = (transaction: TransactionType): string => {
   return transaction.source
 }
 import { formatDate, formatCurrency } from '@/utils/dateUtils'
+import { normalizeMoneyToTwoDecimalString } from '@/utils/money'
 
 // Remove any unwanted icons from transaction type badges
 const removeUnwantedIcons = () => {
@@ -676,15 +677,18 @@ export default function TransactionsList({ projectId: propProjectId, transaction
 
     // Apply search filter (source/title/type/notes/amount)
     if (searchQuery) {
-      const query = searchQuery.toLowerCase().trim()
-      const numericQuery = query.replace(/[^0-9.]/g, '')
+      const rawQuery = searchQuery.trim()
+      const query = rawQuery.toLowerCase()
+      const hasDigit = /\d/.test(rawQuery)
+      const allowedOnly = /^[0-9\s,().$-]+$/.test(rawQuery)
+      const isAmountQuery = hasDigit && allowedOnly
+      const normalizedQuery = isAmountQuery ? normalizeMoneyToTwoDecimalString(rawQuery) : undefined
+      const normalizedQueryNumeric = normalizedQuery?.replace(/[^0-9-]/g, '') ?? ''
       filtered = filtered.filter(t => {
         const title = getCanonicalTransactionTitle(t).toLowerCase()
         const source = t.source?.toLowerCase() ?? ''
         const type = t.transactionType?.toLowerCase() ?? ''
         const notes = t.notes?.toLowerCase() ?? ''
-        const amountStr = (t.amount ?? '').toString()
-        const amountNormalized = amountStr.replace(/[^0-9.]/g, '')
 
         const matchesText =
           title.includes(query) ||
@@ -692,9 +696,18 @@ export default function TransactionsList({ projectId: propProjectId, transaction
           type.includes(query) ||
           notes.includes(query)
 
-        const matchesAmount =
-          numericQuery.length > 0 &&
-          (amountStr.toLowerCase().includes(query) || amountNormalized.includes(numericQuery))
+        let matchesAmount = false
+        if (isAmountQuery && normalizedQuery) {
+          const normalizedAmount = normalizeMoneyToTwoDecimalString((t.amount ?? '').toString())
+          if (normalizedAmount) {
+            if (normalizedAmount === normalizedQuery) {
+              matchesAmount = true
+            } else if (normalizedQueryNumeric && normalizedQueryNumeric !== '-') {
+              const normalizedAmountNumeric = normalizedAmount.replace(/[^0-9-]/g, '')
+              matchesAmount = normalizedAmountNumeric.includes(normalizedQueryNumeric)
+            }
+          }
+        }
 
         return matchesText || matchesAmount
       })
