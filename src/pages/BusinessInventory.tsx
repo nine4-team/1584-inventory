@@ -1,6 +1,6 @@
 import { Plus, Search, Package, Receipt, Filter, QrCode, Trash2, Camera, DollarSign, ArrowUpDown, RefreshCw, Check } from 'lucide-react'
 import { useMemo } from 'react'
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import ContextLink from '@/components/ContextLink'
 import { Item, Transaction, ItemImage, Project, ItemDisposition, BudgetCategory } from '@/types'
@@ -797,7 +797,7 @@ export default function BusinessInventory() {
     setItems(snapshotItems)
   }, [snapshotItems])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (hasRestoredInventoryScrollRef.current || isLoading || activeTab !== 'inventory') return
     const state = location.state && typeof location.state === 'object' ? (location.state as Record<string, unknown>) : null
     const restoreScrollY = state?.restoreScrollY
@@ -808,14 +808,14 @@ export default function BusinessInventory() {
     if (filteredItems.length === 0 && (restoreScrollY as number) > 0) return
 
     hasRestoredInventoryScrollRef.current = true
-    requestAnimationFrame(() => window.scrollTo(0, restoreScrollY as number))
+    window.scrollTo({ top: restoreScrollY as number, behavior: 'auto' })
 
     const { restoreScrollY: _restoreScrollY, ...rest } = state || {}
     const nextState = Object.keys(rest).length > 0 ? rest : undefined
     navigate(location.pathname + location.search, { replace: true, state: nextState })
   }, [activeTab, isLoading, location.pathname, location.search, location.state, navigate, filteredItems])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (hasRestoredTransactionScrollRef.current || isLoading || activeTab !== 'transactions') return
     const state = location.state && typeof location.state === 'object' ? (location.state as Record<string, unknown>) : null
     const restoreScrollY = state?.restoreScrollY
@@ -826,7 +826,7 @@ export default function BusinessInventory() {
     if (filteredTransactions.length === 0 && (restoreScrollY as number) > 0) return
 
     hasRestoredTransactionScrollRef.current = true
-    requestAnimationFrame(() => window.scrollTo(0, restoreScrollY as number))
+    window.scrollTo({ top: restoreScrollY as number, behavior: 'auto' })
 
     const { restoreScrollY: _restoreScrollY, ...rest } = state || {}
     const nextState = Object.keys(rest).length > 0 ? rest : undefined
