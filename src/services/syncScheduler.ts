@@ -96,9 +96,14 @@ class SyncScheduler {
   }
 
   private handleOnline = () => {
-    this.retryAttempt = 0
-    this.clearScheduledRun()
-    void this.triggerSync('online')
+    // Debounce online trigger to prevent rapid flapping
+    setTimeout(() => {
+      if (isNetworkOnline()) {
+        this.retryAttempt = 0
+        this.clearScheduledRun()
+        void this.triggerSync('online')
+      }
+    }, 2000)
   }
 
   private handleOffline = () => {

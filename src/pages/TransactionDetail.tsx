@@ -1278,7 +1278,19 @@ export default function TransactionDetail() {
   ])
 
   const handleDelete = useCallback(async () => {
-    if (!transactionId || !transaction || !currentAccountId) return
+    if (!transactionId || !transaction || !currentAccountId) {
+      console.warn('Cannot delete transaction: missing context', {
+        transactionId,
+        hasTransaction: !!transaction,
+        hasAccountId: !!currentAccountId
+      })
+      if (!currentAccountId) {
+        showError('Unable to delete: Account context is missing. Please refresh the page.')
+      } else if (!transaction) {
+        showError('Unable to delete: Transaction data not loaded.')
+      }
+      return
+    }
 
     const resolvedProjectId = projectId || transaction.projectId
 
