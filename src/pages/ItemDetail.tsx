@@ -382,10 +382,14 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
 
     setIsUpdatingTransaction(true)
     const previousTransactionId = item.transactionId
+    const selectedTransaction = transactions.find(tx => tx.transactionId === selectedTransactionId)
+    const isReturnTransaction = selectedTransaction?.transactionType === 'Return'
     
     try {
       await unifiedItemsService.assignItemToTransaction(currentAccountId, selectedTransactionId, item.itemId, {
-        itemPreviousTransactionId: previousTransactionId
+        itemPreviousTransactionId: previousTransactionId,
+        isReturnTransaction,
+        appendCorrectionEdge: true
       })
 
       // Refresh the item data

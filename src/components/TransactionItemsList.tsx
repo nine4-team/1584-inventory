@@ -19,7 +19,6 @@ import BlockingConfirmDialog from '@/components/ui/BlockingConfirmDialog'
 import { Combobox } from '@/components/ui/Combobox'
 import SpaceSelector from '@/components/spaces/SpaceSelector'
 import { supabase } from '@/services/supabase'
-import { lineageService } from '@/services/lineageService'
 import { useToast } from '@/components/ui/ToastContext'
 
 interface TransactionItemsListProps {
@@ -1237,24 +1236,12 @@ export default function TransactionItemsList({
     setIsUpdatingTransaction(true)
     const selectedTransaction = transactions.find(tx => tx.transactionId === selectedTransactionId)
     const isReturnTransaction = selectedTransaction?.transactionType === 'Return'
-    const lineageMovementKind = isReturnTransaction ? 'returned' : 'correction'
-    const lineageNote = isReturnTransaction ? 'Returned to project' : 'Changed transaction'
     try {
       await unifiedItemsService.assignItemToTransaction(currentAccountId, selectedTransactionId, transactionTargetItemId, {
-        itemPreviousTransactionId: previousTransactionId
+        itemPreviousTransactionId: previousTransactionId,
+        isReturnTransaction,
+        appendCorrectionEdge: true
       })
-      try {
-        await lineageService.appendItemLineageEdge(
-          currentAccountId,
-          transactionTargetItemId,
-          previousTransactionId ?? null,
-          selectedTransactionId ?? null,
-          lineageNote,
-          { movementKind: lineageMovementKind, source: 'app' }
-        )
-      } catch (lineageError) {
-        console.warn('TransactionItemsList: failed to append lineage edge (non-critical)', lineageError)
-      }
 
       const updatedItems = items.map(existing =>
         existing.id === transactionTargetItemId ? { ...existing, transactionId: selectedTransactionId } : existing

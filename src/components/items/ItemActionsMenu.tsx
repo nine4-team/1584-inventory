@@ -349,7 +349,7 @@ export default function ItemActionsMenu({
         : null}
       {onReturnToTransaction
         ? renderMenuItem({
-            label: 'Return to Project…',
+            label: 'Move to Return Transaction…',
             onClick: onReturnToTransaction,
             disabled: Boolean(returnToTransactionDisabledReason),
             disabledReason: returnToTransactionDisabledReason

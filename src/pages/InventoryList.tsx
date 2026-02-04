@@ -473,11 +473,15 @@ export default function InventoryList({ projectId, projectName, items: propItems
     const item = items.find(entry => entry.itemId === transactionTargetItemId)
     if (!item) return
     const previousTransactionId = item.transactionId
+    const selectedTransaction = transactions.find(tx => tx.transactionId === selectedTransactionId)
+    const isReturnTransaction = selectedTransaction?.transactionType === 'Return'
 
     setIsUpdatingTransaction(true)
     try {
       await unifiedItemsService.assignItemToTransaction(currentAccountId, selectedTransactionId, transactionTargetItemId, {
-        itemPreviousTransactionId: previousTransactionId
+        itemPreviousTransactionId: previousTransactionId,
+        isReturnTransaction,
+        appendCorrectionEdge: true
       })
 
       await refreshRealtimeAfterWrite()
@@ -776,9 +780,13 @@ export default function InventoryList({ projectId, projectName, items: propItems
       })
 
       // Execute assignments in parallel groups
+      const selectedTransaction = transactions.find(tx => tx.transactionId === transactionId)
+      const isReturnTransaction = selectedTransaction?.transactionType === 'Return'
       await Promise.all(Array.from(itemsByPrevTx.entries()).map(([prevTx, ids]) => 
           unifiedItemsService.assignItemsToTransaction(currentAccountId, transactionId, ids, {
-              itemPreviousTransactionId: prevTx
+              itemPreviousTransactionId: prevTx,
+              isReturnTransaction,
+              appendCorrectionEdge: true
           })
       ))
 
