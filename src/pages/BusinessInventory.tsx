@@ -530,11 +530,15 @@ export default function BusinessInventory() {
     const item = items.find(entry => entry.itemId === transactionTargetItemId)
     if (!item) return
     const previousTransactionId = item.transactionId
+    const selectedTransaction = transactions.find(tx => tx.transactionId === selectedTransactionId)
+    const isReturnTransaction = selectedTransaction?.transactionType === 'Return'
 
     setIsUpdatingTransaction(true)
     try {
       await unifiedItemsService.assignItemToTransaction(currentAccountId, selectedTransactionId, transactionTargetItemId, {
-        itemPreviousTransactionId: previousTransactionId
+        itemPreviousTransactionId: previousTransactionId,
+        isReturnTransaction,
+        appendCorrectionEdge: true
       })
 
       await refreshRealtimeAfterWrite()

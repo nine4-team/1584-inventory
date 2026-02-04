@@ -24,7 +24,7 @@ This revised plan focuses on:
 
 - **Current items in a transaction** are only the items where `items.transaction_id = <transaction_id>`.
 - We only show two “moved-like” outcomes from a transaction:
-  - **Returned**: item left this transaction into a **return transaction** in the *same project*
+  - **Returned**: item left this transaction into a **transaction with `transaction_type='Return'`** in the same project
   - **Sold**: item left this transaction into **another project** or into **business inventory**
 - **Corrective moves** (fixing mistakes) should **not** create “history” that shows up as Sold/Returned.
 - **No ghosts**: `transactions.item_ids` should never list items that aren’t currently attached.
@@ -183,21 +183,18 @@ RLS:
 
 Definition:
 
-- Item left a transaction into a **Return transaction** (a transaction row whose `transaction_type = 'Return'`), in the same project context.
+- Item left a transaction into **any transaction whose `transaction_type = 'Return'`**, in the same project context.
 
 Important: your codebase also has a separate “return to inventory” canonical flow (e.g. purchase → inventory). That is a valid return flow, but it does not automatically imply a “Return transaction”.
-For this migration, “Returned” means **explicit Return transaction** moves (because that’s what you can show cleanly on a transaction detail screen).
+For this migration, “Returned” means **moves into a transaction whose type is `Return`** (because that’s what you can show cleanly on a transaction detail screen).
 
-Implementation needs an identity for “return transaction”, but we already have it:
-
-- Use the existing `transactions.transaction_type` (app: `transactionType`) and standardize on a single value (e.g. `'Return'`).
-- Do **not** add a second “kind/type” field.
+Implementation uses the existing `transactions.transaction_type` (app: `transactionType`) and standardizes on a single value (`'Return'`). Do **not** add a second “kind/type” field.
 
 Write:
 
 - `item_lineage_edges`:
   - `from_transaction_id=<sourceTx>`
-  - `to_transaction_id=<returnTx>`
+  - `to_transaction_id=<returnTx>` (any `transaction_type='Return'` transaction)
   - `movement_kind='returned'`
   - `note=<optional human note>`
 
@@ -320,9 +317,8 @@ Keep the existing “moved-out fetch” behavior for now (it protects the UI fro
 
 Targets:
 
-- `TransactionItemPicker` “add items”
-- `ItemDetail` “change transaction”
-- any other `assignItem(s)ToTransaction` callers
+- `assignItemToTransaction` / `assignItemsToTransaction` (single shared path)
+- Any UI that changes an item’s transaction should call the shared helper and pass whether the target is a Return transaction.
 
 #### 3) Route the explicit actions to write correct kinds
 
@@ -332,9 +328,9 @@ On `TransactionDetail` (transaction-attached items), ensure these actions exist 
   - When the user sells an item out of this transaction (to another project or to business inventory), write an edge with `movement_kind='sold'` from this `transactionId`.
   - Then perform the underlying operations your canonical services already use.
 - **Return** (explicit Return transaction):
-  - Ensure/locate a Return transaction (`transaction_type='Return'`) in the same project context.
-  - Move the item into it.
-  - Write an edge with `movement_kind='returned'` from this `transactionId` to the Return transaction ID.
+  - Centralize this in the shared assign helper:
+    - If the destination transaction has `transaction_type='Return'`, append a lineage edge with `movement_kind='returned'`.
+    - Use `from_transaction_id=<sourceTx>` and `to_transaction_id=<returnTx>` (the destination Return transaction ID).
 - **Move** (correction):
   - Move the item without marking it sold/returned.
   - The DB trigger will record the association edge as `movement_kind='association'` / `source='db_trigger'`.

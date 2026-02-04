@@ -5472,7 +5472,11 @@ export const unifiedItemsService = {
     accountId: string,
     transactionId: string,
     itemId: string,
-    opts?: { itemPreviousTransactionId?: string | null }
+    opts?: {
+      itemPreviousTransactionId?: string | null
+      isReturnTransaction?: boolean
+      appendCorrectionEdge?: boolean
+    }
   ): Promise<void> {
     await this.assignItemsToTransaction(accountId, transactionId, [itemId], opts)
   },
@@ -5482,10 +5486,16 @@ export const unifiedItemsService = {
     accountId: string,
     transactionId: string,
     itemIds: string[],
-    opts?: { itemPreviousTransactionId?: string | null }
+    opts?: {
+      itemPreviousTransactionId?: string | null
+      isReturnTransaction?: boolean
+      appendCorrectionEdge?: boolean
+    }
   ): Promise<void> {
     const online = isNetworkOnline()
     const itemPreviousTransactionId = opts?.itemPreviousTransactionId
+    const isReturnTransaction = Boolean(opts?.isReturnTransaction)
+    const appendCorrectionEdge = Boolean(opts?.appendCorrectionEdge)
 
     if (!online) {
       // Offline: queue item updates and mark transaction.item_ids mutation pending.
@@ -5531,6 +5541,40 @@ export const unifiedItemsService = {
       await _updateTransactionItemIds(accountId, transactionId, itemIds, 'add')
     } catch (e) {
       console.warn('assignItemsToTransaction - failed to sync target transaction item_ids:', e)
+    }
+
+    if (isReturnTransaction) {
+      try {
+        await Promise.all(itemIds.map(itemId =>
+          lineageService.appendItemLineageEdge(
+            accountId,
+            itemId,
+            itemPreviousTransactionId ?? null,
+            transactionId,
+            'Returned to project',
+            { movementKind: 'returned', source: 'app' }
+          )
+        ))
+      } catch (lineageError) {
+        console.warn('assignItemsToTransaction - failed to append return edges (non-critical)', lineageError)
+      }
+    }
+
+    if (appendCorrectionEdge && !isReturnTransaction) {
+      try {
+        await Promise.all(itemIds.map(itemId =>
+          lineageService.appendItemLineageEdge(
+            accountId,
+            itemId,
+            itemPreviousTransactionId ?? null,
+            transactionId,
+            'Changed transaction',
+            { movementKind: 'correction', source: 'app' }
+          )
+        ))
+      } catch (lineageError) {
+        console.warn('assignItemsToTransaction - failed to append correction edges (non-critical)', lineageError)
+      }
     }
 
     // Update previous transaction if exists
