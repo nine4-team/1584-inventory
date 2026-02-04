@@ -22,6 +22,7 @@ type ItemActionsMenuProps = {
   onAddToSpace?: () => void
   onAddToTransaction?: () => void
   onRemoveFromTransaction?: () => void
+  onReturnToTransaction?: () => void
   onSellToBusiness?: () => void
   onSellToProject?: () => void
   onMoveToBusiness?: () => void
@@ -46,6 +47,7 @@ export default function ItemActionsMenu({
   onAddToSpace,
   onAddToTransaction,
   onRemoveFromTransaction,
+  onReturnToTransaction,
   onSellToBusiness,
   onSellToProject,
   onMoveToBusiness,
@@ -120,6 +122,12 @@ export default function ItemActionsMenu({
     if (!isTiedToTransaction) return 'Item is not tied to a transaction.'
     return null
   }, [onRemoveFromTransaction, isTiedToTransaction])
+
+  const returnToTransactionDisabledReason = useMemo(() => {
+    if (!onReturnToTransaction) return 'Not available in this context.'
+    if (!isTiedToTransaction) return 'Item is not tied to a transaction.'
+    return null
+  }, [onReturnToTransaction, isTiedToTransaction])
 
   // Calculate menu position when it opens
   useEffect(() => {
@@ -285,6 +293,7 @@ export default function ItemActionsMenu({
     onAddToSpace ||
     onAddToTransaction ||
     onRemoveFromTransaction ||
+    onReturnToTransaction ||
     onSellToBusiness ||
     onSellToProject ||
     onMoveToBusiness ||
@@ -336,6 +345,14 @@ export default function ItemActionsMenu({
             disabled: Boolean(removeFromTransactionDisabledReason),
             disabledReason: removeFromTransactionDisabledReason,
             isDanger: true
+          })
+        : null}
+      {onReturnToTransaction
+        ? renderMenuItem({
+            label: 'Return to Project…',
+            onClick: onReturnToTransaction,
+            disabled: Boolean(returnToTransactionDisabledReason),
+            disabledReason: returnToTransactionDisabledReason
           })
         : null}
       {renderSubmenuTrigger({

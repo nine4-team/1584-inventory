@@ -3026,6 +3026,61 @@ export const transactionService = {
     }
   },
 
+  // Find or create a Return transaction for a project (account-scoped)
+  async getOrCreateReturnTransaction(accountId: string, projectId: string): Promise<string> {
+    if (!projectId) {
+      throw new Error('Missing project ID for Return transaction.')
+    }
+
+    if (!isNetworkOnline()) {
+      return await this.createTransaction(accountId, projectId, {
+        projectId,
+        transactionDate: toDateOnlyString(new Date()),
+        source: 'Return',
+        transactionType: 'Return',
+        paymentMethod: 'Pending',
+        amount: '0.00',
+        receiptEmailed: false,
+        status: 'completed'
+      })
+    }
+
+    await ensureAuthenticatedForDatabase()
+
+    const { data: existingReturnTx, error } = await supabase
+      .from('transactions')
+      .select('transaction_id')
+      .eq('account_id', accountId)
+      .eq('project_id', projectId)
+      .eq('transaction_type', 'Return')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single()
+
+    if (existingReturnTx?.transaction_id && !error) {
+      return existingReturnTx.transaction_id
+    }
+
+    let projectName = 'Return'
+    try {
+      const project = await projectService.getProject(accountId, projectId)
+      projectName = project?.name ? `${project.name} Return` : projectName
+    } catch (err) {
+      console.warn('Failed to resolve project name for Return transaction:', err)
+    }
+
+    return await this.createTransaction(accountId, projectId, {
+      projectId,
+      transactionDate: toDateOnlyString(new Date()),
+      source: projectName,
+      transactionType: 'Return',
+      paymentMethod: 'Pending',
+      amount: '0.00',
+      receiptEmailed: false,
+      status: 'completed'
+    })
+  },
+
   // Update transaction (account-scoped)
   async updateTransaction(accountId: string, _projectId: string, transactionId: string, updates: Partial<Transaction>): Promise<void> {
     // Check network state and hydrate from offlineStore first
@@ -5291,11 +5346,9 @@ export const unifiedItemsService = {
 
     if (previousTransactionId !== nextTransactionId) {
       try {
-        // NOTE: We no longer remove items from source transaction's item_ids when they move
-        // This preserves historical completeness. Items stay in item_ids forever once added.
-        // if (previousTransactionId) {
-        //   await _updateTransactionItemIds(accountId, previousTransactionId, itemId, 'remove')
-        // }
+        if (previousTransactionId) {
+          await _updateTransactionItemIds(accountId, previousTransactionId, itemId, 'remove')
+        }
         if (nextTransactionId) {
           await _updateTransactionItemIds(accountId, nextTransactionId, itemId, 'add')
         }
@@ -5631,7 +5684,10 @@ export const unifiedItemsService = {
     try {
       const fromTransactionId = item.latestTransactionId ?? null
       const note = options?.note ?? 'Moved to business inventory'
-      await lineageService.appendItemLineageEdge(accountId, itemId, fromTransactionId, null, note)
+      await lineageService.appendItemLineageEdge(accountId, itemId, fromTransactionId, null, note, {
+        movementKind: 'correction',
+        source: 'app'
+      })
       await lineageService.updateItemLineagePointers(accountId, itemId, null)
     } catch (lineageError) {
       console.warn('⚠️ Failed to append lineage edge (non-critical):', lineageError)
@@ -5885,7 +5941,10 @@ export const unifiedItemsService = {
 
     // Append lineage edge and update pointers
     try {
-      await lineageService.appendItemLineageEdge(accountId, itemId, currentTransactionId, purchaseTransactionId, notes)
+      await lineageService.appendItemLineageEdge(accountId, itemId, currentTransactionId, purchaseTransactionId, notes, {
+        movementKind: 'sold',
+        source: 'app'
+      })
       await lineageService.updateItemLineagePointers(accountId, itemId, purchaseTransactionId)
     } catch (lineageError) {
       console.warn('⚠️ Failed to append lineage edge (non-critical):', lineageError)
@@ -6195,7 +6254,10 @@ export const unifiedItemsService = {
 
     // Append lineage edge and update pointers
     try {
-      await lineageService.appendItemLineageEdge(accountId, itemId, currentTransactionId, saleTransactionId, notes)
+      await lineageService.appendItemLineageEdge(accountId, itemId, currentTransactionId, saleTransactionId, notes, {
+        movementKind: 'sold',
+        source: 'app'
+      })
       await lineageService.updateItemLineagePointers(accountId, itemId, saleTransactionId)
     } catch (lineageError) {
       console.warn('⚠️ Failed to append lineage edge (non-critical):', lineageError)
@@ -6246,7 +6308,10 @@ export const unifiedItemsService = {
 
     // Append lineage edge and update pointers
     try {
-      await lineageService.appendItemLineageEdge(accountId, itemId, null, purchaseTransactionId, notes)
+      await lineageService.appendItemLineageEdge(accountId, itemId, null, purchaseTransactionId, notes, {
+        movementKind: 'sold',
+        source: 'app'
+      })
       await lineageService.updateItemLineagePointers(accountId, itemId, purchaseTransactionId, purchaseTransactionId)
     } catch (lineageError) {
       console.warn('⚠️ Failed to append lineage edge (non-critical):', lineageError)
@@ -6725,7 +6790,10 @@ export const unifiedItemsService = {
           })
           // Append lineage edge
           try {
-            await lineageService.appendItemLineageEdge(accountId, itemId, currentTransactionId, canonicalTransactionId, allocationData.notes)
+            await lineageService.appendItemLineageEdge(accountId, itemId, currentTransactionId, canonicalTransactionId, allocationData.notes, {
+              movementKind: 'sold',
+              source: 'app'
+            })
             await lineageService.updateItemLineagePointers(accountId, itemId, canonicalTransactionId)
           } catch (lineageError) {
             console.warn('⚠️ Failed to append lineage edge (non-critical):', lineageError)
@@ -6749,7 +6817,10 @@ export const unifiedItemsService = {
         })
         // Append lineage edge
         try {
-          await lineageService.appendItemLineageEdge(accountId, itemId, null, canonicalTransactionId, allocationData.notes)
+          await lineageService.appendItemLineageEdge(accountId, itemId, null, canonicalTransactionId, allocationData.notes, {
+            movementKind: 'sold',
+            source: 'app'
+          })
           await lineageService.updateItemLineagePointers(accountId, itemId, canonicalTransactionId, canonicalTransactionId)
         } catch (lineageError) {
           console.warn('⚠️ Failed to append lineage edge (non-critical):', lineageError)
@@ -6771,7 +6842,10 @@ export const unifiedItemsService = {
       })
       // Append lineage edge
       try {
-        await lineageService.appendItemLineageEdge(accountId, itemId, currentTransactionId, canonicalTransactionId, allocationData.notes)
+        await lineageService.appendItemLineageEdge(accountId, itemId, currentTransactionId, canonicalTransactionId, allocationData.notes, {
+          movementKind: 'sold',
+          source: 'app'
+        })
         await lineageService.updateItemLineagePointers(accountId, itemId, canonicalTransactionId)
       } catch (lineageError) {
         console.warn('⚠️ Failed to append lineage edge (non-critical):', lineageError)
@@ -7454,7 +7528,10 @@ export const deallocationService = {
 
           // Append lineage edge and update pointers
           try {
-            await lineageService.appendItemLineageEdge(accountId, item.itemId, item.transactionId, null)
+            await lineageService.appendItemLineageEdge(accountId, item.itemId, item.transactionId, null, null, {
+              movementKind: 'sold',
+              source: 'app'
+            })
             await lineageService.updateItemLineagePointers(accountId, item.itemId, null)
           } catch (lineageError) {
             console.warn('⚠️ Failed to append lineage edge (non-critical):', lineageError)
@@ -7517,7 +7594,10 @@ export const deallocationService = {
       // Append lineage edge and update pointers
       try {
         const fromTransactionId = item.transactionId || null
-        await lineageService.appendItemLineageEdge(accountId, item.itemId, fromTransactionId, transactionId)
+        await lineageService.appendItemLineageEdge(accountId, item.itemId, fromTransactionId, transactionId, null, {
+          movementKind: 'sold',
+          source: 'app'
+        })
         await lineageService.updateItemLineagePointers(accountId, item.itemId, transactionId)
       } catch (lineageError) {
         console.warn('⚠️ Failed to append lineage edge (non-critical):', lineageError)

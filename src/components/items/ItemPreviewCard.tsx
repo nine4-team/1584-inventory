@@ -43,6 +43,7 @@ interface ItemPreviewCardProps {
   onAddToSpace?: (itemId: string) => void
   onAddToTransaction?: (itemId: string) => void
   onRemoveFromTransaction?: (itemId: string) => void
+  onReturnToTransaction?: (itemId: string) => void
   onSellToBusiness?: (itemId: string) => void
   onSellToProject?: (itemId: string) => void
   onMoveToBusiness?: (itemId: string) => void
@@ -82,6 +83,7 @@ export default function ItemPreviewCard({
   onAddToSpace,
   onAddToTransaction,
   onRemoveFromTransaction,
+  onReturnToTransaction,
   onSellToBusiness,
   onSellToProject,
   onMoveToBusiness,
@@ -250,7 +252,7 @@ export default function ItemPreviewCard({
   const priceLabel = primaryPrice ? formatCurrency(primaryPrice) : null
   const locationValue = (context === 'project' || context === 'space') ? item.space : item.businessInventoryLocation
 
-  const hasActions = showBookmark || showDuplicate || onEdit || onAddToTransaction || onRemoveFromTransaction || onSellToBusiness || onSellToProject || onMoveToBusiness || onMoveToProject || onChangeStatus || onDelete
+  const hasActions = showBookmark || showDuplicate || onEdit || onAddToTransaction || onRemoveFromTransaction || onReturnToTransaction || onSellToBusiness || onSellToProject || onMoveToBusiness || onMoveToProject || onChangeStatus || onDelete
   const hasHeaderAction = Boolean(headerAction)
 
   const cardContent = (
@@ -347,6 +349,13 @@ export default function ItemPreviewCard({
                     onRemoveFromTransaction
                       ? () => {
                           onRemoveFromTransaction(itemId)
+                        }
+                      : undefined
+                  }
+                  onReturnToTransaction={
+                    onReturnToTransaction
+                      ? () => {
+                          onReturnToTransaction(itemId)
                         }
                       : undefined
                   }
