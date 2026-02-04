@@ -37,6 +37,7 @@ interface TransactionItemsListProps {
   onDeleteItem?: (itemId: string, item: TransactionItemFormData) => Promise<boolean | void> | boolean | void
   onDeleteItems?: (itemIds: string[], items: TransactionItemFormData[]) => Promise<boolean | void> | boolean | void
   onRemoveFromTransaction?: (itemId: string, item: TransactionItemFormData) => Promise<void> | void
+  onReturnToTransaction?: (itemId: string) => Promise<void> | void
   onSellToBusiness?: (itemId: string) => Promise<void> | void
   onSellToProject?: (itemId: string) => Promise<void> | void
   onMoveToBusiness?: (itemId: string) => Promise<void> | void
@@ -71,6 +72,7 @@ export default function TransactionItemsList({
   onDeleteItem,
   onDeleteItems,
   onRemoveFromTransaction,
+  onReturnToTransaction,
   onSellToBusiness,
   onSellToProject,
   onMoveToBusiness,
@@ -937,6 +939,11 @@ export default function TransactionItemsList({
             ? (itemId) => requestRemoveFromTransaction(itemId)
             : undefined
         }
+        onReturnToTransaction={
+          enableTransactionActions && item.transactionId
+            ? onReturnToTransaction
+            : undefined
+        }
         onSellToBusiness={onSellToBusiness}
         onSellToProject={onSellToProject}
         onMoveToBusiness={onMoveToBusiness}
@@ -1219,12 +1226,35 @@ export default function TransactionItemsList({
     }
 
     const previousTransactionId = item.transactionId
+    if (selectedTransactionId === previousTransactionId) {
+      setShowTransactionDialog(false)
+      setSelectedTransactionId('')
+      setTransactionTargetItemId(null)
+      setTransactionDialogError(null)
+      return
+    }
     setTransactionDialogError(null)
     setIsUpdatingTransaction(true)
+    const selectedTransaction = transactions.find(tx => tx.transactionId === selectedTransactionId)
+    const isReturnTransaction = selectedTransaction?.transactionType === 'Return'
+    const lineageMovementKind = isReturnTransaction ? 'returned' : 'correction'
+    const lineageNote = isReturnTransaction ? 'Returned to project' : 'Changed transaction'
     try {
       await unifiedItemsService.assignItemToTransaction(currentAccountId, selectedTransactionId, transactionTargetItemId, {
         itemPreviousTransactionId: previousTransactionId
       })
+      try {
+        await lineageService.appendItemLineageEdge(
+          currentAccountId,
+          transactionTargetItemId,
+          previousTransactionId ?? null,
+          selectedTransactionId ?? null,
+          lineageNote,
+          { movementKind: lineageMovementKind, source: 'app' }
+        )
+      } catch (lineageError) {
+        console.warn('TransactionItemsList: failed to append lineage edge (non-critical)', lineageError)
+      }
 
       const updatedItems = items.map(existing =>
         existing.id === transactionTargetItemId ? { ...existing, transactionId: selectedTransactionId } : existing

@@ -6,7 +6,7 @@ import { useParams } from 'react-router-dom'
 import ContextBackLink from '@/components/ContextBackLink'
 import ContextLink from '@/components/ContextLink'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
-import { Transaction, Project, Item, TransactionItemFormData, BudgetCategory, ItemDisposition, ItemImage, TransactionImage } from '@/types'
+import { Transaction, Project, Item, TransactionItemFormData, BudgetCategory, ItemDisposition, ItemImage, TransactionImage, ItemLineageEdge } from '@/types'
 import {
   transactionService,
   projectService,
@@ -42,7 +42,7 @@ import TransactionAudit from '@/components/ui/TransactionAudit'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { useSyncError } from '@/hooks/useSyncError'
 import { projectTransactionDetail, projectTransactionEdit, projectTransactions } from '@/utils/routes'
-import { splitItemsByMovement, type DisplayTransactionItem } from '@/utils/transactionMovement'
+import { type DisplayTransactionItem } from '@/utils/transactionMovement'
 import { ConflictResolutionView } from '@/components/ConflictResolutionView'
 import TransactionActionsMenu from '@/components/transactions/TransactionActionsMenu'
 import { Combobox } from '@/components/ui/Combobox'
@@ -173,6 +173,8 @@ export default function TransactionDetail() {
   const [items, setItems] = useState<TransactionItemFormData[]>([])
   const initialItemsRef = useRef<TransactionItemFormData[] | null>(null)
   const realtimeTransactionItemIdsRef = useRef<Set<string>>(new Set())
+  const [edgesFromTransaction, setEdgesFromTransaction] = useState<ItemLineageEdge[]>([])
+  const [edgesToTransaction, setEdgesToTransaction] = useState<ItemLineageEdge[]>([])
 
   useEffect(() => {
     transactionRef.current = transaction
@@ -271,6 +273,10 @@ export default function TransactionDetail() {
     if (!transaction) return
     setSelectedProjectId(transaction.projectId || '')
   }, [transaction])
+
+  useEffect(() => {
+    setEdgesFromTransaction([])
+  }, [transactionId])
 
   useEffect(() => {
     if (!currentAccountId) return
@@ -431,9 +437,68 @@ export default function TransactionDetail() {
     computeAndHealTotal()
   }, [transaction, currentAccountId, transactionId, projectId])
 
-  const { inTransaction: itemsInTransaction, movedOut: itemsMovedOut } = useMemo(() => {
-    return splitItemsByMovement(items as DisplayTransactionItem[], transactionId)
+  const itemsInTransaction = useMemo(() => {
+    if (!transactionId) return items as DisplayTransactionItem[]
+    return (items as DisplayTransactionItem[]).filter(item =>
+      (item._transactionId ?? item.transactionId) === transactionId
+    )
   }, [items, transactionId])
+
+  const isBusinessInventoryTransaction = useMemo(() => {
+    return transactionId ? isCanonicalSaleOrPurchaseTransactionId(transactionId) : false
+  }, [transactionId])
+
+  const { soldItems, returnedItems } = useMemo(() => {
+    if (!transactionId) {
+      return { soldItems: [] as DisplayTransactionItem[], returnedItems: [] as DisplayTransactionItem[] }
+    }
+
+    const itemById = new Map((items as DisplayTransactionItem[]).map(item => [item.id, item]))
+    const latestByItem = (
+      kind: ItemLineageEdge['movementKind'],
+      edges: ItemLineageEdge[],
+      direction: 'from' | 'to'
+    ) => {
+      const latest = new Map<string, ItemLineageEdge>()
+      edges.forEach(edge => {
+        if (direction === 'from') {
+          if (edge.fromTransactionId !== transactionId) return
+        } else {
+          if (edge.toTransactionId !== transactionId) return
+        }
+        if (edge.movementKind !== kind) return
+        const existing = latest.get(edge.itemId)
+        if (!existing) {
+          latest.set(edge.itemId, edge)
+          return
+        }
+        const existingTime = Date.parse(existing.createdAt)
+        const nextTime = Date.parse(edge.createdAt)
+        if (!Number.isFinite(existingTime) || nextTime >= existingTime) {
+          latest.set(edge.itemId, edge)
+        }
+      })
+      return latest
+    }
+
+    const buildItems = (latest: Map<string, ItemLineageEdge>) => {
+      return Array.from(latest.values())
+        .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+        .map(edge => itemById.get(edge.itemId))
+        .filter(Boolean) as DisplayTransactionItem[]
+    }
+
+    return {
+      soldItems: buildItems(
+        latestByItem(
+          'sold',
+          isBusinessInventoryTransaction ? edgesToTransaction : edgesFromTransaction,
+          isBusinessInventoryTransaction ? 'to' : 'from'
+        )
+      ),
+      returnedItems: buildItems(latestByItem('returned', edgesFromTransaction, 'from'))
+    }
+  }, [edgesFromTransaction, edgesToTransaction, isBusinessInventoryTransaction, items, transactionId])
   const auditItems = useMemo(() => {
     if (!itemsInTransaction.length) {
       return []
@@ -508,6 +573,13 @@ export default function TransactionDetail() {
       // Include items that were moved out of this transaction by consulting lineage edges.
       // The UI displays both "in transaction" and "moved out" items; we need to load moved items too.
       const edgesFromTransaction = await lineageService.getEdgesFromTransaction(transactionId, currentAccountId)
+      setEdgesFromTransaction(edgesFromTransaction)
+      if (isCanonicalSaleOrPurchaseTransactionId(transactionId)) {
+        const edgesToTransaction = await lineageService.getEdgesToTransaction(transactionId, currentAccountId)
+        setEdgesToTransaction(edgesToTransaction)
+      } else {
+        setEdgesToTransaction([])
+      }
       const movedOutItemIds = Array.from(new Set(edgesFromTransaction.map(edge => edge.itemId)))
 
       // Fetch any moved item records that aren't already in the items list
@@ -625,6 +697,18 @@ export default function TransactionDetail() {
         await unifiedItemsService.unlinkItemFromTransaction(currentAccountId, transactionId, itemId, {
           itemCurrentTransactionId
         })
+        try {
+          await lineageService.appendItemLineageEdge(
+            currentAccountId,
+            itemId,
+            transactionId,
+            null,
+            'Removed from transaction',
+            { movementKind: 'correction', source: 'app' }
+          )
+        } catch (lineageError) {
+          console.warn('Failed to append correction edge (non-critical):', lineageError)
+        }
         await refreshTransactionItems()
         await refreshRealtimeAfterWrite()
         showSuccess('Removed from transaction')
@@ -740,6 +824,13 @@ export default function TransactionDetail() {
             // Include items that were moved out of this transaction by consulting lineage edges.
             // The UI displays both "in transaction" and "moved out" items; we need to load moved items too.
             const edgesFromTransaction = await lineageService.getEdgesFromTransaction(transactionId, currentAccountId)
+            setEdgesFromTransaction(edgesFromTransaction)
+            if (isCanonicalSaleOrPurchaseTransactionId(transactionId)) {
+              const edgesToTransaction = await lineageService.getEdgesToTransaction(transactionId, currentAccountId)
+              setEdgesToTransaction(edgesToTransaction)
+            } else {
+              setEdgesToTransaction([])
+            }
             const movedOutItemIds = Array.from(new Set(edgesFromTransaction.map(edge => edge.itemId)))
 
             // Detect "ghost references": items fetched via transaction.itemIds that are neither
@@ -789,6 +880,13 @@ export default function TransactionDetail() {
               // Include items that were moved out of this transaction by consulting lineage edges.
               // The UI displays both "in transaction" and "moved out" items; we need to load moved items too.
               const edgesFromTransaction = await lineageService.getEdgesFromTransaction(transactionId, currentAccountId)
+              setEdgesFromTransaction(edgesFromTransaction)
+              if (isCanonicalSaleOrPurchaseTransactionId(transactionId)) {
+                const edgesToTransaction = await lineageService.getEdgesToTransaction(transactionId, currentAccountId)
+                setEdgesToTransaction(edgesToTransaction)
+              } else {
+                setEdgesToTransaction([])
+              }
               const allMovedOutItemIds = Array.from(new Set<string>(edgesFromTransaction.map(edge => edge.itemId)))
 
               // Fetch any moved item records that aren't already in the items list
@@ -909,6 +1007,59 @@ export default function TransactionDetail() {
       showError('Failed to sell item to business inventory. Please try again.')
     }
   }, [currentAccountId, itemRecords, isOnline, refreshRealtimeAfterWrite, refreshTransactionItems, showError, showOfflineSaved, showSuccess])
+
+  const handleReturnItemToProject = useCallback(async (itemId: string) => {
+    if (!currentAccountId || !transactionId) return
+    const item = itemRecords.find(record => record.itemId === itemId)
+    if (!item) {
+      showError('Item not found. Refresh and try again.')
+      return
+    }
+
+    const resolvedProjectId = transaction?.projectId ?? projectId ?? item.projectId ?? null
+    if (!resolvedProjectId) {
+      showError('Missing project for return. Refresh and try again.')
+      return
+    }
+
+    try {
+      const returnTransactionId = await transactionService.getOrCreateReturnTransaction(
+        currentAccountId,
+        resolvedProjectId
+      )
+      await unifiedItemsService.assignItemToTransaction(currentAccountId, returnTransactionId, itemId, {
+        itemPreviousTransactionId: item.transactionId ?? transactionId
+      })
+      try {
+        await lineageService.appendItemLineageEdge(
+          currentAccountId,
+          itemId,
+          transactionId,
+          returnTransactionId,
+          'Returned to project',
+          { movementKind: 'returned', source: 'app' }
+        )
+      } catch (lineageError) {
+        console.warn('Failed to append return edge (non-critical):', lineageError)
+      }
+      await refreshTransactionItems()
+      await refreshRealtimeAfterWrite()
+      showSuccess('Returned to project.')
+    } catch (error) {
+      console.error('Failed to return item to project:', error)
+      showError('Failed to return item. Please try again.')
+    }
+  }, [
+    currentAccountId,
+    transactionId,
+    itemRecords,
+    transaction?.projectId,
+    projectId,
+    refreshRealtimeAfterWrite,
+    refreshTransactionItems,
+    showError,
+    showSuccess
+  ])
 
   const handleMoveItemToProject = useCallback(async () => {
     if (!currentAccountId || !itemTargetRecord) return
@@ -2761,6 +2912,7 @@ export default function TransactionDetail() {
                       onImageFilesChange={handleImageFilesChange}
                       onDeleteItems={handleDeletePersistedItems}
                       onRemoveFromTransaction={handleRemoveItemFromThisTransaction}
+                      onReturnToTransaction={transaction?.transactionType === 'Return' ? undefined : handleReturnItemToProject}
                       onSellToBusiness={handleSellItemToBusinessInventory}
                       onSellToProject={(itemId) => openItemProjectDialog(itemId, 'sell')}
                       onMoveToBusiness={handleMoveItemToBusinessInventory}
@@ -2771,29 +2923,38 @@ export default function TransactionDetail() {
                     />
                   </div>
 
-                  {/* Moved items section */}
-                  {itemsMovedOut.length > 0 && (
-                    <div>
-                      <h3 className="text-lg font-semibold text-gray-900 mb-3">Moved items</h3>
-                      <div className="opacity-60">
-                        <TransactionItemsList
-                          items={itemsMovedOut}
-                          onItemsChange={() => {}}
-                          onAddItem={handleCreateItem}
-                          onUpdateItem={handleUpdateItem}
-                          onDuplicateItem={handleDuplicateTransactionItem}
-                          projectId={projectId}
-                          projectName={project?.name}
-                          onImageFilesChange={handleImageFilesChange}
-                          onDeleteItems={handleDeletePersistedItems}
-                          onRemoveFromTransaction={handleRemoveItemFromThisTransaction}
-                          onSellToBusiness={handleSellItemToBusinessInventory}
-                          onSellToProject={(itemId) => openItemProjectDialog(itemId, 'sell')}
-                          onMoveToBusiness={handleMoveItemToBusinessInventory}
-                          onMoveToProject={(itemId) => openItemProjectDialog(itemId, 'move')}
-                          showSelectionControls={false}
-                        />
-                      </div>
+                  {(returnedItems.length > 0 || soldItems.length > 0) && (
+                    <div className="space-y-6">
+                      {returnedItems.length > 0 && (
+                        <div>
+                          <h3 className="text-lg font-semibold text-gray-900 mb-3">Returned items</h3>
+                          <div className="opacity-60">
+                            <TransactionItemsList
+                              items={returnedItems}
+                              onItemsChange={() => {}}
+                              projectId={projectId}
+                              projectName={project?.name}
+                              showSelectionControls={false}
+                              enableTransactionActions={false}
+                            />
+                          </div>
+                        </div>
+                      )}
+                      {soldItems.length > 0 && (
+                        <div>
+                          <h3 className="text-lg font-semibold text-gray-900 mb-3">Sold items</h3>
+                          <div className="opacity-60">
+                            <TransactionItemsList
+                              items={soldItems}
+                              onItemsChange={() => {}}
+                              projectId={projectId}
+                              projectName={project?.name}
+                              showSelectionControls={false}
+                              enableTransactionActions={false}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

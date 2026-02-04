@@ -207,6 +207,20 @@ interface DBVendorDefaultsCache {
   cachedAt: string // When this was cached
 }
 
+interface ExportSnapshotOptions {
+  accountId?: string | null
+}
+
+interface ExportSnapshotResult {
+  items: DBItem[]
+  transactions: DBTransaction[]
+  projects: DBProject[]
+  operations: DBOperation[]
+  conflicts: DBConflict[]
+  context: DBContextRecord | null
+  readFromStores: string[]
+}
+
 class OfflineStore {
   private db: IDBDatabase | null = null
   private initPromise: Promise<void> | null = null
@@ -2040,6 +2054,89 @@ class OfflineStore {
   }
 
   // Utility methods
+  async exportSnapshot(options: ExportSnapshotOptions = {}): Promise<ExportSnapshotResult> {
+    await this.init()
+    if (!this.db) throw new Error('Database not initialized')
+
+    const readFromStores = ['items', 'transactions', 'projects', 'operations', 'conflicts', 'context']
+    return new Promise((resolve, reject) => {
+      let finished = false
+      const finishOnce = (handler: () => void) => {
+        if (finished) return
+        finished = true
+        handler()
+      }
+
+      const transaction = this.db!.transaction(readFromStores, 'readonly')
+      const requestToPromise = <T>(request: IDBRequest<T>) =>
+        new Promise<T>((resolveRequest, rejectRequest) => {
+          request.onsuccess = () => resolveRequest(request.result)
+          request.onerror = () => rejectRequest(request.error)
+        })
+
+      const itemsStore = transaction.objectStore('items')
+      const transactionsStore = transaction.objectStore('transactions')
+      const projectsStore = transaction.objectStore('projects')
+      const operationsStore = transaction.objectStore('operations')
+      const conflictsStore = transaction.objectStore('conflicts')
+      const contextStore = transaction.objectStore('context')
+
+      Promise.all([
+        requestToPromise<DBItem[]>(itemsStore.getAll()),
+        requestToPromise<DBTransaction[]>(transactionsStore.getAll()),
+        requestToPromise<DBProject[]>(projectsStore.getAll()),
+        requestToPromise<DBOperation[]>(operationsStore.getAll()),
+        requestToPromise<DBConflict[]>(conflictsStore.getAll()),
+        requestToPromise<DBContextRecord | undefined>(contextStore.get('active-context'))
+      ])
+        .then(([items, transactions, projects, operations, conflicts, context]) => {
+          const scopedAccountId = options.accountId ?? null
+
+          const scopedItems = scopedAccountId ? items.filter(item => item.accountId === scopedAccountId) : items
+          const scopedTransactions = scopedAccountId
+            ? transactions.filter(tx => tx.accountId === scopedAccountId)
+            : transactions
+          const scopedProjects = scopedAccountId ? projects.filter(project => project.accountId === scopedAccountId) : projects
+          const scopedOperations = scopedAccountId
+            ? operations.filter(operation => operation.accountId === scopedAccountId)
+            : operations
+          const scopedConflicts = scopedAccountId
+            ? conflicts.filter(conflict => conflict.accountId === scopedAccountId)
+            : conflicts
+
+          // Keep operations grouped for stability across exports
+          scopedOperations.sort((a, b) => {
+            if (a.accountId === b.accountId) {
+              return a.timestamp.localeCompare(b.timestamp)
+            }
+            return (a.accountId ?? '').localeCompare(b.accountId ?? '')
+          })
+
+          finishOnce(() =>
+            resolve({
+              items: scopedItems,
+              transactions: scopedTransactions,
+              projects: scopedProjects,
+              operations: scopedOperations,
+              conflicts: scopedConflicts,
+              context: context ?? null,
+              readFromStores
+            })
+          )
+        })
+        .catch(error => {
+          finishOnce(() => reject(error ?? new Error('Failed to export offline snapshot')))
+        })
+
+      transaction.onabort = () => {
+        finishOnce(() => reject(transaction.error ?? new Error('Offline export transaction aborted')))
+      }
+      transaction.onerror = () => {
+        finishOnce(() => reject(transaction.error ?? new Error('Offline export transaction failed')))
+      }
+    })
+  }
+
   async clearAll(): Promise<void> {
     if (!this.db) throw new Error('Database not initialized')
     const transaction = this.db.transaction(['items', 'transactions', 'projects', 'operations', 'cache', 'conflicts', 'media', 'mediaUploadQueue', 'budgetCategories', 'taxPresets', 'vendorDefaults'], 'readwrite')
@@ -2149,4 +2246,18 @@ export function mapProjectToDBProject(project: any): DBProject {
   }
 }
 
-export type { DBItem, DBTransaction, DBProject, DBOperation, DBContextRecord, DBMediaUploadQueueEntry, DBBudgetCategory, DBTaxPreset, DBTaxPresetsCache, DBVendorDefaultsCache }
+export type {
+  DBItem,
+  DBTransaction,
+  DBProject,
+  DBOperation,
+  DBContextRecord,
+  DBConflict,
+  DBMediaUploadQueueEntry,
+  DBBudgetCategory,
+  DBTaxPreset,
+  DBTaxPresetsCache,
+  DBVendorDefaultsCache,
+  ExportSnapshotOptions,
+  ExportSnapshotResult
+}

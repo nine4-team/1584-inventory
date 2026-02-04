@@ -458,12 +458,17 @@ export interface TransactionCompleteness {
 }
 
 // Item Lineage Edge - append-only record of item movement between transactions
+export type ItemLineageMovementKind = 'sold' | 'returned' | 'correction' | 'association'
+export type ItemLineageSource = 'app' | 'db_trigger' | 'migration'
+
 export interface ItemLineageEdge {
   id: string;
   accountId: string;
   itemId: string;
   fromTransactionId: string | null;  // null == from inventory
   toTransactionId: string | null;     // null == to inventory
+  movementKind?: ItemLineageMovementKind | null;
+  source?: ItemLineageSource | null;
   createdAt: string;  // ISO timestamp
   createdBy?: string | null;  // UUID of user who created the edge
   note?: string | null;  // Optional note about the move
