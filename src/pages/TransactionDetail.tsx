@@ -1008,59 +1008,6 @@ export default function TransactionDetail() {
     }
   }, [currentAccountId, itemRecords, isOnline, refreshRealtimeAfterWrite, refreshTransactionItems, showError, showOfflineSaved, showSuccess])
 
-  const handleReturnItemToProject = useCallback(async (itemId: string) => {
-    if (!currentAccountId || !transactionId) return
-    const item = itemRecords.find(record => record.itemId === itemId)
-    if (!item) {
-      showError('Item not found. Refresh and try again.')
-      return
-    }
-
-    const resolvedProjectId = transaction?.projectId ?? projectId ?? item.projectId ?? null
-    if (!resolvedProjectId) {
-      showError('Missing project for return. Refresh and try again.')
-      return
-    }
-
-    try {
-      const returnTransactionId = await transactionService.getOrCreateReturnTransaction(
-        currentAccountId,
-        resolvedProjectId
-      )
-      await unifiedItemsService.assignItemToTransaction(currentAccountId, returnTransactionId, itemId, {
-        itemPreviousTransactionId: item.transactionId ?? transactionId
-      })
-      try {
-        await lineageService.appendItemLineageEdge(
-          currentAccountId,
-          itemId,
-          transactionId,
-          returnTransactionId,
-          'Returned to project',
-          { movementKind: 'returned', source: 'app' }
-        )
-      } catch (lineageError) {
-        console.warn('Failed to append return edge (non-critical):', lineageError)
-      }
-      await refreshTransactionItems()
-      await refreshRealtimeAfterWrite()
-      showSuccess('Returned to project.')
-    } catch (error) {
-      console.error('Failed to return item to project:', error)
-      showError('Failed to return item. Please try again.')
-    }
-  }, [
-    currentAccountId,
-    transactionId,
-    itemRecords,
-    transaction?.projectId,
-    projectId,
-    refreshRealtimeAfterWrite,
-    refreshTransactionItems,
-    showError,
-    showSuccess
-  ])
-
   const handleMoveItemToProject = useCallback(async () => {
     if (!currentAccountId || !itemTargetRecord) return
     if (!itemProjectSelectedId || itemProjectSelectedId === itemTargetRecord.projectId) {
@@ -2912,7 +2859,6 @@ export default function TransactionDetail() {
                       onImageFilesChange={handleImageFilesChange}
                       onDeleteItems={handleDeletePersistedItems}
                       onRemoveFromTransaction={handleRemoveItemFromThisTransaction}
-                      onReturnToTransaction={transaction?.transactionType === 'Return' ? undefined : handleReturnItemToProject}
                       onSellToBusiness={handleSellItemToBusinessInventory}
                       onSellToProject={(itemId) => openItemProjectDialog(itemId, 'sell')}
                       onMoveToBusiness={handleMoveItemToBusinessInventory}
