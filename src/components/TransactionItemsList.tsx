@@ -48,6 +48,9 @@ interface TransactionItemsListProps {
     label: string
     onRun: (selectedIds: string[], selectedItems: TransactionItemFormData[]) => Promise<void>
   }
+  onAssignToTransaction?: (transactionId: string, selectedIds: string[], selectedItems: TransactionItemFormData[]) => Promise<void>
+  assignTransactionScope?: 'project' | 'business'
+  excludeAssignTransactionIds?: string[]
   enableLocation?: boolean
   enableDisposition?: boolean
   enableSku?: boolean
@@ -80,6 +83,9 @@ export default function TransactionItemsList({
   containerId,
   enableTransactionActions = true,
   bulkAction,
+  onAssignToTransaction,
+  assignTransactionScope = 'project',
+  excludeAssignTransactionIds,
   enableLocation = false,
   enableDisposition = true,
   enableSku = true,
@@ -1138,6 +1144,15 @@ export default function TransactionItemsList({
     }
   }
 
+  const handleBulkAssignToTransaction = async (transactionId: string) => {
+    if (!onAssignToTransaction) return
+    if (selectedItemIds.size === 0) return
+    const selectedIds = Array.from(selectedItemIds)
+    const selected = items.filter(item => selectedItemIds.has(item.id))
+    if (selectedIds.length === 0 || selected.length === 0) return
+    await onAssignToTransaction(transactionId, selectedIds, selected)
+  }
+
   const handleSingleAddToSpace = (itemId: string) => {
     setItemForSpaceSelection(itemId)
     setShowLocationDialog(true)
@@ -1778,10 +1793,13 @@ export default function TransactionItemsList({
           <BulkItemControls
             selectedItemIds={selectedItemIds}
             projectId={projectId}
+            transactionScope={assignTransactionScope}
+            excludedTransactionIds={excludeAssignTransactionIds}
+            onAssignToTransaction={onAssignToTransaction ? handleBulkAssignToTransaction : undefined}
             onDelete={handleBulkDeleteSelected}
             onClearSelection={() => setSelectedItemIds(new Set())}
             itemListContainerWidth={bulkControlsWidth}
-            enableAssignToTransaction={false}
+            enableAssignToTransaction={Boolean(onAssignToTransaction)}
             enableLocation={enableLocation}
             onSetSpaceId={handleBulkSetSpaceId}
             enableDisposition={enableDisposition}

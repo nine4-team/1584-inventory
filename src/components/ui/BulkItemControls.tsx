@@ -11,6 +11,8 @@ import SpaceSelector from '@/components/spaces/SpaceSelector'
 interface BulkItemControlsProps {
   selectedItemIds: Set<string>
   projectId?: string
+  transactionScope?: 'project' | 'business'
+  excludedTransactionIds?: string[]
   onAssignToTransaction?: (transactionId: string) => Promise<void>
   onSetSpaceId?: (spaceId: string | null) => Promise<void>
   onSetDisposition?: (disposition: ItemDisposition) => Promise<void>
@@ -30,6 +32,8 @@ interface BulkItemControlsProps {
 export default function BulkItemControls({
   selectedItemIds,
   projectId,
+  transactionScope = 'project',
+  excludedTransactionIds,
   onAssignToTransaction,
   onSetSpaceId,
   onSetDisposition,
@@ -79,21 +83,36 @@ export default function BulkItemControls({
   // Load transactions when dialog opens
   useEffect(() => {
     if (!canAssign) return
-    if (showTransactionDialog && currentAccountId && projectId && transactions.length === 0) {
+    if (!showTransactionDialog || !currentAccountId || transactions.length > 0) return
+    if (transactionScope === 'project' && !projectId) return
+    if (transactionScope === 'business') {
+      loadTransactions()
+      return
+    }
+    if (transactionScope === 'project' && projectId) {
       loadTransactions()
     }
-  }, [showTransactionDialog, currentAccountId, canAssign, projectId, transactions.length])
+  }, [showTransactionDialog, currentAccountId, canAssign, projectId, transactions.length, transactionScope])
 
   useEffect(() => {
     if (!showLocationDialog) return
     setSpaceIdValue(null)
   }, [showLocationDialog])
 
+  useEffect(() => {
+    if (!showTransactionDialog) return
+    setSelectedTransactionId('')
+  }, [showTransactionDialog, excludedTransactionIds])
+
   const loadTransactions = async () => {
-    if (!currentAccountId || !projectId) return
+    if (!currentAccountId) return
+    if (transactionScope === 'project' && !projectId) return
     setLoadingTransactions(true)
     try {
-      const txs = await transactionService.getTransactions(currentAccountId, projectId)
+      const txs =
+        transactionScope === 'business'
+          ? await transactionService.getBusinessInventoryTransactions(currentAccountId)
+          : await transactionService.getTransactions(currentAccountId, projectId as string)
       setTransactions(txs)
     } catch (error) {
       console.error('Failed to load transactions:', error)
@@ -189,6 +208,11 @@ export default function BulkItemControls({
   if (selectedItemIds.size === 0) {
     return null
   }
+
+  const excludedIds = new Set(excludedTransactionIds ?? [])
+  const availableTransactions = excludedIds.size
+    ? transactions.filter(transaction => !excludedIds.has(transaction.transactionId))
+    : transactions
 
   const isFixedPlacement = placement === 'fixed'
   const containerClasses = isFixedPlacement
@@ -327,7 +351,7 @@ export default function BulkItemControls({
                 options={
                   loadingTransactions ? [] : [
                     { id: '', label: 'Select a transaction' },
-                    ...transactions.map((transaction) => ({
+                    ...availableTransactions.map((transaction) => ({
                       id: transaction.transactionId,
                       label: `${new Date(transaction.transactionDate).toLocaleDateString()} - ${getCanonicalTransactionTitle(transaction)} - $${transaction.amount}`
                     }))
