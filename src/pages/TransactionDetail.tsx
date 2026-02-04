@@ -448,6 +448,12 @@ export default function TransactionDetail() {
     return transactionId ? isCanonicalSaleOrPurchaseTransactionId(transactionId) : false
   }, [transactionId])
 
+  const isBusinessInventoryContext = useMemo(() => {
+    return !projectId && !transaction?.projectId
+  }, [projectId, transaction?.projectId])
+
+  const assignTransactionScope = isBusinessInventoryContext ? 'business' : 'project'
+
   const { soldItems, returnedItems } = useMemo(() => {
     if (!transactionId) {
       return { soldItems: [] as DisplayTransactionItem[], returnedItems: [] as DisplayTransactionItem[] }
@@ -715,6 +721,52 @@ export default function TransactionDetail() {
       } catch (error) {
         console.error('Failed to remove item from transaction:', error)
         showError('Failed to remove item from transaction. Please try again.')
+      }
+    },
+    [currentAccountId, refreshRealtimeAfterWrite, refreshTransactionItems, showError, showSuccess, transactionId]
+  )
+
+  const handleBulkMoveItemsToTransaction = useCallback(
+    async (targetTransactionId: string, selectedIds: string[]) => {
+      if (!currentAccountId) {
+        showError('You must belong to an account to update items.')
+        return
+      }
+
+      if (!transactionId) {
+        showError('Missing transaction ID.')
+        return
+      }
+
+      if (targetTransactionId === transactionId) {
+        showError('Select a different transaction.')
+        return
+      }
+
+      if (selectedIds.length === 0) return
+
+      try {
+        let isReturnTransaction = false
+        try {
+          const targetTransaction = await transactionService.getTransactionById(currentAccountId, targetTransactionId)
+          isReturnTransaction = targetTransaction?.transactionType === 'Return'
+        } catch (error) {
+          console.warn('Failed to resolve target transaction type:', error)
+        }
+
+        await unifiedItemsService.assignItemsToTransaction(currentAccountId, targetTransactionId, selectedIds, {
+          itemPreviousTransactionId: transactionId,
+          isReturnTransaction,
+          appendCorrectionEdge: true
+        })
+
+        await refreshTransactionItems()
+        await refreshRealtimeAfterWrite()
+        const movedCount = selectedIds.length
+        showSuccess(`Moved ${movedCount} item${movedCount !== 1 ? 's' : ''} to the selected transaction`)
+      } catch (error) {
+        console.error('Failed to move items to transaction:', error)
+        showError('Failed to move items to the selected transaction. Please try again.')
       }
     },
     [currentAccountId, refreshRealtimeAfterWrite, refreshTransactionItems, showError, showSuccess, transactionId]
@@ -2865,6 +2917,9 @@ export default function TransactionDetail() {
                       onMoveToProject={(itemId) => openItemProjectDialog(itemId, 'move')}
                       containerId="transaction-items-container"
                       enableLocation={true}
+                      onAssignToTransaction={transactionId ? handleBulkMoveItemsToTransaction : undefined}
+                      assignTransactionScope={assignTransactionScope}
+                      excludeAssignTransactionIds={transactionId ? [transactionId] : undefined}
                       onSetSpaceId={handleSetSpaceId}
                     />
                   </div>
