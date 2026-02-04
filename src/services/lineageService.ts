@@ -1,7 +1,7 @@
 import { supabase, getCurrentUser } from './supabase'
 import { ensureAuthenticatedForDatabase } from './databaseService'
 import { isNetworkOnline } from './networkStatusService'
-import type { ItemLineageEdge } from '@/types'
+import type { ItemLineageEdge, ItemLineageMovementKind, ItemLineageSource } from '@/types'
 
 type LineageEdgeListener = (edge: ItemLineageEdge) => void
 const ALL_ITEMS_KEY = '__all__'
@@ -20,6 +20,8 @@ const convertEdgeFromDb = (dbEdge: any): ItemLineageEdge => ({
   itemId: dbEdge.item_id,
   fromTransactionId: dbEdge.from_transaction_id ?? null,
   toTransactionId: dbEdge.to_transaction_id ?? null,
+  movementKind: dbEdge.movement_kind ?? null,
+  source: dbEdge.source ?? null,
   createdAt: dbEdge.created_at,
   createdBy: dbEdge.created_by ?? null,
   note: dbEdge.note ?? null,
@@ -132,7 +134,11 @@ export const lineageService = {
     itemId: string,
     fromTransactionId: string | null,
     toTransactionId: string | null,
-    note?: string | null
+    note?: string | null,
+    options?: {
+      movementKind?: ItemLineageMovementKind | null
+      source?: ItemLineageSource
+    }
   ): Promise<ItemLineageEdge | null> {
     await ensureAuthenticatedForDatabase()
 
@@ -146,19 +152,31 @@ export const lineageService = {
     const user = await getCurrentUser()
     const createdBy = user?.id || null
 
+    const movementKind = options?.movementKind ?? null
+    const source = options?.source ?? 'app'
+
     // Idempotency check: check if a similar edge was created recently (within last 5 seconds)
     // This prevents duplicate edges from rapid repeated calls
     const fiveSecondsAgo = new Date(Date.now() - 5000).toISOString()
-    const { data: recentEdges } = await supabase
+    let idempotencyQuery = supabase
       .from('item_lineage_edges')
       .select('id, created_at')
       .eq('account_id', accountId)
       .eq('item_id', itemId)
       .eq('from_transaction_id', fromTransactionId ?? null)
       .eq('to_transaction_id', toTransactionId ?? null)
+      .eq('source', source)
       .gte('created_at', fiveSecondsAgo)
       .order('created_at', { ascending: false })
       .limit(1)
+
+    if (movementKind === null) {
+      idempotencyQuery = idempotencyQuery.is('movement_kind', null)
+    } else {
+      idempotencyQuery = idempotencyQuery.eq('movement_kind', movementKind)
+    }
+
+    const { data: recentEdges } = await idempotencyQuery
 
     if (recentEdges && recentEdges.length > 0) {
       console.log('⏭️ Skipping duplicate lineage edge (recent match found)', {
@@ -180,6 +198,8 @@ export const lineageService = {
         item_id: itemId,
         from_transaction_id: fromTransactionId ?? null,
         to_transaction_id: toTransactionId ?? null,
+        movement_kind: movementKind,
+        source,
         created_by: createdBy,
         note: note ?? null
       })
@@ -324,6 +344,32 @@ export const lineageService = {
 
     if (error) {
       console.error('❌ Failed to fetch edges from transaction:', error)
+      throw error
+    }
+
+    return (data || []).map(edge => convertEdgeFromDb(edge))
+  },
+
+  /**
+   * Get edges that moved TO a specific transaction.
+   * Used for canonical inventory transactions that receive items (e.g. INV_PURCHASE_/INV_SALE_).
+   */
+  async getEdgesToTransaction(transactionId: string, accountId: string): Promise<ItemLineageEdge[]> {
+    if (!isNetworkOnline()) {
+      return []
+    }
+
+    await ensureAuthenticatedForDatabase()
+
+    const { data, error } = await supabase
+      .from('item_lineage_edges')
+      .select('*')
+      .eq('account_id', accountId)
+      .eq('to_transaction_id', transactionId)
+      .order('created_at', { ascending: true })
+
+    if (error) {
+      console.error('❌ Failed to fetch edges to transaction:', error)
       throw error
     }
 

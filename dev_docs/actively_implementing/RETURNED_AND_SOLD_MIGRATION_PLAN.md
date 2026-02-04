@@ -219,6 +219,50 @@ Write:
   - `movement_kind='sold'`
   - `note=<optional human note>`
 
+#### Business inventory → project sale (Allocation path)
+
+This is an **economic sale between two parties**:
+
+- Seller: the business (business inventory)
+- Buyer: the destination project
+
+We accept inference here: we do not add explicit “buyer/seller” columns right now.
+Instead, we infer parties from the canonical transaction IDs (`INV_PURCHASE_<projectId>` / `INV_SALE_<projectId>`)
+and from whether the transaction is a Business Inventory canonical transaction.
+
+Classification rule:
+
+- When an item is sold from business inventory into a project via the canonical allocation flow,
+  record it as `movement_kind='sold'` (NOT `association`, NOT a new kind).
+
+Write rule (canonical allocation service only; NOT UI):
+
+- Write the edge in `src/services/inventoryService.ts` canonical allocation paths:
+  - `allocateItemToProject(...)`
+  - `batchAllocateItemsToProject(...)`
+- Edge shape:
+  - `from_transaction_id = <priorTx or null>` (often `null`, sometimes an `INV_SALE_*` or other canonical tx if chained)
+  - `to_transaction_id = INV_PURCHASE_<projectId>` (or the restored transaction id if the allocation restores a prior project transaction)
+  - `movement_kind='sold'`
+  - `source='app'`
+
+UI rule (so “Sold” shows up in the right place):
+
+- For **normal project transactions**: “Sold” means edges where `from_transaction_id = txId and movement_kind='sold'`.
+- For **Business Inventory canonical transactions** (`txId` starts with `INV_PURCHASE_` or `INV_SALE_`):
+  - “Sold” means edges where `to_transaction_id = txId and movement_kind='sold'`.
+  - This makes the “Sold” section inside the Business Inventory transaction include allocation sales (business → project),
+    and also includes project → business purchases (project selling to business) which land in `INV_SALE_*`.
+
+Implementation gap (CURRENTLY NOT IMPLEMENTED):
+
+- Today, canonical allocation paths already append lineage edges, but they do **not** consistently set `movement_kind='sold'`
+  (many allocation edges are created with `movement_kind = null`).
+- Today, `TransactionDetail` computes Sold/Returned by filtering `edgesFromTransaction` (i.e. `from_transaction_id = txId`),
+  and it does not yet apply the special-case rule for Business Inventory canonical transactions (`to_transaction_id = txId`).
+
+This section defines the intended semantics. The app and DB must still be updated to enforce them.
+
 #### Corrective move (wrong project / wrong transaction)
 
 Definition:
@@ -299,6 +343,30 @@ On `TransactionDetail` (transaction-attached items), ensure these actions exist 
 This keeps canonical flows canonical, and keeps Sold/Returned strictly tied to user intent.
 
 ---
+
+### Text-only handoff prompt (next AI dev)
+
+Goal: close the “Business inventory → project sale (Allocation path)” gap by ensuring allocation writes `movement_kind='sold'` edges, and Business Inventory transaction UI shows those items under “Sold”.
+
+Do NOT refactor flows. Make the smallest changes that satisfy the rules in this doc.
+
+Status: the semantics are documented here, but this is **not implemented yet** (allocation edges + Business Inventory Sold UI).
+
+Work items:
+
+- Update DB constraints (if any) so `movement_kind` allows `sold|returned|correction|association` and does not reject new `sold` edges written by allocation.
+- Ensure canonical allocation writes `movement_kind='sold'` with `source='app'` for business inventory → project sales:
+  - `src/services/inventoryService.ts` in `allocateItemToProject(...)`
+  - `src/services/inventoryService.ts` in `batchAllocateItemsToProject(...)`
+  - Use `to_transaction_id = INV_PURCHASE_<projectId>` (or restored transaction id) and `from_transaction_id = priorTx or null`.
+- Update Transaction Detail data-loading and rendering so Business Inventory canonical transactions compute “Sold” using edges that land IN the transaction:
+  - For `INV_PURCHASE_*` and `INV_SALE_*`, show “Sold” from edges where `to_transaction_id = txId and movement_kind='sold'`.
+  - Keep existing behavior for normal project transactions: “Sold” from edges where `from_transaction_id = txId and movement_kind='sold'`.
+  - Avoid double-counting: prefer “latest edge per item per kind” the way `TransactionDetail` already does.
+- Add a small verification checklist:
+  - Allocate an item from business inventory to a project: it should appear under “Sold” when viewing the `INV_PURCHASE_<projectId>` transaction.
+  - Deallocate/move an item to business inventory via inventory designation: it should appear under “Sold” when viewing the resulting `INV_SALE_<projectId>` transaction.
+  - A corrective “Move” should not appear under “Sold” anywhere.
 
 ### UI changes (“Transaction Detail”)
 

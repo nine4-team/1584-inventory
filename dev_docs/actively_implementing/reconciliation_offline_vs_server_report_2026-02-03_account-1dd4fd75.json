@@ -1,0 +1,295 @@
+{
+  "generatedAt": "2026-02-03T23:44:53.658Z",
+  "export": {
+    "exportedAt": "2026-02-03T23:27:02.306Z",
+    "accountId": "1dd4fd75-8eea-4f7a-98e7-bf45b987ae94",
+    "currentUserId": "4ef35958-597c-4aea-b99e-1ef62352a72d"
+  },
+  "serverSnapshot": {
+    "serverItems": 778,
+    "query": "public.items by account_id with scalar_hash (no writes)"
+  },
+  "offlineSnapshot": {
+    "offlineItems": 804,
+    "offlineCanonicalKeyed": 785,
+    "offlineUuidKeyed": 19,
+    "operations": 2
+  },
+  "reconciliation": {
+    "offlineOnlyCanonicalCount": 7,
+    "offlineOnlyCanonical": [
+      {
+        "itemId": "I-1768698497733-l9fw",
+        "description": "Small gold round lift",
+        "source": "",
+        "sku": "084553",
+        "purchasePrice": "",
+        "projectPrice": "",
+        "marketValue": "",
+        "paymentMethod": "Cash",
+        "disposition": "inventory",
+        "dateCreated": "2026-01-17",
+        "lastUpdated": "2026-01-18T01:09:52.393+00:00",
+        "last_synced_at": "2026-01-20T01:09:09.524Z",
+        "version": 1,
+        "imagesCount": 2,
+        "qrKey": "qr_1768698497733_i5uv196t3",
+        "transactionId": "",
+        "projectId": null
+      },
+      {
+        "itemId": "I-1768698607868-o0ao",
+        "description": "Small gold round lift",
+        "source": "",
+        "sku": "084553",
+        "purchasePrice": null,
+        "projectPrice": null,
+        "marketValue": null,
+        "paymentMethod": "Cash",
+        "disposition": "inventory",
+        "dateCreated": "2026-01-17",
+        "lastUpdated": "2026-01-18T01:10:07.88+00:00",
+        "last_synced_at": "2026-01-20T01:09:09.524Z",
+        "version": 1,
+        "imagesCount": 2,
+        "qrKey": "qr_1768698497733_i5uv196t3",
+        "transactionId": null,
+        "projectId": null
+      },
+      {
+        "itemId": "I-1768698614872-prtb",
+        "description": "Small gold round lift",
+        "source": "",
+        "sku": "084553",
+        "purchasePrice": null,
+        "projectPrice": null,
+        "marketValue": null,
+        "paymentMethod": "Cash",
+        "disposition": "inventory",
+        "dateCreated": "2026-01-17",
+        "lastUpdated": "2026-01-18T01:10:14.886+00:00",
+        "last_synced_at": "2026-01-20T01:09:09.524Z",
+        "version": 1,
+        "imagesCount": 2,
+        "qrKey": "qr_1768698497733_i5uv196t3",
+        "transactionId": null,
+        "projectId": null
+      },
+      {
+        "itemId": "I-1768698616864-fm1b",
+        "description": "Small gold round lift",
+        "source": "",
+        "sku": "084553",
+        "purchasePrice": null,
+        "projectPrice": null,
+        "marketValue": null,
+        "paymentMethod": "Cash",
+        "disposition": "inventory",
+        "dateCreated": "2026-01-17",
+        "lastUpdated": "2026-01-18T01:10:16.876+00:00",
+        "last_synced_at": "2026-01-20T01:09:09.524Z",
+        "version": 1,
+        "imagesCount": 2,
+        "qrKey": "qr_1768698497733_i5uv196t3",
+        "transactionId": null,
+        "projectId": null
+      },
+      {
+        "itemId": "I-1768699194616-cx30",
+        "description": "Square marble lift",
+        "source": "",
+        "sku": "",
+        "purchasePrice": "",
+        "projectPrice": "",
+        "marketValue": "",
+        "paymentMethod": "Cash",
+        "disposition": "inventory",
+        "dateCreated": "2026-01-17",
+        "lastUpdated": "2026-01-18T01:19:54.63+00:00",
+        "last_synced_at": "2026-01-20T01:09:09.523Z",
+        "version": 1,
+        "imagesCount": 2,
+        "qrKey": "qr_1768699194616_b9elgarta",
+        "transactionId": "",
+        "projectId": null
+      },
+      {
+        "itemId": "I-1768699214269-6rg1",
+        "description": "Square marble lift",
+        "source": "",
+        "sku": "",
+        "purchasePrice": null,
+        "projectPrice": null,
+        "marketValue": null,
+        "paymentMethod": "Cash",
+        "disposition": "inventory",
+        "dateCreated": "2026-01-17",
+        "lastUpdated": "2026-01-18T01:20:14.28+00:00",
+        "last_synced_at": "2026-01-20T01:09:09.523Z",
+        "version": 1,
+        "imagesCount": 2,
+        "qrKey": "qr_1768699194616_b9elgarta",
+        "transactionId": null,
+        "projectId": null
+      },
+      {
+        "itemId": "I-1769049054881-7rv2",
+        "description": "White distressed cylinder tree pot",
+        "source": "Homegoods",
+        "sku": "007517",
+        "purchasePrice": "24.99",
+        "projectPrice": "69.99",
+        "marketValue": "99.99",
+        "paymentMethod": "Cash",
+        "disposition": "inventory",
+        "dateCreated": "2026-01-21",
+        "lastUpdated": "2026-01-22T02:30:54.914+00:00",
+        "last_synced_at": "2026-01-23T20:49:43.578Z",
+        "version": 1,
+        "imagesCount": 2,
+        "qrKey": "qr_1769049054880_cwr5a68xj",
+        "transactionId": "",
+        "projectId": null
+      }
+    ],
+    "scalarMismatchCount_beforeTaxRatePctNormalization": 95,
+    "scalarMismatchCause_beforeNormalization": "Offline taxRatePct was stored as number (e.g. 8.375) while server returns numeric as text with 4dp (e.g. \"8.3750\").",
+    "scalarMismatchCount_afterTaxRatePctNormalization": 0,
+    "scalarNormalizationNotes": {
+      "taxRatePct": "Normalized to 4 decimal places before comparison (to match Postgres numeric text format like 8.3750).",
+      "nullVsEmptyString": "Both sides coalesce null/undefined to empty string for scalar comparisons."
+    },
+    "uuidKeyedItems": {
+      "count": 19,
+      "mappings": [
+        {
+          "uuidKey": "07be187b-0b36-4984-891b-aa187db5f7f0",
+          "mappedItemId": "I-1768249532281-w9jm",
+          "hasCanonicalOffline": true
+        },
+        {
+          "uuidKey": "203621e1-2caa-47ed-a4f4-cad6b2344278",
+          "mappedItemId": "I-1768942291948-f78q",
+          "hasCanonicalOffline": true
+        },
+        {
+          "uuidKey": "48bd9eb6-75e8-4180-b8c9-7536cf09c4a9",
+          "mappedItemId": "I-1768249375349-pv0n",
+          "hasCanonicalOffline": true
+        },
+        {
+          "uuidKey": "4d9c0e3a-f313-4138-a4d1-3c0129ad0cd5",
+          "mappedItemId": "I-1768963465106-3mi8",
+          "hasCanonicalOffline": true
+        },
+        {
+          "uuidKey": "539ac39b-7d2a-4688-9c14-887f7041bab9",
+          "mappedItemId": "I-1768939680032-7yd0",
+          "hasCanonicalOffline": true
+        },
+        {
+          "uuidKey": "5d65fd1a-8afd-4cc2-b10c-1021071437d3",
+          "mappedItemId": "I-1768942284751-mjrz",
+          "hasCanonicalOffline": true
+        },
+        {
+          "uuidKey": "618ebafd-d998-4328-84df-9bd73af87b64",
+          "mappedItemId": "I-1768942284019-v0vd",
+          "hasCanonicalOffline": true
+        },
+        {
+          "uuidKey": "88023777-8557-44b0-997e-ad7c0ef42896",
+          "mappedItemId": "I-1768939928943-6yu7",
+          "hasCanonicalOffline": true
+        },
+        {
+          "uuidKey": "8ab0986f-4656-4623-9da3-e77fb9870f9c",
+          "mappedItemId": "I-1768939848224-8mba",
+          "hasCanonicalOffline": true
+        },
+        {
+          "uuidKey": "931ca1cb-8d60-44db-8547-ac86318d9dd7",
+          "mappedItemId": "I-1768942284398-5wmm",
+          "hasCanonicalOffline": true
+        },
+        {
+          "uuidKey": "98e59910-3a09-463e-9ff3-47c8b4d07686",
+          "mappedItemId": "I-1768942284586-xnjh",
+          "hasCanonicalOffline": true
+        },
+        {
+          "uuidKey": "b8ddf369-a267-4ed6-8549-f98d8b44258c",
+          "mappedItemId": "I-1768941889728-lr1b",
+          "hasCanonicalOffline": true
+        },
+        {
+          "uuidKey": "bdd33622-2fca-4dd7-978a-69a03b3ec2ba",
+          "mappedItemId": "I-1767384289997-nga0",
+          "hasCanonicalOffline": true
+        },
+        {
+          "uuidKey": "e26fd3a6-510c-4caf-90f7-395e01b089ca",
+          "mappedItemId": "I-1768250810839-f0iq",
+          "hasCanonicalOffline": true
+        },
+        {
+          "uuidKey": "e65771fe-6d72-43b1-b255-307ac5d21adf",
+          "mappedItemId": "I-1768252761307-yj5c",
+          "hasCanonicalOffline": true
+        },
+        {
+          "uuidKey": "ecc33a2b-6c32-422a-b358-ca022c8fc986",
+          "mappedItemId": "I-1768941493015-vj1w",
+          "hasCanonicalOffline": true
+        },
+        {
+          "uuidKey": "ed1eba4b-4d64-4c9d-980e-faf296ff3f36",
+          "mappedItemId": "I-1768422842082-bqae",
+          "hasCanonicalOffline": true
+        },
+        {
+          "uuidKey": "f0b0cb16-bb82-4e2a-abcb-7a3d02afea54",
+          "mappedItemId": "I-1768939533606-9pmk",
+          "hasCanonicalOffline": true
+        },
+        {
+          "uuidKey": "f9c0e07e-5385-447c-8cf9-dcd4a0f49105",
+          "mappedItemId": "I-1768942284226-unua",
+          "hasCanonicalOffline": true
+        }
+      ],
+      "imagesComparison": {
+        "status": "match",
+        "mismatches": 0,
+        "notes": [
+          "Compared offline vs server using an images fingerprint computed from image url, fileName, uploadedAt, mimeType, size, isPrimary (ordered, then md5).",
+          "Both the UUID-keyed offline record and the canonical offline record matched the server fingerprint for all 19 mapped items."
+        ]
+      },
+      "note": "After scalar normalization, UUID-keyed records do not indicate additional unsynced scalar changes; they are duplicates caused by the UUID-vs-item_id key bug."
+    },
+    "operationQueue": [
+      {
+        "id": "0652d150-da6c-4492-9709-fde3b616b126",
+        "type": "UPDATE_ITEM",
+        "syncStatus": "requires_intervention",
+        "interventionReason": "missing_item_on_server",
+        "errorCode": "PGRST116",
+        "dataId": "e26fd3a6-510c-4caf-90f7-395e01b089ca",
+        "mappedItemId": "I-1768250810839-f0iq",
+        "retryCount": 25421
+      },
+      {
+        "id": "b51cf5b3-6cbd-4e52-95b0-98d4f1e0c016",
+        "type": "UPDATE_ITEM",
+        "syncStatus": "requires_intervention",
+        "interventionReason": "missing_item_on_server",
+        "errorCode": "PGRST116",
+        "dataId": "e65771fe-6d72-43b1-b255-307ac5d21adf",
+        "mappedItemId": "I-1768252761307-yj5c",
+        "retryCount": 0
+      }
+    ]
+  }
+}
+

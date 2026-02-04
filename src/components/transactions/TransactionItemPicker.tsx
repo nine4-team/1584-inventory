@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Plus, Search } from 'lucide-react'
 import { Item, Transaction } from '@/types'
 import { transactionService, unifiedItemsService } from '@/services/inventoryService'
+import { lineageService } from '@/services/lineageService'
 import { useAccount } from '@/contexts/AccountContext'
 import { useToast } from '@/components/ui/ToastContext'
 import CollapsedDuplicateGroup from '@/components/ui/CollapsedDuplicateGroup'
@@ -477,6 +478,7 @@ export default function TransactionItemPicker({
         groupedByPreviousTransaction.set(key, group)
       })
 
+      const shouldAppendReturnEdges = transaction.transactionType === 'Return'
       for (const [previousTransactionId, groupedItems] of groupedByPreviousTransaction.entries()) {
         const itemIds = groupedItems.map(item => item.itemId)
         if (itemIds.length === 1) {
@@ -493,6 +495,22 @@ export default function TransactionItemPicker({
             itemIds,
             { itemPreviousTransactionId: previousTransactionId ?? undefined }
           )
+        }
+        if (shouldAppendReturnEdges && previousTransactionId) {
+          try {
+            await Promise.all(itemIds.map(itemId =>
+              lineageService.appendItemLineageEdge(
+                currentAccountId,
+                itemId,
+                previousTransactionId,
+                transactionId,
+                'Returned to project',
+                { movementKind: 'returned', source: 'app' }
+              )
+            ))
+          } catch (lineageError) {
+            console.warn('TransactionItemPicker: failed to append return edges (non-critical)', lineageError)
+          }
         }
       }
 
