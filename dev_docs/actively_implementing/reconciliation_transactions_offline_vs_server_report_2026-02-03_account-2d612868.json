@@ -1,0 +1,33 @@
+{
+  "generatedAt": "2026-02-04T00:26:39.998751+00:00",
+  "accountId": "2d612868-852e-4a80-9d02-9d10383898d4",
+  "dryRun": true,
+  "export": {
+    "source": "dev_docs/actively_implementing/ledger-offline-export-2d612868-852e-4a80-9d02-9d10383898d4-2026-02-03T23_21_29.386Z.json",
+    "exportedAt": "2026-02-03T23:21:29.386Z"
+  },
+  "offlineSnapshot": {
+    "localTransactions": 40
+  },
+  "serverSnapshot": {
+    "serverTransactions": 40,
+    "query": "SELECT transaction_id, ... FROM public.transactions WHERE account_id = <accountId> AND transaction_id = ANY(<localTransactionIds>)"
+  },
+  "reconciliation": {
+    "localOnlyTransactions": [],
+    "serverOnlyTransactions": [],
+    "scalarFieldDiffs": [],
+    "itemIdsMembershipDiffs": []
+  },
+  "counts": {
+    "localOnlyTransactions": 0,
+    "serverOnlyTransactions": 0,
+    "transactionsWithScalarDiffs": 0,
+    "transactionsWithItemIdsMembershipDiffs": 0
+  },
+  "normalization": {
+    "nullVsEmptyString": "coalesced to empty string for text fields in comparisons",
+    "numeric": "compared numeric fields as numeric (amount, taxRatePct, subtotal, sumItemPurchasePrices)",
+    "itemIds": "treated arrays as sets (distinct + order-insensitive), filtered to canonical I-... ids only"
+  }
+}

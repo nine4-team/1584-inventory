@@ -132,6 +132,18 @@ You’ll need to fetch:
 - For local records keyed by UUID (suspect), also allow lookup by row `id`:
   - `SELECT id, item_id FROM public.items WHERE account_id = $1 AND id = ANY($2)`
 
+### Transactions (REQUIRED for full reconciliation)
+You must also reconcile **transactions** (not just items). For the affected account, fetch server transactions and compare against the exported local `transactions` store.
+
+Minimum server reads (batched):
+- Existence and basic fields by `transaction_id`:
+  - `SELECT transaction_id, account_id, project_id, transaction_date, source, transaction_type, payment_method, amount, category_id, notes, status, reimbursement_type, trigger_event, tax_rate_preset, tax_rate_pct, subtotal, needs_review, sum_item_purchase_prices, item_ids, version, last_updated, created_at, created_by FROM public.transactions WHERE account_id = $1 AND transaction_id = ANY($2)`
+
+Important:
+- Compare **membership** as well as scalar fields:
+  - Local transaction `itemIds` array vs server `item_ids` array (treat as set; order-insensitive).
+- Be careful about numeric formatting differences (`tax_rate_pct`, `sum_item_purchase_prices`, `amount`, etc.). Normalize formats (e.g. fixed decimals) or compare as numbers to avoid false positives.
+
 ---
 
 ## Reconciliation logic (recommended approach)
@@ -188,12 +200,51 @@ Produce a single report JSON/markdown with:
   - uuid-key items (candidate rewrites)
   - paused ops + diagnosis
 
+### 6) Transaction reconciliation (REQUIRED)
+Do **not** skip this. The local export already includes `transactions`, so use it.
+
+Goal: detect cases where a transaction exists locally but not on the server, or exists on both sides but differs (including `itemIds` membership).
+
+Recommended approach:
+- **A) Identity / existence**
+  - For each local `transactionId`, check that it exists on server (`public.transactions.transaction_id`).
+  - Produce lists:
+    - `localOnlyTransactions` (candidate “dropped CREATE_TRANSACTION”)
+    - `serverOnlyTransactions` (rare, but possible if offline DB is stale or was cleared)
+
+- **B) Field-level diff**
+  - For transactions that exist on both sides, compare the key user-editable fields:
+    - `transactionDate`, `source`, `transactionType`, `paymentMethod`, `amount`, `categoryId`, `notes`, `status`, `reimbursementType`, `triggerEvent`, `taxRatePreset`, `taxRatePct`, `subtotal`, `needsReview`, `sumItemPurchasePrices`
+  - Normalize types/formatting before comparing:
+    - numbers-as-strings vs numbers
+    - `null` vs empty string where your UI treats them equivalently
+
+- **C) Membership diff (`itemIds`)**
+  - Compare local `itemIds` vs server `item_ids` **as sets**.
+  - Emit per-transaction diffs:
+    - `missingOnServer`: itemIds present locally but not on server
+    - `extraOnServer`: itemIds present on server but not locally
+  - If there are UUID-keyed item duplicates locally, ensure `itemIds` are canonical (`I-...`) when comparing.
+
+- **D) Report + repair plan (dry run)**
+  - Add counts to the reconciliation report:
+    - local transactions total
+    - local-only transactions count
+    - server-only transactions count
+    - transactions with scalar field diffs count
+    - transactions with itemIds membership diffs count
+  - For “apply fixes” mode (optional / gated):
+    - For local-only transactions: propose `CREATE_TRANSACTION` ops
+    - For membership diffs where local is source of truth: propose `UPDATE_TRANSACTION` ops that correct `item_ids`
+    - Do not write to DB automatically; produce an explicit plan and require user approval before applying.
+
 ---
 
 ## Code pointers
 - Offline cache: `src/services/offlineStore.ts` (`items` store keyPath is `itemId`)
 - Queue: `src/services/operationQueue.ts`
 - Item API: `src/services/inventoryService.ts`
+  - Transaction API: `src/services/offlineTransactionService.ts` + `src/services/*transaction*` (wherever server transaction CRUD lives)
 
 ---
 
@@ -203,4 +254,34 @@ Produce a single report JSON/markdown with:
    - dry-run mode
    - optional “apply fixes” mode
 3) A human-readable report that support/devs can use to explain what was repaired and what still needs manual intervention.
+4) **Transaction reconciliation** included in the report (existence + field diffs + `itemIds` diffs).
+
+---
+
+## Status / handoff notes (2026-02-03)
+
+### Items reconciliation (existing artifacts)
+- There is already an **items-only** offline-vs-server reconciliation report for account `1dd4fd75-8eea-4f7a-98e7-bf45b987ae94`:
+  - `dev_docs/actively_implementing/reconciliation_offline_vs_server_report_2026-02-03_account-1dd4fd75.json`
+  - `dev_docs/actively_implementing/reconciliation_offline_vs_server_report_2026-02-03_account-1dd4fd75.md`
+- That report **does not include transactions** (this doc marks transactions reconciliation REQUIRED).
+
+### Transactions reconciliation (work started; dry-run only)
+Goal: compare exported local transactions vs `public.transactions` for a given `accountId`, producing:
+- `localOnlyTransactions`, `serverOnlyTransactions`
+- per-transaction **scalar field diffs** after normalization (numbers as numbers; null vs empty string normalization)
+- per-transaction **`itemIds` membership diffs** (arrays treated as sets; order-insensitive; **canonical `I-...` ids only**)
+
+What exists so far:
+- Local offline export containing `transactions` was identified for account `2d612868-852e-4a80-9d02-9d10383898d4`:
+  - `dev_docs/actively_implementing/ledger-offline-export-2d612868-852e-4a80-9d02-9d10383898d4-2026-02-03T23_21_29.386Z.json`
+- A trimmed local transactions extract (40 transactions) exists:
+  - `tmp/local_transactions_export_2d612868.json`
+- A **single SQL query** was generated to compute the full reconciliation report inside Postgres (no DB writes):
+  - `tmp/transactions_reconciliation_2d612868.sql`
+  - Intended execution path: Supabase MCP `execute_sql` with that SQL, then save returned JSON as a persistent artifact (JSON + short markdown summary).
+
+Important schema correction discovered:
+- The doc’s example query references `public.transactions.last_updated`, but in this DB it’s `updated_at`.
+  - When selecting “last_updated” for reporting, use `updated_at as last_updated`.
 
