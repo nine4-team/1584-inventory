@@ -50,7 +50,6 @@ function App() {
             import('./pages/ProjectTransactionsPage'),
             import('./pages/AddTransaction'),
             import('./pages/TransactionDetail'),
-            import('./pages/BusinessInventoryTransactionDetail'),
             import('./pages/ItemDetail')
           ]).then(() => {
             console.log('[App] Offline-critical modules preloaded')
@@ -222,7 +221,7 @@ function App() {
                       />
                       <Route
                         path="/business-inventory/transaction/:transactionId"
-                        element={withRouteSuspense(<BusinessInventoryTransactionDetail />)}
+                        element={withRouteSuspense(<TransactionDetail />)}
                       />
                       <Route
                         path="/business-inventory/transaction/:projectId/:transactionId/edit"
@@ -272,7 +271,6 @@ const BusinessInventoryItemDetail = lazy(() => import('./pages/BusinessInventory
 const AddBusinessInventoryItem = lazy(() => import('./pages/AddBusinessInventoryItem'))
 const EditBusinessInventoryItem = lazy(() => import('./pages/EditBusinessInventoryItem'))
 const AddBusinessInventoryTransaction = lazy(() => import('./pages/AddBusinessInventoryTransaction'))
-const BusinessInventoryTransactionDetail = lazy(() => import('./pages/BusinessInventoryTransactionDetail'))
 const EditBusinessInventoryTransaction = lazy(() => import('./pages/EditBusinessInventoryTransaction'))
 
 export default App
