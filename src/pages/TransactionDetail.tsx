@@ -359,14 +359,19 @@ export default function TransactionDetail() {
       if (!isCanonicalSaleOrPurchaseTransactionId(transactionId)) return
 
       try {
-        // Get item IDs from transaction and lineage edges
-        const itemIds = Array.isArray(transaction.itemIds) ? transaction.itemIds : []
-        let edges: Array<{ itemId: string }> = []
+        // Canonical item set: current items + moved-out via lineage (excluding corrections)
+        let edges: ItemLineageEdge[] = []
         let movedOutItemIds: string[] = []
         try {
           const fetchedEdges = await lineageService.getEdgesFromTransaction(transactionId, currentAccountId)
-          edges = fetchedEdges.map(edge => ({ itemId: edge.itemId }))
-          movedOutItemIds = Array.from(new Set(fetchedEdges.map(edge => edge.itemId)))
+          edges = fetchedEdges
+          movedOutItemIds = Array.from(
+            new Set(
+              fetchedEdges
+                .filter(edge => edge.movementKind !== 'correction')
+                .map(edge => edge.itemId)
+            )
+          )
         } catch (edgeError) {
           console.warn('⚠️ Failed to fetch lineage edges (non-fatal):', edgeError)
           edges = []
@@ -377,7 +382,7 @@ export default function TransactionDetail() {
         const computed = await computeCanonicalTransactionTotal(
           currentAccountId,
           transactionId,
-          itemIds,
+          undefined,
           edges
         )
         
@@ -398,7 +403,6 @@ export default function TransactionDetail() {
             transactionId,
             stored: storedAmount,
             computed,
-            itemIds: itemIds.length,
             movedOutItemIds: movedOutItemIds.length
           })
 
@@ -586,7 +590,13 @@ export default function TransactionDetail() {
       } else {
         setEdgesToTransaction([])
       }
-      const movedOutItemIds = Array.from(new Set(edgesFromTransaction.map(edge => edge.itemId)))
+      const movedOutItemIds = Array.from(
+        new Set(
+          edgesFromTransaction
+            .filter(edge => edge.movementKind !== 'correction')
+            .map(edge => edge.itemId)
+        )
+      )
 
       // Fetch any moved item records that aren't already in the items list
       const missingMovedItemIds = movedOutItemIds.filter(id => !validItems.some(it => it.itemId === id))
@@ -838,10 +848,9 @@ export default function TransactionDetail() {
           }
         } else {
           // Fetch transaction and project data for regular project transactions.
-          // We intentionally do NOT rely on `getItemsForTransaction` here because moved/deallocated
-          // items may have been cleared from the `transaction_id` column. Instead, read
-          // `itemIds` from the transaction row and load each item by `item_id` so moved items
-          // are still discoverable and can be shown in the "Moved out" section.
+          // Item loading happens later using the canonical item set:
+          // - current items where items.transaction_id === transactionId
+          // - plus moved-out items via lineage edges (excluding corrections)
           const [fetchedTxData, fetchedProjData] = await Promise.all([
             transactionService.getTransaction(currentAccountId, actualProjectId, transactionId),
             projectService.getProject(currentAccountId, actualProjectId)
@@ -863,104 +872,40 @@ export default function TransactionDetail() {
 
       // Load items for both cached and fetched transactions
       if (transactionData) {
+        // Canonical item set for display/audit:
+        // - current items where items.transaction_id === transactionId
+        // - plus moved-out items via lineage edges (excluding correction edges)
+        try {
+          let validItems = (await fetchItemsViaReconcile(actualProjectId)).filter(Boolean) as Item[]
 
-        // Prefer item IDs stored on the transaction record
-        const itemIdsFromTransaction = Array.isArray(transactionData?.itemIds) ? transactionData.itemIds : []
-        if (itemIdsFromTransaction.length > 0) {
-          const itemsPromises = itemIdsFromTransaction.map((itemId: string) => unifiedItemsService.getItemById(currentAccountId, itemId))
-          const items = await Promise.all(itemsPromises)
-          let validItems = items.filter(item => item !== null) as Item[]
-          console.log('TransactionDetail - fetched items (from transaction.itemIds):', validItems.length)
-
-          try {
-            // Include items that were moved out of this transaction by consulting lineage edges.
-            // The UI displays both "in transaction" and "moved out" items; we need to load moved items too.
-            const edgesFromTransaction = await lineageService.getEdgesFromTransaction(transactionId, currentAccountId)
-            setEdgesFromTransaction(edgesFromTransaction)
-            if (isCanonicalSaleOrPurchaseTransactionId(transactionId)) {
-              const edgesToTransaction = await lineageService.getEdgesToTransaction(transactionId, currentAccountId)
-              setEdgesToTransaction(edgesToTransaction)
-            } else {
-              setEdgesToTransaction([])
-            }
-            const movedOutItemIds = Array.from(new Set(edgesFromTransaction.map(edge => edge.itemId)))
-
-            // Detect "ghost references": items fetched via transaction.itemIds that are neither
-            // currently attached to this transaction nor present in lineage. Without this,
-            // users can see an empty items list even though audit/completeness thinks the
-            // transaction has items.
-            const ghostReferencedItemIds = validItems
-              .filter(it => (it as any).transactionId !== transactionId && !movedOutItemIds.includes(it.itemId))
-              .map(it => it.itemId)
-
-            if (ghostReferencedItemIds.length > 0) {
-              console.warn('TransactionDetail - found ghost-referenced items (treating as moved out for display):', {
-                transactionId,
-                count: ghostReferencedItemIds.length,
-                itemIds: ghostReferencedItemIds.slice(0, 10)
-              })
-            }
-
-            // Fetch any moved item records that aren't already in the items list
-            const missingMovedItemIds = movedOutItemIds.filter(id => !validItems.some(it => it.itemId === id))
-            if (missingMovedItemIds.length > 0) {
-              const movedItemsPromises = missingMovedItemIds.map(id => unifiedItemsService.getItemById(currentAccountId, id))
-              const movedItems = await Promise.all(movedItemsPromises)
-              const validMovedItems = movedItems.filter(mi => mi !== null) as Item[]
-              validItems = validItems.concat(validMovedItems)
-              console.log('TransactionDetail - added moved items:', validMovedItems.length)
-            }
-
-            const movedOutPlusGhost = new Set<string>([...movedOutItemIds, ...ghostReferencedItemIds])
-            setLoadedItems(validItems, movedOutPlusGhost)
-          } catch (edgeErr) {
-            console.error('TransactionDetail - failed to fetch lineage edges:', edgeErr)
-            setLoadedItems(validItems, new Set<string>())
+          const edgesFromTransaction = await lineageService.getEdgesFromTransaction(transactionId, currentAccountId)
+          setEdgesFromTransaction(edgesFromTransaction)
+          if (isCanonicalSaleOrPurchaseTransactionId(transactionId)) {
+            const edgesToTransaction = await lineageService.getEdgesToTransaction(transactionId, currentAccountId)
+            setEdgesToTransaction(edgesToTransaction)
+          } else {
+            setEdgesToTransaction([])
           }
-        } else {
-          // Fallback: query items by transaction_id when itemIds is empty or missing
-          console.log('TransactionDetail - itemIds empty, falling back to getItemsForTransaction')
-          try {
-            const transactionItems = await fetchItemsViaReconcile(actualProjectId)
-            const itemIds = transactionItems.map(item => item.itemId)
-            const itemsPromises = itemIds.map(id => unifiedItemsService.getItemById(currentAccountId, id))
-            const items = await Promise.all(itemsPromises)
-            let validItems = items.filter(item => item !== null) as Item[]
 
-            let movedOutItemIds = new Set<string>()
-            try {
-              // Include items that were moved out of this transaction by consulting lineage edges.
-              // The UI displays both "in transaction" and "moved out" items; we need to load moved items too.
-              const edgesFromTransaction = await lineageService.getEdgesFromTransaction(transactionId, currentAccountId)
-              setEdgesFromTransaction(edgesFromTransaction)
-              if (isCanonicalSaleOrPurchaseTransactionId(transactionId)) {
-                const edgesToTransaction = await lineageService.getEdgesToTransaction(transactionId, currentAccountId)
-                setEdgesToTransaction(edgesToTransaction)
-              } else {
-                setEdgesToTransaction([])
-              }
-              const allMovedOutItemIds = Array.from(new Set<string>(edgesFromTransaction.map(edge => edge.itemId)))
+          const movedOutItemIds = Array.from(
+            new Set(
+              edgesFromTransaction
+                .filter(edge => edge.movementKind !== 'correction')
+                .map(edge => edge.itemId)
+            )
+          )
 
-              // Fetch any moved item records that aren't already in the items list
-              const missingMovedItemIds = allMovedOutItemIds.filter(id => !validItems.some(it => it.itemId === id))
-              if (missingMovedItemIds.length > 0) {
-                const movedItemsPromises = missingMovedItemIds.map(id => unifiedItemsService.getItemById(currentAccountId, id))
-                const movedItems = await Promise.all(movedItemsPromises)
-                const validMovedItems = movedItems.filter(mi => mi !== null) as Item[]
-                validItems = validItems.concat(validMovedItems)
-                console.log('TransactionDetail - added moved items (fallback):', validMovedItems.length)
-              }
-
-              movedOutItemIds = new Set<string>(allMovedOutItemIds)
-            } catch (edgeErr) {
-              console.error('TransactionDetail - failed to fetch lineage edges via fallback:', edgeErr)
-            }
-
-            setLoadedItems(validItems, movedOutItemIds)
-          } catch (itemError) {
-            console.error('TransactionDetail - failed to fetch items by transaction_id:', itemError)
-            setItems([])
+          const missingMovedItemIds = movedOutItemIds.filter(id => !validItems.some(it => it.itemId === id))
+          if (missingMovedItemIds.length > 0) {
+            const movedItems = await Promise.all(missingMovedItemIds.map(id => unifiedItemsService.getItemById(currentAccountId, id)))
+            const validMovedItems = movedItems.filter(Boolean) as Item[]
+            validItems = validItems.concat(validMovedItems)
           }
+
+          setLoadedItems(validItems, new Set<string>(movedOutItemIds))
+        } catch (itemError) {
+          console.error('TransactionDetail - failed to load canonical transaction items:', itemError)
+          setItems([])
         }
       }
 

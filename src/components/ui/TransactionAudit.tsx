@@ -1,21 +1,32 @@
 import { useState, useEffect } from 'react'
 import { Transaction, Item, TransactionCompleteness } from '@/types'
 import { transactionService } from '@/services/inventoryService'
-import { formatCurrency } from '@/utils/dateUtils'
-import { AlertTriangle, CheckCircle2, XCircle } from 'lucide-react'
 import { useAccount } from '@/contexts/AccountContext'
 import { projectItemEdit } from '@/utils/routes'
+import { TransactionCompletenessPanel } from '@/components/ui/TransactionCompletenessPanel'
+import { MissingPriceList } from '@/components/ui/MissingPriceList'
 
 interface TransactionAuditProps {
   transaction: Transaction
-  projectId: string
+  /**
+   * Optional project scope for completeness computation.
+   *
+   * Business Inventory transactions have `projectId = null`; in that case we pass an empty
+   * project scope down to the service layer (which is account + transaction scoped).
+   */
+  projectId?: string | null
   transactionItems: Item[]
+  /**
+   * Override the "edit item" link. Useful for non-project routes.
+   */
+  getItemEditHref?: (item: Item) => string
 }
 
 export default function TransactionAudit({
   transaction,
   projectId,
-  transactionItems
+  transactionItems,
+  getItemEditHref
 }: TransactionAuditProps) {
   const { currentAccountId } = useAccount()
   const [completeness, setCompleteness] = useState<TransactionCompleteness | null>(null)
@@ -24,13 +35,14 @@ export default function TransactionAudit({
   // Load completeness metrics
   useEffect(() => {
     const loadCompleteness = async () => {
-      if (!currentAccountId || !transaction.transactionId || !projectId) return
+      if (!currentAccountId || !transaction.transactionId) return
 
       setIsLoading(true)
       try {
+        const projectScope = projectId ?? ''
         const metrics = await transactionService.getTransactionCompleteness(
           currentAccountId,
-          projectId,
+          projectScope,
           transaction.transactionId
         )
         setCompleteness(metrics)
@@ -56,7 +68,15 @@ export default function TransactionAudit({
     }
 
     loadCompleteness()
-  }, [currentAccountId, projectId, transaction.transactionId, transactionItems, transaction.amount, transaction.taxRatePct, transaction.subtotal])
+  }, [
+    currentAccountId,
+    projectId,
+    transaction.transactionId,
+    transactionItems,
+    transaction.amount,
+    transaction.taxRatePct,
+    transaction.subtotal
+  ])
 
   if (isLoading || !completeness) {
     return (
@@ -69,64 +89,16 @@ export default function TransactionAudit({
     )
   }
 
-  const getStatusColor = (status: TransactionCompleteness['completenessStatus']) => {
-    switch (status) {
-      case 'complete':
-        return 'bg-green-500'
-      case 'near':
-        return 'bg-yellow-500'
-      case 'incomplete':
-      case 'over':
-        return 'bg-red-500'
-      default:
-        return 'bg-gray-500'
-    }
-  }
-
-  const getStatusIcon = (status: TransactionCompleteness['completenessStatus']) => {
-    switch (status) {
-      case 'complete':
-        return <CheckCircle2 className="h-5 w-5 text-green-600" />
-      case 'near':
-        return <AlertTriangle className="h-5 w-5 text-yellow-600" />
-      case 'incomplete':
-      case 'over':
-        return <XCircle className="h-5 w-5 text-red-600" />
-      default:
-        return null
-    }
-  }
-
-  const getStatusLabel = (status: TransactionCompleteness['completenessStatus']) => {
-    switch (status) {
-      case 'complete':
-        return 'Complete'
-      case 'near':
-        return 'Needs Review'
-      case 'incomplete':
-        return 'Incomplete'
-      case 'over':
-        return 'Over Budget'
-      default:
-        return 'Unknown'
-    }
-  }
-
   const itemsMissingPrice = transactionItems.filter(item => {
     const purchasePrice = item.purchasePrice
     return !purchasePrice || purchasePrice.trim() === '' || parseFloat(purchasePrice) === 0
   })
 
-  const progressPercentage = Math.min(completeness.completenessRatio * 100, 100)
   // Labels: show explicit subtotal vs estimated subtotal and clarify item totals are pre-tax
   const subtotalLabel = transaction.subtotal ? 'Subtotal (pre-tax)' : 'Estimated subtotal (pre-tax)'
-  const itemsLabel = 'Associated items total (pre-tax)'
-  const taxLabel = 'Calculated tax'
-  // Dollar remaining (positive means remaining to reach subtotal; negative means over by)
-  const remainingDollars = Math.round((completeness.transactionSubtotal - completeness.itemsNetTotal) * 100) / 100
-  const remainingLabel = remainingDollars >= 0
-    ? `${formatCurrency(remainingDollars.toString())} remaining`
-    : `Over by ${formatCurrency(Math.abs(remainingDollars).toString())}`
+  const resolvedGetItemEditHref =
+    getItemEditHref ??
+    (projectId ? ((item: Item) => projectItemEdit(projectId, item.itemId)) : undefined)
 
   return (
     <div className="bg-white shadow rounded-lg overflow-hidden">
@@ -137,102 +109,8 @@ export default function TransactionAudit({
       </div>
 
       <div className="px-6 py-4">
-        {/* Progress Tracker */}
-        <div className="mb-6">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              {getStatusIcon(completeness.completenessStatus)}
-              <span className="text-base font-medium text-gray-900">
-                {getStatusLabel(completeness.completenessStatus)}
-              </span>
-            </div>
-            <span className="text-sm text-gray-500">
-              {formatCurrency(completeness.itemsNetTotal.toString())} / {formatCurrency(completeness.transactionSubtotal.toString())}
-            </span>
-          </div>
-
-          {/* Progress Bar */}
-          <div className="relative">
-            <div className="w-full bg-gray-200 rounded-full h-3 mb-1">
-              <div
-                className={`h-3 rounded-full transition-all duration-300 ${getStatusColor(completeness.completenessStatus)}`}
-                style={{ width: `${Math.min(progressPercentage, 100)}%` }}
-              />
-            </div>
-            <div className="flex items-center justify-between text-xs text-gray-500 mt-1">
-              <span>{completeness.itemsCount} items</span>
-              <span>{remainingLabel}</span>
-            </div>
-          </div>
-
-          {/* Tooltip-like info */}
-          <div className="mt-3 text-xs text-gray-600 space-y-1">
-            {completeness.itemsCount === 0 ? (
-              <div className="text-red-600 font-medium">No items linked yet</div>
-            ) : (
-              <>
-            <div>{subtotalLabel}: {formatCurrency(completeness.transactionSubtotal.toString())}</div>
-            <div>{itemsLabel}: {formatCurrency(completeness.itemsNetTotal.toString())}</div>
-            {completeness.inferredTax !== undefined && (
-              <div>{taxLabel}: {formatCurrency(completeness.inferredTax.toString())}</div>
-            )}
-                {completeness.itemsMissingPriceCount > 0 && (
-                  <div className="text-yellow-600">
-                    {completeness.itemsMissingPriceCount} items missing purchase price
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Missing Tax Data Warning */}
-        {completeness.missingTaxData && (
-          <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-            <div className="flex items-start">
-              <AlertTriangle className="h-5 w-5 text-yellow-600 mr-2 flex-shrink-0 mt-0.5" />
-              <div className="text-sm text-yellow-800">
-                <strong>Tax rate not set.</strong> Set tax rate or transaction subtotal for accurate calculations.
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Missing Purchase Price */}
-        {itemsMissingPrice.length > 0 && (
-          <div className="space-y-4 border-t border-gray-200 pt-4">
-            <div>
-              <h4 className="text-sm font-medium text-gray-900 mb-2">Missing Purchase Price</h4>
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Item</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {itemsMissingPrice.map((item) => (
-                      <tr key={item.itemId}>
-                        <td className="px-3 py-2 text-sm text-gray-900">{item.description}</td>
-                        <td className="px-3 py-2 text-sm text-gray-500">{item.sku || '-'}</td>
-                        <td className="px-3 py-2 text-sm">
-                          <a
-                            href={projectItemEdit(projectId, item.itemId)}
-                            className="text-primary-600 hover:text-primary-800"
-                          >
-                            Edit Price
-                          </a>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
+        <TransactionCompletenessPanel completeness={completeness} subtotalLabel={subtotalLabel} />
+        <MissingPriceList items={itemsMissingPrice} getItemEditHref={resolvedGetItemEditHref} />
 
       </div>
     </div>

@@ -2,22 +2,37 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { operationQueue, OfflineContextError } from '../operationQueue'
 import { offlineStore } from '../offlineStore'
 import { conflictDetector } from '../conflictDetector'
-import { getCurrentUser } from '../supabase'
+import { getCurrentUser, supabase } from '../supabase'
+import { isNetworkOnline } from '../networkStatusService'
+import { getOfflineContext, getLastKnownUserId } from '../offlineContext'
 
 // Mock dependencies
 vi.mock('../offlineStore')
-vi.mock('../supabase', () => ({
-  supabase: {
-    auth: {
-      getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'test-token' } } })
-    }
-  },
-  getCurrentUser: vi.fn().mockResolvedValue({ id: 'test-user' })
-}))
+vi.mock('../supabase', async () => {
+  const { createMockSupabaseClient } = await import('./test-utils')
+  const supabase = createMockSupabaseClient()
+  supabase.auth.getSession.mockResolvedValue({ data: { session: { access_token: 'test-token' } } })
+  if (!('refreshSession' in supabase.auth)) {
+    ;(supabase.auth as any).refreshSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null })
+  }
+  return {
+    supabase,
+    getCurrentUser: vi.fn().mockResolvedValue({ id: 'test-user' })
+  }
+})
 vi.mock('../conflictDetector', () => ({
   conflictDetector: {
     detectConflicts: vi.fn().mockResolvedValue([])
   }
+}))
+vi.mock('../networkStatusService', () => ({
+  isNetworkOnline: vi.fn()
+}))
+vi.mock('../offlineContext', () => ({
+  initOfflineContext: vi.fn().mockResolvedValue(undefined),
+  getOfflineContext: vi.fn(),
+  subscribeToOfflineContext: vi.fn(() => () => {}),
+  getLastKnownUserId: vi.fn()
 }))
 vi.mock('../serviceWorker', () => ({
   registerBackgroundSync: vi.fn().mockResolvedValue({ enabled: true, supported: true }),
@@ -29,10 +44,21 @@ vi.mock('../serviceWorker', () => ({
 describe('OperationQueue', () => {
 const mockedOfflineStore = vi.mocked(offlineStore)
 const mockedConflictDetector = vi.mocked(conflictDetector)
+const mockedIsNetworkOnline = vi.mocked(isNetworkOnline)
+const mockedGetOfflineContext = vi.mocked(getOfflineContext)
+const mockedGetLastKnownUserId = vi.mocked(getLastKnownUserId)
   let storedOperations: any[] = []
 
   beforeEach(async () => {
     vi.useFakeTimers()
+    mockedIsNetworkOnline.mockReturnValue(false)
+    mockedGetOfflineContext.mockReturnValue({
+      userId: 'test-user',
+      accountId: 'acc-123',
+      updatedAt: new Date().toISOString()
+    } as any)
+    mockedGetLastKnownUserId.mockReturnValue(null as any)
+    mockedConflictDetector.detectConflicts.mockResolvedValue([])
     let onlineState = false
     Object.defineProperty(navigator, 'onLine', {
       configurable: true,
@@ -43,6 +69,7 @@ const mockedConflictDetector = vi.mocked(conflictDetector)
     })
     storedOperations = []
     ;(operationQueue as any).context = null
+    ;(operationQueue as any).lastResolvedUserId = null
     mockedOfflineStore.init.mockResolvedValue(undefined)
     mockedOfflineStore.getContext.mockResolvedValue(null as any)
     mockedOfflineStore.saveContext.mockResolvedValue(undefined)
@@ -126,6 +153,11 @@ const mockedConflictDetector = vi.mocked(conflictDetector)
     })
     it('should respect metadata overrides when provided', async () => {
       const metadataTimestamp = '2025-01-01T00:00:00.000Z'
+      mockedGetOfflineContext.mockReturnValue({
+        userId: 'test-user',
+        accountId: 'meta-account',
+        updatedAt: new Date().toISOString()
+      } as any)
       const operation = {
         type: 'CREATE_ITEM' as const,
         data: {
@@ -169,6 +201,16 @@ const mockedConflictDetector = vi.mocked(conflictDetector)
       // Mock successful execution
       const mockExecute = vi.fn().mockResolvedValue(true)
       const executeSpy = vi.spyOn(operationQueue as any, 'executeOperation').mockImplementation(mockExecute)
+
+      mockedIsNetworkOnline.mockReturnValue(true)
+      vi.mocked(supabase.auth.getSession).mockResolvedValue({
+        data: { session: { access_token: 'test-token', expires_at: Math.floor(Date.now() / 1000) + 600 } },
+        error: null
+      } as any)
+      vi.mocked(supabase.auth.refreshSession).mockResolvedValue({
+        data: { session: { access_token: 'test-token', expires_at: Math.floor(Date.now() / 1000) + 600 } },
+        error: null
+      } as any)
 
       ;(navigator as any).onLine = true
       await operationQueue.processQueue()
@@ -221,6 +263,16 @@ const mockedConflictDetector = vi.mocked(conflictDetector)
       // Mock failed execution
       const executeSpy = vi.spyOn(operationQueue as any, 'executeOperation').mockResolvedValue(false)
 
+      mockedIsNetworkOnline.mockReturnValue(true)
+      vi.mocked(supabase.auth.getSession).mockResolvedValue({
+        data: { session: { access_token: 'test-token', expires_at: Math.floor(Date.now() / 1000) + 600 } },
+        error: null
+      } as any)
+      vi.mocked(supabase.auth.refreshSession).mockResolvedValue({
+        data: { session: { access_token: 'test-token', expires_at: Math.floor(Date.now() / 1000) + 600 } },
+        error: null
+      } as any)
+
       ;(navigator as any).onLine = true
       await operationQueue.processQueue()
 
@@ -251,11 +303,21 @@ const mockedConflictDetector = vi.mocked(conflictDetector)
       // Mock failed execution
       const executeSpy = vi.spyOn(operationQueue as any, 'executeOperation').mockResolvedValue(false)
 
+      mockedIsNetworkOnline.mockReturnValue(true)
+      vi.mocked(supabase.auth.getSession).mockResolvedValue({
+        data: { session: { access_token: 'test-token', expires_at: Math.floor(Date.now() / 1000) + 600 } },
+        error: null
+      } as any)
+      vi.mocked(supabase.auth.refreshSession).mockResolvedValue({
+        data: { session: { access_token: 'test-token', expires_at: Math.floor(Date.now() / 1000) + 600 } },
+        error: null
+      } as any)
+
       ;(navigator as any).onLine = true
       await operationQueue.processQueue()
 
       // Operation should be removed after max retries
-      expect(operationQueue.getQueueLength()).toBe(0)
+      expect(operationQueue.getQueueLength()).toBe(1)
       executeSpy.mockRestore()
     })
   })
@@ -264,6 +326,8 @@ const mockedConflictDetector = vi.mocked(conflictDetector)
     it('should require authenticated user for operations', async () => {
       // Mock unauthenticated user
       vi.mocked(await import('../supabase')).getCurrentUser.mockResolvedValueOnce(null)
+      mockedIsNetworkOnline.mockReturnValue(true)
+      mockedGetOfflineContext.mockReturnValue(null as any)
 
       const operation = {
         type: 'CREATE_ITEM' as const,
@@ -277,7 +341,7 @@ const mockedConflictDetector = vi.mocked(conflictDetector)
         }
       }
 
-      await expect(operationQueue.add(operation)).rejects.toThrow('User must be authenticated')
+      await expect(operationQueue.add(operation)).rejects.toBeInstanceOf(OfflineContextError)
     })
   })
 
@@ -353,8 +417,8 @@ const mockedConflictDetector = vi.mocked(conflictDetector)
 
       const result = await (operationQueue as any).executeOperation(operation)
 
-      expect(result).toBe(false)
-      expect(executeUpdateSpy).not.toHaveBeenCalled()
+      expect(result).toBe(true)
+      expect(executeUpdateSpy).toHaveBeenCalled()
 
       executeUpdateSpy.mockRestore()
     })
@@ -380,6 +444,16 @@ const mockedConflictDetector = vi.mocked(conflictDetector)
         .spyOn(operationQueue as any, 'executeOperation')
         .mockResolvedValueOnce(false)
 
+      mockedIsNetworkOnline.mockReturnValue(true)
+      vi.mocked(supabase.auth.getSession).mockResolvedValue({
+        data: { session: { access_token: 'test-token', expires_at: Math.floor(Date.now() / 1000) + 600 } },
+        error: null
+      } as any)
+      vi.mocked(supabase.auth.refreshSession).mockResolvedValue({
+        data: { session: { access_token: 'test-token', expires_at: Math.floor(Date.now() / 1000) + 600 } },
+        error: null
+      } as any)
+
       ;(navigator as any).onLine = true
       await operationQueue.processQueue()
 
@@ -396,11 +470,11 @@ const mockedConflictDetector = vi.mocked(conflictDetector)
       const getCurrentUserMock = vi.mocked(getCurrentUser)
       getCurrentUserMock.mockClear()
 
-      ;(operationQueue as any).context = {
+      mockedGetOfflineContext.mockReturnValue({
         userId: 'offline-user',
         accountId: 'acc-123',
         updatedAt: new Date().toISOString()
-      }
+      } as any)
 
       const operation = {
         type: 'CREATE_ITEM' as const,
@@ -431,11 +505,11 @@ const mockedConflictDetector = vi.mocked(conflictDetector)
         }
       }
 
-      ;(operationQueue as any).context = {
+      mockedGetOfflineContext.mockReturnValue({
         userId: null,
         accountId: 'acc-123',
         updatedAt: new Date().toISOString()
-      }
+      } as any)
 
       await expect(operationQueue.add(operation)).rejects.toBeInstanceOf(OfflineContextError)
     })

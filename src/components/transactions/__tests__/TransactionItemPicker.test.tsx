@@ -47,9 +47,10 @@ vi.mock('@/components/ui/ToastContext', () => ({
 
 vi.mock('@/components/items/ItemPreviewCard', () => ({
   __esModule: true,
-  default: ({ item, showCheckbox, isSelected, onSelect }: any) => (
+  default: ({ item, showCheckbox, isSelected, onSelect, headerAction }: any) => (
     <div>
       <div>{item.description}</div>
+      {headerAction}
       {showCheckbox && (
         <input
           type="checkbox"
@@ -105,6 +106,7 @@ describe('TransactionItemPicker', () => {
   })
 
   it('auto-switches to the first tab with results', async () => {
+    const user = userEvent.setup()
     const transaction = buildTransaction({ projectId: 'project-1' })
     const projectItem = buildItem({ itemId: 'item-project', description: 'Project item' })
     inventoryServiceMocks.getItemsByProject.mockResolvedValue([projectItem])
@@ -115,6 +117,11 @@ describe('TransactionItemPicker', () => {
         projectId="project-1"
         transactionItemIds={[]}
       />
+    )
+
+    await user.type(
+      screen.getByPlaceholderText(/Search suggested, project, and outside items/i),
+      'project'
     )
 
     const projectTab = await screen.findByRole('button', { name: /Project \(1\)/ })
@@ -144,7 +151,7 @@ describe('TransactionItemPicker', () => {
     await user.click(groupCheckbox)
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Add selected \(2\)/ })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Add Selected \(2\)/ })).toBeInTheDocument()
     })
   })
 
@@ -167,8 +174,8 @@ describe('TransactionItemPicker', () => {
       />
     )
 
-    const addButton = await screen.findByRole('button', { name: 'Add' })
-    await user.click(addButton)
+    const addButtons = await screen.findAllByRole('button', { name: 'Add' })
+    await user.click(addButtons[0])
 
     await screen.findByRole('dialog', { name: /Reassign item\?/ })
     expect(inventoryServiceMocks.assignItemToTransaction).not.toHaveBeenCalled()

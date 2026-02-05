@@ -152,7 +152,11 @@ describe('ConflictResolver', () => {
 
       mockedSupabase.from.mockReturnValue({
         update: vi.fn().mockReturnValue({
-          eq: vi.fn().mockResolvedValue({ error: null })
+          eq: vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: null, error: null })
+            })
+          })
         })
       } as any)
 
@@ -223,7 +227,11 @@ describe('ConflictResolver', () => {
 
       mockedSupabase.from.mockReturnValue({
         update: vi.fn().mockReturnValue({
-          eq: vi.fn().mockResolvedValue({ error: null })
+          eq: vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: null, error: null })
+            })
+          })
         })
       } as any)
 
@@ -260,7 +268,11 @@ describe('ConflictResolver', () => {
 
       mockedSupabase.from.mockReturnValue({
         update: vi.fn().mockReturnValue({
-          eq: vi.fn().mockResolvedValue({ error: null })
+          eq: vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: null, error: null })
+            })
+          })
         })
       } as any)
 
@@ -307,7 +319,11 @@ describe('ConflictResolver', () => {
       }
 
       const updateMock = vi.fn().mockReturnValue({
-        eq: vi.fn().mockResolvedValue({ error: null })
+        eq: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            single: vi.fn().mockResolvedValue({ data: null, error: null })
+          })
+        })
       })
 
       mockedSupabase.from.mockReturnValue({

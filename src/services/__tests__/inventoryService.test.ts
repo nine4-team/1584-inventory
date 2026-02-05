@@ -5,7 +5,8 @@ import { createMockSupabaseClient, createMockProject, createNotFoundError, creat
 vi.mock('../supabase', async () => {
   const { createMockSupabaseClient } = await import('./test-utils')
   return {
-    supabase: createMockSupabaseClient()
+    supabase: createMockSupabaseClient(),
+    getCurrentUser: vi.fn().mockResolvedValue({ id: 'test-user' })
   }
 })
 
@@ -22,10 +23,23 @@ vi.mock('../budgetCategoriesService', () => ({
   }
 }))
 
+// Mock lineageService
+vi.mock('../lineageService', () => ({
+  lineageService: {
+    getEdgesFromTransaction: vi.fn()
+  }
+}))
+
+// Mock accountPresetsService (used by canonical budget category helper)
+vi.mock('../accountPresetsService', () => ({
+  getDefaultCategory: vi.fn().mockResolvedValue(null)
+}))
+
 // Import after mocks are set up
 import { projectService, transactionService, unifiedItemsService, auditService } from '../inventoryService'
 import * as supabaseModule from '../supabase'
 import { budgetCategoriesService } from '../budgetCategoriesService'
+import { lineageService } from '../lineageService'
 
 describe('projectService', () => {
   beforeEach(() => {
@@ -124,7 +138,7 @@ describe('projectService', () => {
       expect(projectId).toBe(mockProject.id)
     })
 
-    it('should throw error on failure', async () => {
+    it('queues offline create on failure', async () => {
       const error = { code: '500', message: 'Server error', details: null, hint: null }
       const mockQueryBuilder = createMockSupabaseClient().from('projects')
       
@@ -141,9 +155,10 @@ describe('projectService', () => {
         accountId: 'test-account-id'
       }
 
-      await expect(
-        projectService.createProject('test-account-id', projectData as any)
-      ).rejects.toEqual(error)
+      // createProject is offline-first: if the network write fails, it queues an offline operation
+      // and returns the optimistic/offline project ID instead of throwing.
+      const projectId = await projectService.createProject('test-account-id', projectData as any)
+      expect(projectId).toMatch(/^P-/)
     })
   })
 
@@ -359,6 +374,107 @@ describe('transactionService', () => {
 
       expect(adjustSpy).not.toHaveBeenCalled()
       expect(enqueueSpy).toHaveBeenCalledWith('acct-1', null, 'INV_PURCHASE_project-123')
+    })
+  })
+
+  describe('getTransactionCompleteness (canonical)', () => {
+    it('excludes correction edges from moved-out item completeness', async () => {
+      const txId = 'tx-1'
+      const accountId = 'acct-1'
+      const projectId = 'project-1'
+
+      vi.spyOn(transactionService, 'getTransaction').mockResolvedValue({
+        transactionId: txId,
+        amount: '100.00',
+        subtotal: '100.00',
+        itemIds: ['item-a'],
+        taxRatePct: null,
+        taxRatePreset: null
+      } as any)
+
+      vi.spyOn(unifiedItemsService, 'getItemById').mockImplementation(async (_accountId, itemId) => {
+        if (itemId === 'item-a') {
+          return { itemId: 'item-a', purchasePrice: '50.00', transactionId: txId } as any
+        }
+        if (itemId === 'item-b') {
+          return { itemId: 'item-b', purchasePrice: '50.00', transactionId: null } as any
+        }
+        return null
+      })
+
+      vi.spyOn(unifiedItemsService, 'getItemsForTransaction').mockResolvedValue([
+        { itemId: 'item-a', purchasePrice: '50.00', transactionId: txId } as any
+      ])
+
+      vi.mocked(lineageService.getEdgesFromTransaction).mockResolvedValue([
+        {
+          id: 'edge-1',
+          accountId,
+          itemId: 'item-b',
+          fromTransactionId: txId,
+          toTransactionId: null,
+          movementKind: 'correction',
+          source: 'app',
+          createdAt: new Date().toISOString()
+        } as any
+      ])
+
+      const completeness = await transactionService.getTransactionCompleteness(accountId, projectId, txId)
+
+      // Only item-a should be counted; item-b is linked via a correction edge and excluded.
+      expect(completeness.itemsCount).toBe(1)
+      expect(completeness.itemsNetTotal).toBe(50)
+      expect(completeness.transactionSubtotal).toBe(100)
+      expect(completeness.completenessStatus).toBe('incomplete')
+    })
+
+    it('is projectId-agnostic (projects vs business inventory parity)', async () => {
+      const txId = 'tx-1'
+      const accountId = 'acct-1'
+
+      vi.spyOn(transactionService, 'getTransaction').mockResolvedValue({
+        transactionId: txId,
+        amount: '100.00',
+        subtotal: '100.00',
+        itemIds: [],
+        taxRatePct: null,
+        taxRatePreset: null
+      } as any)
+
+      vi.spyOn(unifiedItemsService, 'getItemsForTransaction').mockResolvedValue([
+        { itemId: 'item-a', purchasePrice: '60.00', transactionId: txId } as any
+      ])
+
+      vi.spyOn(unifiedItemsService, 'getItemById').mockResolvedValue(null as any)
+
+      vi.mocked(lineageService.getEdgesFromTransaction).mockResolvedValue([
+        {
+          id: 'edge-1',
+          accountId,
+          itemId: 'item-b',
+          fromTransactionId: txId,
+          toTransactionId: null,
+          movementKind: 'sold',
+          source: 'app',
+          createdAt: new Date().toISOString()
+        } as any
+      ])
+
+      // Provide item-b via getItemById (moved-out path)
+      vi.spyOn(unifiedItemsService, 'getItemById').mockImplementation(async (_accountId, itemId) => {
+        if (itemId === 'item-b') {
+          return { itemId: 'item-b', purchasePrice: '40.00', transactionId: null } as any
+        }
+        return null
+      })
+
+      const asProject = await transactionService.getTransactionCompleteness(accountId, 'project-1', txId)
+      const asBizInv = await transactionService.getTransactionCompleteness(accountId, '', txId)
+
+      expect(asBizInv).toEqual(asProject)
+      expect(asProject.itemsCount).toBe(2)
+      expect(asProject.itemsNetTotal).toBe(100)
+      expect(asProject.completenessStatus).toBe('complete')
     })
   })
 })
