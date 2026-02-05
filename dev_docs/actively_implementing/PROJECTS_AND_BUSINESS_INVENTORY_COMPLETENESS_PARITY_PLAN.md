@@ -144,12 +144,20 @@ Today Business Inventory routes transactions to `TransactionDetail` without a pr
 
 Fix options (pick one; prefer the one with least special casing):
 
-- **Option A (recommended)**: Create `BusinessInventoryTransactionDetail` wrapper that:
+- **Option A**: Create `BusinessInventoryTransactionDetail` wrapper that:
   - loads the transaction by id,
-  - renders the same shared `TransactionCompletenessPanel`,
-  - uses biz-inv routes for edit actions
-- **Option B**: Update `TransactionDetail` to support `projectId = null` for completeness/audit rendering.
-  - Be careful: `TransactionDetail` has project-specific assumptions beyond completeness (budget category display, routing, etc.).
+  - renders the shared audit/completeness UI,
+  - uses biz-inv routes for edit actions.
+- **Option B (chosen — fastest path to parity / least user surprise)**: Keep a *single* `TransactionDetail` page and make it work in both contexts.
+  - Rationale: users already know the Projects transaction detail UI; maintaining a second detail page will drift and causes “surprise” sections.
+  - Implementation notes:
+    - Business Inventory route stays: `/business-inventory/transaction/:transactionId` → `TransactionDetail`
+    - `TransactionDetail` must render `TransactionAudit` even when `projectId` is null (biz-inv context).
+    - `TransactionAudit` needs injectable “edit item” navigation so biz-inv links go to `/business-inventory/:itemId/edit`.
+    - Back fallback in biz-inv context should go to `/business-inventory` (not `/projects`).
+
+Status:
+- A `BusinessInventoryTransactionDetail` page may exist in the codebase from earlier work, but it should **not** be used for the main biz-inv transaction detail route (avoid UI forks).
 
 #### 2. Ensure recompute triggers exist in biz-inv flows
 
@@ -170,10 +178,39 @@ Requirement:
   - computes canonical completeness
   - writes `needs_review`
 
+#### 4. **SIGNIFICANT GAP** — Biz-inv transaction list cards do not surface `Needs Review`
+
+Decision:
+
+- We will **remove “Missing Items” everywhere** and rely on **one list-level signal: `Needs Review`**.
+- “Missing Items” is too confusing (two labels for “needs attention”) and encourages expensive per-transaction completeness fetching in list views.
+
+Implications:
+
+- `Transaction.needsReview` must be **reliably maintained** for both Projects and Business Inventory.
+  - Backfill old transactions so `needsReview` is not `undefined`.
+  - Ensure recompute triggers cover all flows that can change completeness.
+
+Current mismatch:
+
+- Projects list cards show `Needs Review` when `needsReview === true` (and currently may show a legacy `Missing Items` fallback in some cases).
+- Business Inventory list cards currently show **no** `Needs Review` badge on the card, even though the list supports filtering by completeness via `Transaction.needsReview`.
+
+References:
+- Project list cards: `src/pages/TransactionsList.tsx`
+- Biz-inv list cards: `src/pages/BusinessInventory.tsx`
+- Related diff doc: `dev_docs/actively_implementing/BUSINESS_INVENTORY_TX_CARD_PARITY_DIFFS.md`
+
+Work needed (to close this gap and remove “Missing Items” globally):
+- [ ] Add `Needs Review` badge to biz-inv list cards when `transaction.needsReview === true` (match Projects styling/placement).
+- [ ] Remove the `Missing Items` badge from Project list cards (and any related per-transaction completeness fetch used only for that badge).
+- [ ] Confirm `needsReview` is always populated (backfill + recompute coverage) so lists don’t need “fallback” signaling.
+
 Exit criteria:
 
 - Business Inventory “Completeness” filter is accurate (backed by `needs_review`).
 - Business Inventory transaction detail shows the same completeness panel as projects (shared UI).
+- Business Inventory transaction list cards surface `Needs Review` badges (same placement + semantics as Projects).
 
 ### Phase 4 — Remove shadow code + lock in invariants
 
@@ -193,6 +230,7 @@ Exit criteria:
 - **Business Inventory**
   - Completeness panel is visible for biz-inv transactions.
   - `needs_review` is maintained and used for filtering (same as projects).
+  - Transaction list cards surface `Needs Review` badges (same placement + semantics as Projects).
   - No UI fork: shared components are used.
 
 ## Test plan (high signal)
@@ -206,6 +244,7 @@ Exit criteria:
   - Create purchase transaction + add items → status becomes complete
   - Move/sell/return items out → completeness remains consistent with “ever-associated minus corrections”
   - Business Inventory transaction (project_id null) renders completeness panel and maintains `needs_review`
+  - Transaction list cards (Projects + Business Inventory) show **only** `Needs Review` when `needsReview === true` (no “Missing Items” badge anywhere)
 
 ## Notes / risks
 

@@ -452,9 +452,15 @@ export default function TransactionDetail() {
     return transactionId ? isCanonicalSaleOrPurchaseTransactionId(transactionId) : false
   }, [transactionId])
 
+  const normalizedTransactionProjectId = useMemo(() => {
+    const raw = transaction?.projectId
+    if (!raw || raw === 'null') return null
+    return raw
+  }, [transaction?.projectId])
+
   const isBusinessInventoryContext = useMemo(() => {
-    return !projectId && !transaction?.projectId
-  }, [projectId, transaction?.projectId])
+    return !projectId && !normalizedTransactionProjectId
+  }, [projectId, normalizedTransactionProjectId])
 
   const assignTransactionScope = isBusinessInventoryContext ? 'business' : 'project'
 
@@ -530,25 +536,26 @@ export default function TransactionDetail() {
   // Navigation context logic
 
   const backDestination = useMemo(() => {
-    const fallbackPath = projectId ? projectTransactions(projectId) : '/projects'
+    const fallbackPath = isBusinessInventoryContext
+      ? '/business-inventory'
+      : projectId
+        ? projectTransactions(projectId)
+        : '/projects'
     return getBackDestination(fallbackPath)
-  }, [getBackDestination, projectId])
+  }, [getBackDestination, isBusinessInventoryContext, projectId])
 
   const editTransactionUrl = useMemo(() => {
     if (!transactionId) {
       return '/projects'
     }
-
-    const normalizedTransactionProjectId =
-      transaction?.projectId && transaction.projectId !== 'null' ? transaction.projectId : undefined
-    const resolvedProjectId = projectId ?? normalizedTransactionProjectId
+    const resolvedProjectId = projectId ?? normalizedTransactionProjectId ?? undefined
 
     if (resolvedProjectId) {
       return projectTransactionEdit(resolvedProjectId, transactionId)
     }
 
     return `/business-inventory/transaction/null/${transactionId}/edit`
-  }, [projectId, transaction?.projectId, transactionId])
+  }, [projectId, normalizedTransactionProjectId, transactionId])
 
   const fetchItemsViaReconcile = useCallback(
     async (projectScope?: string | null) => {
@@ -2914,8 +2921,6 @@ export default function TransactionDetail() {
         {/* Transaction Audit */}
         {(() => {
           if (!transaction) return null
-          const resolvedProjectId = projectId || transaction.projectId
-          if (!resolvedProjectId) return null
           if (getCanonicalTransactionTitle(transaction) === COMPANY_INVENTORY_SALE || getCanonicalTransactionTitle(transaction) === COMPANY_INVENTORY_PURCHASE) return null
 
           const transactionCategory = getTransactionCategory(transaction, budgetCategories)
@@ -2930,8 +2935,13 @@ export default function TransactionDetail() {
             <div className="px-6 py-6 border-t border-gray-200">
               <TransactionAudit
                 transaction={transaction}
-                projectId={resolvedProjectId}
+                projectId={projectId ?? normalizedTransactionProjectId}
                 transactionItems={auditItems}
+                getItemEditHref={
+                  isBusinessInventoryContext
+                    ? (item) => buildContextUrl(`/business-inventory/${item.itemId}/edit`)
+                    : undefined
+                }
               />
             </div>
           )
