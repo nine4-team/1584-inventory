@@ -13,7 +13,7 @@ import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
 import { offlineStore } from '@/services/offlineStore'
 import ImageUpload from '@/components/ui/ImageUpload'
 import UploadActivityIndicator from '@/components/ui/UploadActivityIndicator'
-import TransactionItemsList from '@/components/TransactionItemsList'
+import ItemEntryList from '@/components/ItemEntryList'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { useSyncError } from '@/hooks/useSyncError'
 import { OfflinePrerequisiteBanner, useOfflinePrerequisiteGate } from '@/components/ui/OfflinePrerequisiteBanner'
@@ -1059,7 +1059,7 @@ export default function AddTransaction() {
               <p className="text-sm text-gray-600 mb-4">
                 Add the items from your receipt now or later.
               </p>
-              <TransactionItemsList
+              <ItemEntryList
                 items={items}
                 onItemsChange={(newItems) => {
                   setItems(newItems)

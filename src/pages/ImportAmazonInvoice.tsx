@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { ArrowLeft, FileUp, Save, Shield, Trash2 } from 'lucide-react'
 import ContextBackLink from '@/components/ContextBackLink'
-import TransactionItemsList from '@/components/TransactionItemsList'
+import ItemEntryList from '@/components/ItemEntryList'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useToast } from '@/components/ui/ToastContext'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
@@ -789,7 +789,7 @@ export default function ImportAmazonInvoice() {
                   />
                 </div>
 
-                <TransactionItemsList
+                <ItemEntryList
                   items={items}
                   onItemsChange={(next) => setItems(next)}
                   projectId={resolvedProjectId || ''}

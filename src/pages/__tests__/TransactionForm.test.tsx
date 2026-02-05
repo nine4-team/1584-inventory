@@ -54,7 +54,7 @@ vi.mock('@/components/ui/ToastContext', () => ({
 vi.mock('@/components/ContextBackLink', () => ({
   default: ({ children }: { children: React.ReactNode }) => <div>{children}</div>
 }))
-vi.mock('@/components/TransactionItemsList', () => ({
+vi.mock('@/components/ItemEntryList', () => ({
   default: () => <div>Transaction Items</div>
 }))
 
