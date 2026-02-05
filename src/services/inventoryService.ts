@@ -4726,6 +4726,27 @@ export const unifiedItemsService = {
     )
   },
 
+  /**
+   * Account-wide item search (projects + business inventory).
+   *
+   * Note: this is a thin wrapper over `searchItemsOutsideProject` with no excluded project.
+   */
+  async searchAccountItems(
+    accountId: string,
+    options?: {
+      searchQuery?: string
+      includeBusinessInventory?: boolean
+      pagination?: PaginationOptions
+    }
+  ): Promise<Item[]> {
+    return await this.searchItemsOutsideProject(accountId, {
+      excludeProjectId: null,
+      includeBusinessInventory: options?.includeBusinessInventory,
+      searchQuery: options?.searchQuery,
+      pagination: options?.pagination
+    })
+  },
+
   // Subscribe to items for a project with real-time updates
   subscribeToProjectItems(
     accountId: string,
