@@ -14,7 +14,8 @@
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",
     "setup:storage": "tsx scripts/setup-supabase-storage.ts",
-    "test:storage": "tsx scripts/test-supabase-storage.ts"
+    "test:storage": "tsx scripts/test-supabase-storage.ts",
+    "export:migration-account": "tsx scripts/export-account-for-migration.ts"
   },
   "vitest": {
     "setupFiles": [
@@ -34,6 +35,7 @@
     "dompurify": "^3.0.6",
     "dotenv": "^17.2.3",
     "heic2any": "^0.0.4",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.294.0",
     "pdfjs-dist": "^4.10.38",
     "qrcode": "^1.5.3",
