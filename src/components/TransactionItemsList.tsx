@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Plus, Receipt, Camera, Search, Filter, ArrowUpDown } from 'lucide-react'
 import { ItemDisposition, TransactionItemFormData } from '@/types'
-import TransactionItemForm from './TransactionItemForm'
+import ItemEntryForm from './ItemEntryForm'
 import ItemDetail from '@/pages/ItemDetail'
 import { normalizeMoneyToTwoDecimalString } from '@/utils/money'
 import { getTransactionFormGroupKey } from '@/utils/itemGrouping'
@@ -1279,7 +1279,7 @@ export default function TransactionItemsList({
   if (isAddingItem || editingItemId) {
     const itemToEdit = getItemToEdit()
     return (
-      <TransactionItemForm
+      <ItemEntryForm
         item={itemToEdit || undefined}
         onSave={handleSaveItem}
         onCancel={handleCancelItem}

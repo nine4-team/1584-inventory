@@ -29,7 +29,7 @@ import { useOfflineMediaTracker } from '@/hooks/useOfflineMediaTracker'
 import { formatDate, formatCurrency } from '@/utils/dateUtils'
 import { useToast } from '@/components/ui/ToastContext'
 import UploadActivityIndicator from '@/components/ui/UploadActivityIndicator'
-import TransactionItemsList from '@/components/TransactionItemsList'
+import ItemEntryList from '@/components/ItemEntryList'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
@@ -2851,7 +2851,7 @@ export default function TransactionDetail() {
                 <div className="space-y-6">
                   {/* Current items in this transaction */}
                   <div>
-                    <TransactionItemsList
+                    <ItemEntryList
                       items={itemsInTransaction}
                       onItemsChange={() => {}}
                       onAddItem={handleCreateItem}
@@ -2882,7 +2882,7 @@ export default function TransactionDetail() {
                         <div>
                           <h3 className="text-lg font-semibold text-gray-900 mb-3">Returned items</h3>
                           <div className="opacity-60">
-                            <TransactionItemsList
+                            <ItemEntryList
                               items={returnedItems}
                               onItemsChange={() => {}}
                               projectId={projectId}
@@ -2897,7 +2897,7 @@ export default function TransactionDetail() {
                         <div>
                           <h3 className="text-lg font-semibold text-gray-900 mb-3">Sold items</h3>
                           <div className="opacity-60">
-                            <TransactionItemsList
+                            <ItemEntryList
                               items={soldItems}
                               onItemsChange={() => {}}
                               projectId={projectId}
