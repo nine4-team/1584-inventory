@@ -605,13 +605,32 @@ export default function BusinessInventory() {
   const filteredItems = useMemo(() => {
     let filtered = items.filter(item => {
       // Apply search filter
-      const query = (inventorySearchQuery || '').toLowerCase().trim()
-      const matchesSearch = !query ||
+      const rawQuery = (inventorySearchQuery || '').trim()
+      const query = rawQuery.toLowerCase()
+      const hasDigit = /\d/.test(rawQuery)
+      const allowedOnly = /^[0-9\s,().$-]+$/.test(rawQuery)
+      const isAmountQuery = hasDigit && allowedOnly
+      const normalizedQuery = isAmountQuery ? normalizeMoneyToTwoDecimalString(rawQuery) : undefined
+      const normalizedQueryNumeric = normalizedQuery?.replace(/[^0-9-]/g, '') ?? ''
+      const matchesText = !query ||
         (item.description || '').toLowerCase().includes(query) ||
         (item.sku || '').toLowerCase().includes(query) ||
         (item.source || '').toLowerCase().includes(query) ||
         (item.paymentMethod || '').toLowerCase().includes(query) ||
         (item.businessInventoryLocation || '').toLowerCase().includes(query)
+      let matchesAmount = false
+      if (isAmountQuery && normalizedQuery) {
+        const amountValues = [item.price, item.purchasePrice, item.projectPrice, item.marketValue]
+        matchesAmount = amountValues.some(value => {
+          const normalizedAmount = normalizeMoneyToTwoDecimalString((value ?? '').toString())
+          if (!normalizedAmount) return false
+          if (normalizedAmount === normalizedQuery) return true
+          if (!normalizedQueryNumeric || normalizedQueryNumeric === '-') return false
+          const normalizedAmountNumeric = normalizedAmount.replace(/[^0-9-]/g, '')
+          return normalizedAmountNumeric.includes(normalizedQueryNumeric)
+        })
+      }
+      const matchesSearch = matchesText || matchesAmount
 
       // Apply status filter
       const matchesStatus = !filters.status || item.inventoryStatus === filters.status
