@@ -9,7 +9,8 @@ interface ImagePreviewProps {
   onAddImage?: () => void
   onRemoveImage?: (imageUrl: string) => void
   onSetPrimary?: (imageUrl: string) => void
-  maxImages?: number
+  // If null, there is no max image cap.
+  maxImages?: number | null
   showControls?: boolean
   size?: 'sm' | 'md' | 'lg'
   className?: string
@@ -19,7 +20,8 @@ interface TransactionImagePreviewProps {
   images: TransactionImage[]
   onRemoveImage?: (imageUrl: string) => void
   onPinImage?: (image: TransactionImage) => void
-  maxImages?: number
+  // Reserved for parity with ImagePreview; currently not enforced here.
+  maxImages?: number | null
   showControls?: boolean
   size?: 'sm' | 'md' | 'lg'
   className?: string
@@ -129,6 +131,8 @@ export default function ImagePreview({
   const handleGalleryClose = () => {
     setShowGallery(false)
   }
+
+  const hasMaxImagesCap = typeof maxImages === 'number' && Number.isFinite(maxImages) && maxImages > 0
 
 
   const toggleMenu = (e: React.MouseEvent, index: number) => {
@@ -251,7 +255,7 @@ export default function ImagePreview({
             ))}
 
             {/* Add image button */}
-            {onAddImage && images.length < maxImages && (
+            {onAddImage && (!hasMaxImagesCap || images.length < (maxImages as number)) && (
               <button
                 onClick={onAddImage}
                 className={`${sizeClasses[size]} border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-600 hover:border-gray-400 transition-colors`}
@@ -278,7 +282,7 @@ export default function ImagePreview({
         {images.length > 0 && (
           <p className="text-xs text-gray-500">
             {images.length} image{images.length !== 1 ? 's' : ''}
-            {maxImages && ` (max ${maxImages})`}
+            {hasMaxImagesCap && ` (max ${maxImages})`}
           </p>
         )}
       </div>
