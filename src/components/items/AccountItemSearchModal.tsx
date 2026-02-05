@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Search } from 'lucide-react'
 import type { Item } from '@/types'
-import { unifiedItemsService } from '@/services/inventoryService'
+import { projectService, unifiedItemsService } from '@/services/inventoryService'
 import { useAccount } from '@/contexts/AccountContext'
 import AddExistingItemsModal from '@/components/items/AddExistingItemsModal'
 import ItemPreviewCard, { type ItemPreviewData } from '@/components/items/ItemPreviewCard'
+import { isAmountLikeQuery, matchesItemSearch } from '@/utils/itemSearch'
 
 type SearchScope = 'all' | 'projects' | 'businessInventory'
 
@@ -45,8 +46,10 @@ export default function AccountItemSearchModal({ open, onClose }: AccountItemSea
   const [isLoading, setIsLoading] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [lastFetchCount, setLastFetchCount] = useState<number>(0)
+  const [projectNameById, setProjectNameById] = useState<Record<string, string>>({})
 
   const normalizedQuery = query.trim()
+  const isAmountQuery = isAmountLikeQuery(normalizedQuery)
   const shouldFetch = normalizedQuery.length === 0 || normalizedQuery.length >= 2
   const isTooShort = normalizedQuery.length === 1
 
@@ -61,6 +64,38 @@ export default function AccountItemSearchModal({ open, onClose }: AccountItemSea
   useEffect(() => {
     setPage(1)
   }, [normalizedQuery])
+
+  useEffect(() => {
+    if (!open) return
+    if (!currentAccountId) return
+
+    let cancelled = false
+
+    const loadProjects = async () => {
+      try {
+        const projects = await projectService.getProjects(currentAccountId)
+        if (cancelled) return
+        const mapped = projects.reduce<Record<string, string>>((acc, project) => {
+          if (project.id && project.name) {
+            acc[project.id] = project.name
+          }
+          return acc
+        }, {})
+        setProjectNameById(mapped)
+      } catch (error) {
+        if (!cancelled) {
+          console.error('AccountItemSearchModal: failed to load projects', error)
+          setProjectNameById({})
+        }
+      }
+    }
+
+    void loadProjects()
+
+    return () => {
+      cancelled = true
+    }
+  }, [currentAccountId, open])
 
   // Fetch results (debounced).
   useEffect(() => {
@@ -82,7 +117,7 @@ export default function AccountItemSearchModal({ open, onClose }: AccountItemSea
 
         try {
           const results = await unifiedItemsService.searchAccountItems(currentAccountId, {
-            searchQuery: normalizedQuery || undefined,
+            searchQuery: isAmountQuery ? undefined : normalizedQuery || undefined,
             includeBusinessInventory: true,
             pagination: { page, limit: PAGE_LIMIT }
           })
@@ -116,10 +151,16 @@ export default function AccountItemSearchModal({ open, onClose }: AccountItemSea
   }, [currentAccountId, normalizedQuery, open, page, shouldFetch])
 
   const visibleItems = useMemo(() => {
-    if (scope === 'projects') return items.filter(item => Boolean(item.projectId))
-    if (scope === 'businessInventory') return items.filter(item => !item.projectId)
-    return items
-  }, [items, scope])
+    const filtered = items.filter(item =>
+      matchesItemSearch(item, normalizedQuery, {
+        locationFields: ['space', 'businessInventoryLocation']
+      }).matches
+    )
+
+    if (scope === 'projects') return filtered.filter(item => Boolean(item.projectId))
+    if (scope === 'businessInventory') return filtered.filter(item => !item.projectId)
+    return filtered
+  }, [items, normalizedQuery, scope])
 
   const hasMore = shouldFetch && lastFetchCount === PAGE_LIMIT
 
@@ -175,6 +216,11 @@ export default function AccountItemSearchModal({ open, onClose }: AccountItemSea
         <div className="text-xs text-gray-500">
           {normalizedQuery.length === 0 ? 'Showing recent items.' : `Searching for “${normalizedQuery}”.`}
         </div>
+        {isAmountQuery && normalizedQuery.length > 0 && (
+          <div className="text-xs text-gray-500">
+            Amount search looks at loaded items. Load more to search further.
+          </div>
+        )}
 
         {isTooShort && (
           <div className="text-sm text-gray-500">Type 2+ characters to search.</div>
@@ -190,6 +236,7 @@ export default function AccountItemSearchModal({ open, onClose }: AccountItemSea
               <>
                 {visibleItems.map((item, index) => {
                   const context: 'project' | 'businessInventory' = item.projectId ? 'project' : 'businessInventory'
+                  const projectName = item.projectId ? projectNameById[item.projectId] : undefined
                   const isLastItem = index === visibleItems.length - 1
                   return (
                     <ItemPreviewCard
@@ -200,7 +247,9 @@ export default function AccountItemSearchModal({ open, onClose }: AccountItemSea
                       menuDirection={isLastItem ? 'top' : 'bottom'}
                       footer={(
                         <span className="text-xs text-gray-500">
-                          {context === 'project' ? 'Project item' : 'Business inventory'}
+                          {context === 'project'
+                            ? (projectName ? `Project: ${projectName}` : 'Project item')
+                            : 'Business inventory'}
                         </span>
                       )}
                     />
