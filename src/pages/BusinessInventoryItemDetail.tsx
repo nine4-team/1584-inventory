@@ -7,6 +7,7 @@ import { ArrowLeft, Package, ImagePlus, FileText, RefreshCw, Bookmark, ChevronLe
 import { Item, Project, ItemDisposition, Transaction } from '@/types'
 import { unifiedItemsService, projectService, transactionService } from '@/services/inventoryService'
 import { formatDate } from '@/utils/dateUtils'
+import { normalizeMoneyToTwoDecimalString } from '@/utils/money'
 import ImagePreview from '@/components/ui/ImagePreview'
 import UploadActivityIndicator from '@/components/ui/UploadActivityIndicator'
 import { ImageUploadService } from '@/services/imageService'
@@ -68,13 +69,32 @@ export default function BusinessInventoryItemDetail() {
   const filteredAndSortedItems = useMemo(() => {
     return snapshotItems.filter(item => {
       // Apply search filter
-      const query = (inventorySearchQuery || '').toLowerCase().trim()
-      const matchesSearch = !query ||
+      const rawQuery = (inventorySearchQuery || '').trim()
+      const query = rawQuery.toLowerCase()
+      const hasDigit = /\d/.test(rawQuery)
+      const allowedOnly = /^[0-9\s,().$-]+$/.test(rawQuery)
+      const isAmountQuery = hasDigit && allowedOnly
+      const normalizedQuery = isAmountQuery ? normalizeMoneyToTwoDecimalString(rawQuery) : undefined
+      const normalizedQueryNumeric = normalizedQuery?.replace(/[^0-9-]/g, '') ?? ''
+      const matchesText = !query ||
         (item.description || '').toLowerCase().includes(query) ||
         (item.sku || '').toLowerCase().includes(query) ||
         (item.source || '').toLowerCase().includes(query) ||
         (item.paymentMethod || '').toLowerCase().includes(query) ||
         (item.businessInventoryLocation || '').toLowerCase().includes(query)
+      let matchesAmount = false
+      if (isAmountQuery && normalizedQuery) {
+        const amountValues = [item.price, item.purchasePrice, item.projectPrice, item.marketValue]
+        matchesAmount = amountValues.some(value => {
+          const normalizedAmount = normalizeMoneyToTwoDecimalString((value ?? '').toString())
+          if (!normalizedAmount) return false
+          if (normalizedAmount === normalizedQuery) return true
+          if (!normalizedQueryNumeric || normalizedQueryNumeric === '-') return false
+          const normalizedAmountNumeric = normalizedAmount.replace(/[^0-9-]/g, '')
+          return normalizedAmountNumeric.includes(normalizedQueryNumeric)
+        })
+      }
+      const matchesSearch = matchesText || matchesAmount
 
       // Apply filter based on filterMode
       let matchesFilter = false
