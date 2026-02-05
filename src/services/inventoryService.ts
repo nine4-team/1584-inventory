@@ -192,6 +192,43 @@ const isCanonicalAmountTransactionId = (transactionId: string | null | undefined
   return isCanonicalSaleOrPurchaseTransactionId(transactionId)
 }
 
+type NotifyTransactionChangedDiagnosticsContext = {
+  accountId: string
+  transactionId: string
+  reason?: string
+  caller?: string
+  deltaSum?: number | string
+  flushImmediately?: boolean
+}
+
+const notifyTransactionChangedDiagnostics = {
+  counts: new Map<string, number>(),
+  lastLogAt: 0
+}
+
+const recordNotifyTransactionChangedDiagnostics = (context: NotifyTransactionChangedDiagnosticsContext): void => {
+  const reason = context.reason ?? 'unknown'
+  const caller = context.caller ?? 'unknown'
+  const key = `${reason}::${caller}`
+  const next = (notifyTransactionChangedDiagnostics.counts.get(key) ?? 0) + 1
+  notifyTransactionChangedDiagnostics.counts.set(key, next)
+
+  const now = Date.now()
+  const shouldLog = next === 1 || next % 25 === 0 || now - notifyTransactionChangedDiagnostics.lastLogAt > 60000
+  if (shouldLog) {
+    notifyTransactionChangedDiagnostics.lastLogAt = now
+    console.debug('notifyTransactionChanged diagnostics:', {
+      key,
+      count: next,
+      reason,
+      caller,
+      transactionId: context.transactionId,
+      flushImmediately: context.flushImmediately,
+      deltaSum: context.deltaSum
+    })
+  }
+}
+
 /**
  * Compute the canonical transaction total from associated items.
  * Includes items that are moved out via lineage edges.
@@ -1958,10 +1995,23 @@ export const transactionService = {
   async adjustSumItemPurchasePrices(accountId: string, transactionId: string, delta: number | string): Promise<string> {
     return await _adjustSumItemPurchasePrices(accountId, transactionId, delta)
   },
-  async notifyTransactionChanged(accountId: string, transactionId: string, opts?: { deltaSum?: number | string; flushImmediately?: boolean }): Promise<void> {
+  async notifyTransactionChanged(
+    accountId: string,
+    transactionId: string,
+    opts?: { deltaSum?: number | string; flushImmediately?: boolean; reason?: string; caller?: string }
+  ): Promise<void> {
     const deltaSum = opts?.deltaSum
     const flushImmediately = opts?.flushImmediately
     const isCanonicalAmount = isCanonicalAmountTransactionId(transactionId)
+
+    recordNotifyTransactionChangedDiagnostics({
+      accountId,
+      transactionId,
+      reason: opts?.reason,
+      caller: opts?.caller,
+      deltaSum,
+      flushImmediately
+    })
 
     // Only non-canonical transactions rely on client-provided deltas
     if (deltaSum !== undefined && !isCanonicalAmount) {
@@ -2284,9 +2334,11 @@ export const transactionService = {
     // The UI displays both "in transaction" and "moved out" items; completeness should
     // count both sets when the item has this transaction in its lineage.
     let combinedItems = items.slice()
+    let edgesFromTransaction: ItemLineageEdge[] = []
+    let movedOutItemIds: string[] = []
     try {
-      const edgesFromTransaction = await lineageService.getEdgesFromTransaction(transactionId, accountId)
-      const movedOutItemIds = Array.from(new Set(edgesFromTransaction.map(edge => edge.itemId)))
+      edgesFromTransaction = await lineageService.getEdgesFromTransaction(transactionId, accountId)
+      movedOutItemIds = Array.from(new Set(edgesFromTransaction.map(edge => edge.itemId)))
 
       // Fetch any moved item records that aren't already in the items list
       const missingMovedItemIds = movedOutItemIds.filter(id => !combinedItems.some(it => it.itemId === id))
@@ -2322,95 +2374,153 @@ export const transactionService = {
       console.debug('getTransactionCompleteness - failed to fetch lineage edges:', edgeErr)
     }
 
-    // Calculate items net total using purchase price for audit consistency.
-    const resolveItemPrice = (item: Item) => {
-      const candidate = item.purchasePrice
-      const parsed = parseFloat(candidate || '0')
-      return isNaN(parsed) ? 0 : parsed
-    }
+    const computeCompletenessFromItems = async (itemsForCompleteness: Item[]): Promise<TransactionCompleteness> => {
+      // Calculate items net total using purchase price for audit consistency.
+      const resolveItemPrice = (item: Item) => {
+        const candidate = item.purchasePrice
+        const parsed = parseFloat(candidate || '0')
+        return isNaN(parsed) ? 0 : parsed
+      }
 
-    const itemsNetTotal = combinedItems.reduce((sum, item) => {
-      return sum + resolveItemPrice(item)
-    }, 0)
+      const itemsNetTotal = itemsForCompleteness.reduce((sum, item) => {
+        return sum + resolveItemPrice(item)
+      }, 0)
 
-    const itemsCount = combinedItems.length
-    const itemsMissingPriceCount = combinedItems.filter(item => {
-      const candidate = item.purchasePrice
-      if (!candidate || candidate.trim() === '') return true
-      const parsed = parseFloat(candidate)
-      return isNaN(parsed) || parsed === 0
-    }).length
+      const itemsCount = itemsForCompleteness.length
+      const itemsMissingPriceCount = itemsForCompleteness.filter(item => {
+        const candidate = item.purchasePrice
+        if (!candidate || candidate.trim() === '') return true
+        const parsed = parseFloat(candidate)
+        return isNaN(parsed) || parsed === 0
+      }).length
 
-    // Calculate transaction subtotal (pre-tax amount)
-    const transactionAmount = parseFloat(transaction.amount || '0')
-    let transactionSubtotal = 0
-    let inferredTax: number | undefined
-    let taxAmount: number | undefined
-    let missingTaxData = false
+      // Calculate transaction subtotal (pre-tax amount)
+      const transactionAmount = parseFloat(transaction.amount || '0')
+      let transactionSubtotal = 0
+      let inferredTax: number | undefined
+      let taxAmount: number | undefined
+      let missingTaxData = false
 
-    // If subtotal is stored, use it
-    if (transaction.subtotal) {
-      transactionSubtotal = parseFloat(transaction.subtotal)
-    } else if (transaction.taxRatePct !== undefined && transaction.taxRatePct !== null) {
-      // Infer subtotal from tax rate: subtotal = total / (1 + taxRate/100)
-      const taxRate = transaction.taxRatePct / 100
-      transactionSubtotal = transactionAmount / (1 + taxRate)
-      inferredTax = transactionAmount - transactionSubtotal
-      // Round to cents
-      transactionSubtotal = Math.round(transactionSubtotal * 100) / 100
-      inferredTax = Math.round(inferredTax * 100) / 100
-    } else if (transaction.taxRatePreset) {
-      try {
-        const preset = await getTaxPresetById(accountId, transaction.taxRatePreset)
-        if (preset) {
-          const taxRate = preset.rate / 100
-          transactionSubtotal = transactionAmount / (1 + taxRate)
-          inferredTax = transactionAmount - transactionSubtotal
-          transactionSubtotal = Math.round(transactionSubtotal * 100) / 100
-          inferredTax = Math.round(inferredTax * 100) / 100
-        } else {
+      // If subtotal is stored, use it
+      if (transaction.subtotal) {
+        transactionSubtotal = parseFloat(transaction.subtotal)
+      } else if (transaction.taxRatePct !== undefined && transaction.taxRatePct !== null) {
+        // Infer subtotal from tax rate: subtotal = total / (1 + taxRate/100)
+        const taxRate = transaction.taxRatePct / 100
+        transactionSubtotal = transactionAmount / (1 + taxRate)
+        inferredTax = transactionAmount - transactionSubtotal
+        // Round to cents
+        transactionSubtotal = Math.round(transactionSubtotal * 100) / 100
+        inferredTax = Math.round(inferredTax * 100) / 100
+      } else if (transaction.taxRatePreset) {
+        try {
+          const preset = await getTaxPresetById(accountId, transaction.taxRatePreset)
+          if (preset) {
+            const taxRate = preset.rate / 100
+            transactionSubtotal = transactionAmount / (1 + taxRate)
+            inferredTax = transactionAmount - transactionSubtotal
+            transactionSubtotal = Math.round(transactionSubtotal * 100) / 100
+            inferredTax = Math.round(inferredTax * 100) / 100
+          } else {
+            transactionSubtotal = transactionAmount
+            missingTaxData = true
+          }
+        } catch (presetError) {
+          console.warn('getTransactionCompleteness - failed to resolve tax preset:', presetError)
           transactionSubtotal = transactionAmount
           missingTaxData = true
         }
-      } catch (presetError) {
-        console.warn('getTransactionCompleteness - failed to resolve tax preset:', presetError)
+      } else {
+        // Fall back to gross total when tax data is missing
         transactionSubtotal = transactionAmount
         missingTaxData = true
       }
-    } else {
-      // Fall back to gross total when tax data is missing
-      transactionSubtotal = transactionAmount
-      missingTaxData = true
+
+      // Calculate completeness ratio
+      // If no items, ratio is 0; if no subtotal but items exist, treat as incomplete (100% variance)
+      const completenessRatio = transactionSubtotal > 0 
+        ? itemsNetTotal / transactionSubtotal 
+        : (itemsCount > 0 ? 0 : 0) // 0 when no items, 0 when no subtotal (will show as incomplete)
+
+      // Calculate variance
+      const varianceDollars = itemsNetTotal - transactionSubtotal
+      const variancePercent = transactionSubtotal > 0 
+        ? (varianceDollars / transactionSubtotal) * 100 
+        : (itemsCount > 0 ? -100 : 0) // -100% when items exist but no subtotal, 0 when no items
+
+      // Determine completeness status based on tolerance bands
+      const completenessStatus = this._calculateCompletenessStatus(completenessRatio, variancePercent)
+
+      return {
+        itemsNetTotal: Math.round(itemsNetTotal * 100) / 100,
+        itemsCount,
+        itemsMissingPriceCount,
+        transactionSubtotal: Math.round(transactionSubtotal * 100) / 100,
+        completenessRatio,
+        completenessStatus,
+        missingTaxData,
+        inferredTax,
+        taxAmount,
+        varianceDollars: Math.round(varianceDollars * 100) / 100,
+        variancePercent: Math.round(variancePercent * 100) / 100
+      }
     }
 
-    // Calculate completeness ratio
-    // If no items, ratio is 0; if no subtotal but items exist, treat as incomplete (100% variance)
-    const completenessRatio = transactionSubtotal > 0 
-      ? itemsNetTotal / transactionSubtotal 
-      : (itemsCount > 0 ? 0 : 0) // 0 when no items, 0 when no subtotal (will show as incomplete)
+    const currentCompleteness = await computeCompletenessFromItems(combinedItems)
 
-    // Calculate variance
-    const varianceDollars = itemsNetTotal - transactionSubtotal
-    const variancePercent = transactionSubtotal > 0 
-      ? (varianceDollars / transactionSubtotal) * 100 
-      : (itemsCount > 0 ? -100 : 0) // -100% when items exist but no subtotal, 0 when no items
+    // Shadow compute using canonical item set (current items + moved-out via lineage, excluding corrections)
+    try {
+      const shadowBaseItems = await unifiedItemsService.getItemsForTransaction(accountId, projectId, transactionId)
+      const movedOutShadowItemIds = Array.from(new Set(
+        edgesFromTransaction
+          .filter(edge => edge.movementKind !== 'correction')
+          .map(edge => edge.itemId)
+      ))
 
-    // Determine completeness status based on tolerance bands
-    const completenessStatus = this._calculateCompletenessStatus(completenessRatio, variancePercent)
+      let shadowItems = shadowBaseItems.slice()
+      const missingShadowMovedItemIds = movedOutShadowItemIds.filter(id => !shadowItems.some(it => it.itemId === id))
+      if (missingShadowMovedItemIds.length > 0) {
+        const movedItemsPromises = missingShadowMovedItemIds.map(id => unifiedItemsService.getItemById(accountId, id))
+        const movedItems = await Promise.all(movedItemsPromises)
+        const validMovedItems = movedItems.filter(mi => mi !== null) as Item[]
+        shadowItems = shadowItems.concat(validMovedItems)
+      }
 
-    return {
-      itemsNetTotal: Math.round(itemsNetTotal * 100) / 100,
-      itemsCount,
-      itemsMissingPriceCount,
-      transactionSubtotal: Math.round(transactionSubtotal * 100) / 100,
-      completenessRatio,
-      completenessStatus,
-      missingTaxData,
-      inferredTax,
-      taxAmount,
-      varianceDollars: Math.round(varianceDollars * 100) / 100,
-      variancePercent: Math.round(variancePercent * 100) / 100
+      const shadowCompleteness = await computeCompletenessFromItems(shadowItems)
+      const statusMismatch = currentCompleteness.completenessStatus !== shadowCompleteness.completenessStatus
+      const varianceMismatch = Math.abs(currentCompleteness.variancePercent - shadowCompleteness.variancePercent) > 0.01
+
+      if (statusMismatch || varianceMismatch) {
+        console.warn('getTransactionCompleteness - shadow mismatch:', {
+          accountId,
+          projectId,
+          transactionId,
+          current: {
+            status: currentCompleteness.completenessStatus,
+            variancePercent: currentCompleteness.variancePercent,
+            itemsCount: currentCompleteness.itemsCount,
+            itemsNetTotal: currentCompleteness.itemsNetTotal,
+            transactionSubtotal: currentCompleteness.transactionSubtotal
+          },
+          shadow: {
+            status: shadowCompleteness.completenessStatus,
+            variancePercent: shadowCompleteness.variancePercent,
+            itemsCount: shadowCompleteness.itemsCount,
+            itemsNetTotal: shadowCompleteness.itemsNetTotal,
+            transactionSubtotal: shadowCompleteness.transactionSubtotal
+          },
+          itemIdsFromTransactionCount: itemIdsFromTransaction.length,
+          currentItemsCount: combinedItems.length,
+          shadowItemsCount: shadowItems.length,
+          movedOutEdgeCount: movedOutItemIds.length,
+          movedOutShadowEdgeCount: movedOutShadowItemIds.length
+        })
+      }
+    } catch (shadowError) {
+      console.debug('getTransactionCompleteness - shadow compute failed (non-fatal):', shadowError)
     }
+
+    return currentCompleteness
   },
 
   // Helper: Calculate completeness status from ratio and variance
@@ -5175,7 +5285,11 @@ export const unifiedItemsService = {
             try {
               const purchasePriceRaw = dbItem.purchase_price ?? dbItem.price ?? '0'
               const delta = parseFloat(String(purchasePriceRaw) || '0')
-              transactionService.notifyTransactionChanged(accountId, txId, { deltaSum: delta }).catch((e: any) => {
+              transactionService.notifyTransactionChanged(accountId, txId, {
+                deltaSum: delta,
+                reason: 'item:create',
+                caller: 'createItem'
+              }).catch((e: any) => {
                 console.warn('Failed to notifyTransactionChanged after creating item:', e)
               })
             } catch (e) {
@@ -5370,7 +5484,11 @@ export const unifiedItemsService = {
             if (previousTransactionId && nextTransactionId && previousTransactionId === nextTransactionId && txId === previousTransactionId) {
               const delta = newPrice - prevPrice
               if (delta !== 0) {
-                transactionService.notifyTransactionChanged(accountId, txId, { deltaSum: delta }).catch((e: any) => {
+                transactionService.notifyTransactionChanged(accountId, txId, {
+                  deltaSum: delta,
+                  reason: 'item:update',
+                  caller: 'updateItem'
+                }).catch((e: any) => {
                   console.warn('Failed to notifyTransactionChanged after updating item for tx', txId, e)
                 })
               }
@@ -5378,13 +5496,21 @@ export const unifiedItemsService = {
               // Moved between transactions: subtract from old and add to new
               if (txId === previousTransactionId) {
                 const delta = -prevPrice
-                transactionService.notifyTransactionChanged(accountId, txId, { deltaSum: delta }).catch((e: any) => {
+                transactionService.notifyTransactionChanged(accountId, txId, {
+                  deltaSum: delta,
+                  reason: 'item:move:from',
+                  caller: 'updateItem'
+                }).catch((e: any) => {
                   console.warn('Failed to notifyTransactionChanged for old tx after moving item', txId, e)
                 })
               }
               if (txId === nextTransactionId) {
                 const delta = newPrice
-                transactionService.notifyTransactionChanged(accountId, txId, { deltaSum: delta }).catch((e: any) => {
+                transactionService.notifyTransactionChanged(accountId, txId, {
+                  deltaSum: delta,
+                  reason: 'item:move:to',
+                  caller: 'updateItem'
+                }).catch((e: any) => {
                   console.warn('Failed to notifyTransactionChanged for new tx after moving item', txId, e)
                 })
               }
@@ -5458,7 +5584,11 @@ export const unifiedItemsService = {
 
     try {
       if (!transactionService._isBatchActive(accountId, transactionId)) {
-        transactionService.notifyTransactionChanged(accountId, transactionId, { flushImmediately: true }).catch((e: any) => {
+        transactionService.notifyTransactionChanged(accountId, transactionId, {
+          flushImmediately: true,
+          reason: 'item:unlink',
+          caller: 'unlinkItemFromTransaction'
+        }).catch((e: any) => {
           console.warn('unlinkItemFromTransaction - notifyTransactionChanged failed:', e)
         })
       }
@@ -5589,10 +5719,18 @@ export const unifiedItemsService = {
     // Notify changes
     try {
         if (!transactionService._isBatchActive(accountId, transactionId)) {
-            transactionService.notifyTransactionChanged(accountId, transactionId, { flushImmediately: true }).catch(console.warn)
+            transactionService.notifyTransactionChanged(accountId, transactionId, {
+              flushImmediately: true,
+              reason: 'item:assign',
+              caller: 'assignItemsToTransaction'
+            }).catch(console.warn)
         }
         if (itemPreviousTransactionId && itemPreviousTransactionId !== transactionId && !transactionService._isBatchActive(accountId, itemPreviousTransactionId)) {
-            transactionService.notifyTransactionChanged(accountId, itemPreviousTransactionId, { flushImmediately: true }).catch(console.warn)
+            transactionService.notifyTransactionChanged(accountId, itemPreviousTransactionId, {
+              flushImmediately: true,
+              reason: 'item:assign:previous',
+              caller: 'assignItemsToTransaction'
+            }).catch(console.warn)
         }
     } catch (e) {
         console.warn('assignItemsToTransaction - notifyTransactionChanged failed:', e)
