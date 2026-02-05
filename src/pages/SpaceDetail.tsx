@@ -764,7 +764,7 @@ export default function SpaceDetail() {
                   images={space.images}
                   onRemoveImage={handleRemoveImage}
                   onSetPrimary={handleSetPrimaryImage}
-                  maxImages={20}
+                  maxImages={null}
                   size="md"
                   showControls={true}
                 />
