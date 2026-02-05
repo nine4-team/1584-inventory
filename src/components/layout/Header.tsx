@@ -1,13 +1,16 @@
 import { Link, useLocation } from 'react-router-dom'
+import { useState } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useBusinessProfile } from '../../contexts/BusinessProfileContext'
 import { Button } from '../ui/Button'
-import { LogOut, Settings, Package, FolderOpen } from 'lucide-react'
+import { LogOut, Settings, Package, FolderOpen, Search } from 'lucide-react'
+import AccountItemSearchModal from '@/components/items/AccountItemSearchModal'
 
 export default function Header() {
   const { user, signOut, loading } = useAuth()
   const { businessName } = useBusinessProfile()
   const location = useLocation()
+  const [isAccountSearchOpen, setIsAccountSearchOpen] = useState(false)
 
   const isProjectsActive = location.pathname.startsWith('/projects') || location.pathname.startsWith('/project') || location.pathname === '/'
   const isBusinessInventoryActive = location.pathname.startsWith('/business-inventory')
@@ -67,6 +70,17 @@ export default function Header() {
                   </Link>
                 </nav>
 
+                {/* Item search */}
+                <button
+                  type="button"
+                  onClick={() => setIsAccountSearchOpen(true)}
+                  className="flex items-center px-2 sm:px-3 py-2 text-xs sm:text-sm font-medium transition-all duration-200 border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+                  title="Search items"
+                >
+                  <Search className="h-5 w-5 sm:h-4 sm:w-4 sm:mr-2" />
+                  <span className="hidden sm:inline">Search</span>
+                </button>
+
                 {/* Settings */}
                 <Link
                   to="/settings"
@@ -97,6 +111,11 @@ export default function Header() {
           </div>
         </div>
       </div>
+
+      <AccountItemSearchModal
+        open={isAccountSearchOpen}
+        onClose={() => setIsAccountSearchOpen(false)}
+      />
     </header>
   )
 }
