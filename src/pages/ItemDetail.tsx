@@ -5,6 +5,7 @@ import ContextLink from '@/components/ContextLink'
 import ContextBackLink from '@/components/ContextBackLink'
 import { Item, ItemImage, ItemDisposition, Transaction, Project } from '@/types'
 import { formatDate, formatCurrency } from '@/utils/dateUtils'
+import { normalizeMoneyToTwoDecimalString } from '@/utils/money'
 import { unifiedItemsService, projectService, integrationService, transactionService, isCanonicalTransactionId, SellItemToProjectError } from '@/services/inventoryService'
 import { ImageUploadService } from '@/services/imageService'
 import { OfflineAwareImageService } from '@/services/offlineAwareImageService'
@@ -651,15 +652,34 @@ export default function ItemDetail(props: ItemDetailProps = {}) {
   const filteredAndSortedItems = useMemo(() => {
     return allItems.filter(item => {
       // Apply search filter
-      const query = searchQuery.toLowerCase().trim()
+      const rawQuery = searchQuery.trim()
+      const query = rawQuery.toLowerCase()
       const normalizedQuery = query.replace(/[^a-z0-9]/g, '')
-      const matchesSearch = !query ||
+      const hasDigit = /\d/.test(rawQuery)
+      const allowedOnly = /^[0-9\s,().$-]+$/.test(rawQuery)
+      const isAmountQuery = hasDigit && allowedOnly
+      const normalizedAmountQuery = isAmountQuery ? normalizeMoneyToTwoDecimalString(rawQuery) : undefined
+      const normalizedAmountQueryNumeric = normalizedAmountQuery?.replace(/[^0-9-]/g, '') ?? ''
+      const matchesText = !query ||
         (item.description || '').toLowerCase().includes(query) ||
         (item.source || '').toLowerCase().includes(query) ||
         (item.sku || '').toLowerCase().includes(query) ||
         (normalizedQuery && (item.sku || '').toLowerCase().replace(/[^a-z0-9]/g, '').includes(normalizedQuery)) ||
         (item.paymentMethod || '').toLowerCase().includes(query) ||
         (item.space || '').toLowerCase().includes(query)
+      let matchesAmount = false
+      if (isAmountQuery && normalizedAmountQuery) {
+        const amountValues = [item.price, item.purchasePrice, item.projectPrice, item.marketValue]
+        matchesAmount = amountValues.some(value => {
+          const normalizedAmount = normalizeMoneyToTwoDecimalString((value ?? '').toString())
+          if (!normalizedAmount) return false
+          if (normalizedAmount === normalizedAmountQuery) return true
+          if (!normalizedAmountQueryNumeric || normalizedAmountQueryNumeric === '-') return false
+          const normalizedAmountNumeric = normalizedAmount.replace(/[^0-9-]/g, '')
+          return normalizedAmountNumeric.includes(normalizedAmountQueryNumeric)
+        })
+      }
+      const matchesSearch = matchesText || matchesAmount
 
       // Apply filter based on filterMode
       let matchesFilter = false
