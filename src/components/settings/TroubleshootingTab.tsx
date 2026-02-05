@@ -2,8 +2,11 @@ import { useMemo, useState } from 'react'
 import SyncIssuesManager from './SyncIssuesManager'
 import { offlineStore } from '@/services/offlineStore'
 import { Button } from '@/components/ui/Button'
+import { downloadStorageBlobsZip, exportAccountServerDataForMigration } from '@/services/accountServerExportService'
 
 const CACHE_NOTE = 'Offline export is a dump of local cache; it may be incomplete or not match server state.'
+const SERVER_NOTE =
+  'Server export is a dump of Supabase rows you can access; it should match canonical server state (subject to permissions). It also downloads a zip of storage files and may take a while.'
 const MAX_MISSING_REFS = 100
 const MISSING_ACCOUNT_KEY = '__missing__'
 
@@ -124,6 +127,17 @@ function downloadJson(filename: string, payload: unknown) {
   URL.revokeObjectURL(url)
 }
 
+function downloadBlob(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 type Props = {
   currentAccountId: string | null
   currentUserId: string | null
@@ -133,6 +147,11 @@ export default function TroubleshootingTab({ currentAccountId, currentUserId }: 
   const [isExporting, setIsExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
   const [lastExportedAt, setLastExportedAt] = useState<string | null>(null)
+
+  const [isExportingServer, setIsExportingServer] = useState(false)
+  const [serverExportError, setServerExportError] = useState<string | null>(null)
+  const [serverExportWarning, setServerExportWarning] = useState<string | null>(null)
+  const [lastServerExportedAt, setLastServerExportedAt] = useState<string | null>(null)
 
   const scopeLabel = useMemo(() => {
     if (currentAccountId) return `account ${currentAccountId}`
@@ -188,6 +207,40 @@ export default function TroubleshootingTab({ currentAccountId, currentUserId }: 
     }
   }
 
+  const exportServerData = async () => {
+    if (!currentAccountId) {
+      setServerExportError('No active account detected. Select an account first.')
+      return
+    }
+
+    setIsExportingServer(true)
+    setServerExportError(null)
+    setServerExportWarning(null)
+
+    try {
+      const { payload, storageReferences = [] } = await exportAccountServerDataForMigration(currentAccountId)
+      const exportedAt = payload.exportedAt
+      const base = `ledger-server-export-${currentAccountId}`
+      downloadJson(`${base}-${exportedAt}.json`, payload)
+
+      if (storageReferences.length) {
+        const { zipBlob, failures, addedCount, totalCount } = await downloadStorageBlobsZip(storageReferences)
+        downloadBlob(`${base}-storage-${exportedAt}.zip`, zipBlob)
+        if (failures.length) {
+          setServerExportWarning(
+            `Downloaded ${addedCount}/${totalCount} storage files. ${failures.length} failed to download.`
+          )
+        }
+      }
+
+      setLastServerExportedAt(exportedAt)
+    } catch (e: any) {
+      setServerExportError(e?.message || 'Failed to export server data')
+    } finally {
+      setIsExportingServer(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="bg-white overflow-hidden shadow rounded-lg">
@@ -216,6 +269,43 @@ export default function TroubleshootingTab({ currentAccountId, currentUserId }: 
           <div className="mt-4">
             <Button onClick={exportOfflineData} disabled={isExporting}>
               {isExporting ? 'Exporting…' : 'Export offline data (JSON)'}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white overflow-hidden shadow rounded-lg">
+        <div className="p-6">
+          <h3 className="text-lg font-medium text-gray-900">Server data export</h3>
+          <p className="mt-1 text-sm text-gray-600">
+            Downloads a JSON export from Supabase (server canonical data) for the currently selected account.
+          </p>
+          <p className="mt-2 text-xs text-gray-500">
+            Scope: {scopeLabel}. This file may contain user emails and other sensitive data—share it only with someone you trust.
+          </p>
+          <p className="mt-2 text-xs text-gray-500">{SERVER_NOTE}</p>
+
+          {serverExportError && (
+            <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-md">
+              <p className="text-sm text-red-800">{serverExportError}</p>
+            </div>
+          )}
+
+          {serverExportWarning && !serverExportError && (
+            <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+              <p className="text-sm text-yellow-800">{serverExportWarning}</p>
+            </div>
+          )}
+
+          {lastServerExportedAt && !serverExportError && (
+            <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-md">
+              <p className="text-sm text-green-800">Exported at {new Date(lastServerExportedAt).toLocaleString()}.</p>
+            </div>
+          )}
+
+          <div className="mt-4">
+            <Button onClick={exportServerData} disabled={isExportingServer || !currentAccountId}>
+              {isExportingServer ? 'Exporting…' : 'Export server account data (JSON)'}
             </Button>
           </div>
         </div>
