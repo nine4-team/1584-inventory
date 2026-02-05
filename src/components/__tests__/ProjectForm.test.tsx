@@ -6,6 +6,17 @@ import { budgetCategoriesService } from '@/services/budgetCategoriesService'
 
 // Mock the services
 vi.mock('@/services/budgetCategoriesService')
+vi.mock('@/contexts/AccountContext', () => ({
+  useAccount: () => ({
+    currentAccountId: 'account-1'
+  })
+}))
+vi.mock('@/components/ui/OfflinePrerequisiteBanner', () => ({
+  useOfflinePrerequisiteGate: () => ({
+    isReady: true,
+    blockingReason: null
+  })
+}))
 
 const mockCategories = [
   { id: 'cat-1', accountId: 'account-1', name: 'Design Fee', slug: 'design-fee', isArchived: false, metadata: null, createdAt: new Date(), updatedAt: new Date() },
@@ -60,6 +71,7 @@ describe('ProjectForm', () => {
     // Form should show validation errors
     await waitFor(() => {
       expect(screen.getByText(/Project name is required/)).toBeInTheDocument()
+      expect(screen.getByText(/Client name is required/)).toBeInTheDocument()
     })
 
     expect(mockOnSubmit).not.toHaveBeenCalled()

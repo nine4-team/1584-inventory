@@ -190,7 +190,7 @@ describe('TransactionItemPicker', () => {
       'account-1',
       'txn-1',
       'item-conflict',
-      { itemPreviousTransactionId: 'txn-prev' }
+      expect.objectContaining({ itemPreviousTransactionId: 'txn-prev', isReturnTransaction: false })
     )
   })
 

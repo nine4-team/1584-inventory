@@ -25,6 +25,38 @@ vi.mock('@/services/taxPresetsService', () => ({
 vi.mock('@/services/vendorDefaultsService', () => ({
   getAvailableVendors: vi.fn().mockResolvedValue([])
 }))
+vi.mock('@/hooks/useNavigationContext', () => ({
+  useNavigationContext: () => ({
+    buildContextUrl: (path: string) => path,
+    getBackDestination: (path: string) => path
+  })
+}))
+vi.mock('@/hooks/useStackedNavigate', () => ({
+  useStackedNavigate: () => vi.fn()
+}))
+vi.mock('@/hooks/useNetworkState', () => ({
+  useNetworkState: () => ({
+    isOnline: true
+  })
+}))
+vi.mock('@/components/ui/OfflinePrerequisiteBanner', () => ({
+  useOfflinePrerequisiteGate: () => ({
+    isReady: true,
+    blockingReason: null
+  })
+}))
+vi.mock('@/components/ui/ToastContext', () => ({
+  useToast: () => ({
+    showSuccess: vi.fn(),
+    showError: vi.fn()
+  })
+}))
+vi.mock('@/components/ContextBackLink', () => ({
+  default: ({ children }: { children: React.ReactNode }) => <div>{children}</div>
+}))
+vi.mock('@/components/TransactionItemsList', () => ({
+  default: () => <div>Transaction Items</div>
+}))
 
 const mockCategories = [
   { id: 'cat-1', accountId: 'account-1', name: 'Design Fee', slug: 'design-fee', isArchived: false, metadata: null, createdAt: new Date(), updatedAt: new Date() },
@@ -66,7 +98,7 @@ describe('AddTransaction - Category Selection', () => {
     )
     
     await waitFor(() => {
-      expect(screen.getByLabelText(/Budget Category/)).toBeInTheDocument()
+      expect(screen.getByText(/Budget Category/)).toBeInTheDocument()
     })
   })
 
@@ -79,14 +111,14 @@ describe('AddTransaction - Category Selection', () => {
     )
     
     await waitFor(() => {
-      expect(screen.getByLabelText(/Budget Category/)).toBeInTheDocument()
+      expect(screen.getByText(/Budget Category/)).toBeInTheDocument()
     })
 
     // Fill in other required fields but not category
     await user.type(screen.getByLabelText(/Amount/), '100.00')
     
     // Try to submit
-    const submitButton = screen.getByRole('button', { name: /Save|Create|Add/ })
+    const submitButton = screen.getByRole('button', { name: /Create Transaction/i })
     await user.click(submitButton)
     
     // Should show validation error
@@ -104,13 +136,12 @@ describe('AddTransaction - Category Selection', () => {
     )
     
     await waitFor(() => {
-      expect(screen.getByLabelText(/Budget Category/)).toBeInTheDocument()
+      expect(screen.getByText(/Budget Category/)).toBeInTheDocument()
     })
 
-    const categorySelect = screen.getByLabelText(/Budget Category/)
-    await user.selectOptions(categorySelect, 'cat-1')
-    
-    expect((categorySelect as HTMLSelectElement).value).toBe('cat-1')
+    const designFeeOption = screen.getByLabelText('Design Fee')
+    await user.click(designFeeOption)
+    expect(designFeeOption).toBeChecked()
   })
 
   it('hides transaction items when itemization is disabled', async () => {
@@ -127,11 +158,11 @@ describe('AddTransaction - Category Selection', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByLabelText(/Budget Category/)).toBeInTheDocument()
+      expect(screen.getByText(/Budget Category/)).toBeInTheDocument()
     })
 
-    const categorySelect = screen.getByLabelText(/Budget Category/)
-    await user.selectOptions(categorySelect, disabledCategories[0].id)
+    const categoryOption = screen.getByLabelText('Design Fee')
+    await user.click(categoryOption)
 
     await waitFor(() => {
       expect(screen.queryByText('Transaction Items')).not.toBeInTheDocument()

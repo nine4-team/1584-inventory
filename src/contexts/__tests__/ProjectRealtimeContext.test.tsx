@@ -24,7 +24,8 @@ vi.mock('@/services/inventoryService', () => ({
   },
   unifiedItemsService: {
     getItemsByProject: (...args: any[]) => mockGetItems(...args),
-    subscribeToProjectItems: (...args: any[]) => mockSubscribeItems(...args)
+    subscribeToProjectItems: (...args: any[]) => mockSubscribeItems(...args),
+    syncProjectItemsRealtimeCache: vi.fn()
   }
 }))
 
@@ -32,6 +33,26 @@ vi.mock('@/services/lineageService', () => ({
   lineageService: {
     subscribeToEdgesFromTransaction: (...args: any[]) => mockSubscribeLineage(...args)
   }
+}))
+
+vi.mock('@/services/spaceService', () => ({
+  spaceService: {
+    listSpaces: vi.fn().mockResolvedValue([])
+  }
+}))
+
+vi.mock('@/utils/queryClient', () => ({
+  getGlobalQueryClient: vi.fn(() => null)
+}))
+
+vi.mock('@/services/networkStatusService', () => ({
+  isNetworkOnline: vi.fn(() => true),
+  getNetworkStatusSnapshot: vi.fn(() => ({ isOnline: true })),
+  subscribeToNetworkStatus: vi.fn(() => () => {})
+}))
+
+vi.mock('@/services/serviceWorker', () => ({
+  onSyncEvent: vi.fn(() => () => {})
 }))
 
 const baseProject = {

@@ -158,8 +158,8 @@ describe('OfflineProjectService.updateProject', () => {
       name: 'Updated Project'
     } as any)
 
-    const operation = mockedOperationQueue.add.mock.calls[0][0]
-    expect(operation.data.updates.version).toBe(2)
+    const metadata = mockedOperationQueue.add.mock.calls[0][1]
+    expect(metadata.version).toBe(2)
   })
 })
 

@@ -1670,9 +1670,6 @@ class OfflineStore {
 
   async upsertItem(item: DBItem): Promise<void> {
     if (!this.db) throw new Error('Database not initialized')
-    const transaction = this.db.transaction(['items'], 'readwrite')
-    const store = transaction.objectStore('items')
-
     // Don't blindly reset version/last_synced_at - preserve existing values unless explicitly updating
     const existing = await this.getItemById(item.itemId)
     if (existing) {
@@ -1684,9 +1681,10 @@ class OfflineStore {
       item.last_synced_at = item.last_synced_at ?? new Date().toISOString()
     }
 
-    store.put(item)
-
     return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction(['items'], 'readwrite')
+      const store = transaction.objectStore('items')
+      store.put(item)
       transaction.oncomplete = () => resolve()
       transaction.onerror = () => reject(transaction.error)
     })

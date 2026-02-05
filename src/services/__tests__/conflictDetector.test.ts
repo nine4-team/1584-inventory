@@ -17,6 +17,9 @@ describe('ConflictDetector', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockedOfflineStore.deleteAllConflictsForProject.mockResolvedValue(undefined as any)
+    mockedOfflineStore.deleteConflictsForProject.mockResolvedValue(undefined as any)
+    mockedOfflineStore.saveConflict.mockResolvedValue(undefined as any)
   })
 
   describe('detectConflicts', () => {
@@ -25,7 +28,7 @@ describe('ConflictDetector', () => {
         {
           itemId: 'item-1',
           accountId: 'acc-123',
-          name: 'Test Item',
+          name: 'Local Item',
           version: 1,
           lastUpdated: '2024-01-01T00:00:00Z'
         }
@@ -36,7 +39,7 @@ describe('ConflictDetector', () => {
           id: 'uuid-1',
           item_id: 'item-1',
           account_id: 'acc-123',
-          name: 'Test Item',
+          name: 'Server Item',
           version: 2,
           last_updated: '2024-01-01T00:01:00Z'
         }
@@ -66,7 +69,7 @@ describe('ConflictDetector', () => {
         {
           itemId: 'item-1',
           accountId: 'acc-123',
-          name: 'Test Item',
+          name: 'Local Item',
           version: 1,
           lastUpdated: '2024-01-01T00:00:00Z'
         }
@@ -77,7 +80,7 @@ describe('ConflictDetector', () => {
           id: 'uuid-1',
           item_id: 'item-1',
           account_id: 'acc-123',
-          name: 'Test Item',
+          name: 'Server Item',
           version: 1,
           last_updated: '2024-01-01T00:10:00Z' // 10 minutes later
         }
