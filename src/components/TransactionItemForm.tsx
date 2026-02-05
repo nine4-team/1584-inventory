@@ -57,6 +57,7 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
   const [imageFiles, setImageFiles] = useState<File[]>(item?.imageFiles || [])
   const [uploadsInFlight, setUploadsInFlight] = useState(0)
   const isUploadingImage = uploadsInFlight > 0
+  const [isImageDragOver, setIsImageDragOver] = useState(false)
 
   const [errors, setErrors] = useState<TransactionItemValidationErrors>({})
   const unsavedPreviewUrlsRef = useRef<Set<string>>(new Set())
@@ -106,50 +107,70 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
   }, [])
 
 
-  const handleSelectFromGallery = async () => {
+  const addImageFiles = async (files: File[]) => {
+    if (!files.length) return
+
     try {
       setUploadsInFlight(count => count + 1)
+      const validFiles = files.filter(file => ImageUploadService.validateImageFile(file))
+      const invalidCount = files.length - validFiles.length
+
+      if (invalidCount > 0) {
+        showError('Some files were skipped. Only image files under 10MB are supported.')
+      }
+
+      if (validFiles.length === 0) {
+        return
+      }
+
+      // Filter out files that are already selected (by name and size)
+      const existingFileNames = new Set(imageFiles.map(f => `${f.name}_${f.size}`))
+      const newFiles = validFiles.filter(file => !existingFileNames.has(`${file.name}_${file.size}`))
+
+      if (newFiles.length > 0) {
+        // Store the files for later upload when the transaction is submitted
+        setImageFiles(prev => [...prev, ...newFiles])
+
+        const baseImageCount = itemImages.length
+
+        const previewImages: ItemImage[] = newFiles.map((file, index) => {
+          let previewUrl: string
+          try {
+            previewUrl = ImageUploadService.createPreviewUrl(file)
+            trackUnsavedPreviewUrl(previewUrl)
+          } catch (error) {
+            console.warn('Failed to create preview URL, falling back to placeholder key', error)
+            previewUrl = `preview_${file.name}_${file.size}_${Date.now()}_${index}`
+          }
+
+          return {
+            url: previewUrl,
+            alt: file.name,
+            isPrimary: baseImageCount === 0 && index === 0,
+            uploadedAt: new Date(),
+            fileName: file.name,
+            size: file.size,
+            mimeType: file.type
+          }
+        })
+
+        setItemImages(prev => [...prev, ...previewImages])
+        console.log('Added', previewImages.length, 'new preview images')
+      } else {
+        console.log('All selected files are already present')
+      }
+    } finally {
+      setUploadsInFlight(count => Math.max(0, count - 1))
+    }
+  }
+
+  const handleSelectFromGallery = async () => {
+    try {
       const files = await ImageUploadService.selectFromGallery()
 
       if (files && files.length > 0) {
         console.log('Selected', files.length, 'files from gallery')
-
-        // Filter out files that are already selected (by name and size)
-        const existingFileNames = new Set(imageFiles.map(f => `${f.name}_${f.size}`))
-        const newFiles = files.filter(file => !existingFileNames.has(`${file.name}_${file.size}`))
-
-        if (newFiles.length > 0) {
-          // Store the files for later upload when the transaction is submitted
-          setImageFiles(prev => [...prev, ...newFiles])
-
-          const baseImageCount = itemImages.length
-
-          const previewImages: ItemImage[] = newFiles.map((file, index) => {
-            let previewUrl: string
-            try {
-              previewUrl = ImageUploadService.createPreviewUrl(file)
-              trackUnsavedPreviewUrl(previewUrl)
-            } catch (error) {
-              console.warn('Failed to create preview URL, falling back to placeholder key', error)
-              previewUrl = `preview_${file.name}_${file.size}_${Date.now()}_${index}`
-            }
-
-            return {
-              url: previewUrl,
-              alt: file.name,
-              isPrimary: baseImageCount === 0 && index === 0,
-              uploadedAt: new Date(),
-              fileName: file.name,
-              size: file.size,
-              mimeType: file.type
-            }
-          })
-
-          setItemImages(prev => [...prev, ...previewImages])
-          console.log('Added', previewImages.length, 'new preview images')
-        } else {
-          console.log('All selected files are already present')
-        }
+        await addImageFiles(files)
       } else {
         console.log('No files selected from gallery')
       }
@@ -164,9 +185,34 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
 
       // Show error for actual failures
       showError('Failed to select images from gallery. Please try again.')
-    } finally {
-      setUploadsInFlight(count => Math.max(0, count - 1))
     }
+  }
+
+  const handleImageDragOver = (event: React.DragEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!isUploadingImage) {
+      setIsImageDragOver(true)
+    }
+  }
+
+  const handleImageDragLeave = (event: React.DragEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setIsImageDragOver(false)
+  }
+
+  const handleImageDrop = async (event: React.DragEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setIsImageDragOver(false)
+
+    if (isUploadingImage) return
+
+    const droppedFiles = Array.from(event.dataTransfer.files || [])
+    if (droppedFiles.length === 0) return
+
+    await addImageFiles(droppedFiles)
   }
 
   const handleRemoveImage = (imageUrl: string) => {
@@ -276,7 +322,15 @@ export default function TransactionItemForm({ item, onSave, onCancel, isEditing 
         )}
 
         {/* Item Images */}
-        <div>
+        <div
+          onDragOver={handleImageDragOver}
+          onDragLeave={handleImageDragLeave}
+          onDrop={handleImageDrop}
+          className={`rounded-lg border border-transparent p-2 transition ${
+            isImageDragOver ? 'border-primary-300 bg-primary-50' : ''
+          }`}
+          aria-label="Item images drop zone"
+        >
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Item Images
           </label>

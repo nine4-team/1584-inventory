@@ -22,7 +22,7 @@ import { getTaxPresets } from '@/services/taxPresetsService'
 import { NO_TAX_PRESET_ID } from '@/constants/taxPresets'
 import { getAvailableVendors } from '@/services/vendorDefaultsService'
 import CategorySelect from '@/components/CategorySelect'
-import TransactionItemsList from '@/components/TransactionItemsList'
+import ItemEntryList from '@/components/ItemEntryList'
 import { RetrySyncButton } from '@/components/ui/RetrySyncButton'
 import { useSyncError } from '@/hooks/useSyncError'
 import { projectTransactionDetail, projectTransactions } from '@/utils/routes'
@@ -1236,7 +1236,7 @@ export default function EditTransaction() {
                   </div>
                 </div>
               )}
-              <TransactionItemsList
+              <ItemEntryList
                 items={items}
                 onItemsChange={(newItems) => {
                   setItems(newItems)

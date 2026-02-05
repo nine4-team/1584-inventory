@@ -14,7 +14,7 @@ import { useAccount } from '@/contexts/AccountContext'
 import { projectService, unifiedItemsService } from '@/services/inventoryService'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { projectSpaces, projectSpaceEdit } from '@/utils/routes'
-import TransactionItemsList from '@/components/TransactionItemsList'
+import ItemEntryList from '@/components/ItemEntryList'
 import AddExistingItemsModal from '@/components/items/AddExistingItemsModal'
 import ExistingItemsPicker from '@/components/items/ExistingItemsPicker'
 import { mapItemToTransactionItemFormData, mapTransactionItemFormDataToItemUpdate } from '@/utils/spaceItemFormMapping'
@@ -37,6 +37,7 @@ export default function SpaceDetail() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const [isImageDragOver, setIsImageDragOver] = useState(false)
   const [showSaveAsTemplateModal, setShowSaveAsTemplateModal] = useState(false)
   const [templateFormData, setTemplateFormData] = useState({ name: '', notes: '' })
   const [isSavingTemplate, setIsSavingTemplate] = useState(false)
@@ -382,18 +383,23 @@ export default function SpaceDetail() {
     void updateChecklists(nextChecklists)
   }
 
-  const handleAddImage = async () => {
+  const uploadSpaceImages = async (files: File[]) => {
     if (!currentAccountId || !space || !project) return
+
+    const validFiles = files.filter(file => ImageUploadService.validateImageFile(file))
+    const invalidCount = files.length - validFiles.length
+
+    if (invalidCount > 0) {
+      showError('Some files were skipped. Only image files under 10MB are supported.')
+    }
+
+    if (validFiles.length === 0) {
+      return
+    }
 
     setIsUploadingImage(true)
     try {
-      const files = await ImageUploadService.selectFromGallery()
-
-      if (!files.length) {
-        return
-      }
-
-      const uploadPromises = files.map(async (file) => {
+      const uploadPromises = validFiles.map(async (file) => {
         const result = await OfflineAwareImageService.uploadSpaceImage(
           file,
           project.name,
@@ -422,6 +428,21 @@ export default function SpaceDetail() {
       showSuccess('Images uploaded')
     } catch (error) {
       console.error('Error uploading images:', error)
+      showError('Failed to upload images')
+    } finally {
+      setIsUploadingImage(false)
+    }
+  }
+
+  const handleAddImage = async () => {
+    if (!currentAccountId || !space || !project) return
+
+    try {
+      const files = await ImageUploadService.selectFromGallery()
+      if (!files.length) return
+      await uploadSpaceImages(files)
+    } catch (error) {
+      console.error('Error uploading images:', error)
 
       if (error instanceof Error) {
         if (error.message?.includes('timeout') || error.message?.includes('canceled')) {
@@ -431,9 +452,34 @@ export default function SpaceDetail() {
       }
 
       showError('Failed to upload images')
-    } finally {
-      setIsUploadingImage(false)
     }
+  }
+
+  const handleImageDragOver = (event: React.DragEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!isUploadingImage) {
+      setIsImageDragOver(true)
+    }
+  }
+
+  const handleImageDragLeave = (event: React.DragEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setIsImageDragOver(false)
+  }
+
+  const handleImageDrop = async (event: React.DragEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setIsImageDragOver(false)
+
+    if (isUploadingImage) return
+
+    const droppedFiles = Array.from(event.dataTransfer.files || [])
+    if (droppedFiles.length === 0) return
+
+    await uploadSpaceImages(droppedFiles)
   }
 
   const handleRemoveImage = async (imageUrl: string) => {
@@ -666,7 +712,7 @@ export default function SpaceDetail() {
         <div className="p-6">
           {activeTab === 'items' && (
             <div id="space-items-container">
-              <TransactionItemsList
+              <ItemEntryList
                 items={spaceItems}
                 onItemsChange={setSpaceItems}
                 onAddItem={handleCreateSpaceItem}
@@ -691,7 +737,15 @@ export default function SpaceDetail() {
           )}
 
           {activeTab === 'images' && (
-            <div>
+            <div
+              onDragOver={handleImageDragOver}
+              onDragLeave={handleImageDragLeave}
+              onDrop={handleImageDrop}
+              className={`rounded-lg border border-transparent p-2 transition ${
+                isImageDragOver ? 'border-primary-300 bg-primary-50' : ''
+              }`}
+              aria-label="Space images drop zone"
+            >
               <div className="flex justify-end mb-4">
                 <div className="flex flex-col items-end gap-1">
                   <button
