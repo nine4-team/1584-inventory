@@ -18,6 +18,7 @@ describe('OfflineStore', () => {
       const testItem = {
         itemId: 'test-123',
         accountId: 'acc-123',
+        projectId: 'project-123',
         name: 'Test Item',
         description: 'Test description',
         version: 1,
@@ -38,6 +39,7 @@ describe('OfflineStore', () => {
       const originalItem = {
         itemId: 'test-123',
         accountId: 'acc-123',
+        projectId: 'project-123',
         name: 'Original Name',
         version: 5,
         last_synced_at: '2024-01-01T00:00:00Z'

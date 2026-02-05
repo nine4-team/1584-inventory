@@ -4,7 +4,7 @@ import ContextLink from '@/components/ContextLink'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react'
-import { Transaction, TransactionCompleteness, BudgetCategory } from '@/types'
+import { Transaction, BudgetCategory } from '@/types'
 import { transactionService, isCanonicalSaleOrPurchaseTransactionId, computeCanonicalTransactionTotal } from '@/services/inventoryService'
 import type { Transaction as TransactionType } from '@/types'
 import { COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
@@ -214,7 +214,6 @@ export default function TransactionsList({ projectId: propProjectId, transaction
   const { buildContextUrl } = useNavigationContext()
   const [transactions, setTransactions] = useState<Transaction[]>(propTransactions || [])
   const [isLoading, setIsLoading] = useState(!propTransactions)
-  const [completenessById, setCompletenessById] = useState<Record<string, TransactionCompleteness | null>>({})
   const [budgetCategories, setBudgetCategories] = useState<BudgetCategory[]>([])
   // Cache for computed totals: transactionId -> computed total string
   const [computedTotalByTxId, setComputedTotalByTxId] = useState<Record<string, string>>({})
@@ -486,8 +485,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
         try {
           const computed = await computeCanonicalTransactionTotal(
             currentAccountId,
-            tx.transactionId,
-            Array.isArray(tx.itemIds) ? tx.itemIds : undefined
+            tx.transactionId
           )
           
           // Only proceed if compute succeeded (non-null)
@@ -579,38 +577,6 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     batchComputeAndHealTotals()
   }, [transactions, currentAccountId, projectId])
 
-  // Load completeness metrics for each transaction to show "Missing items" badge
-  useEffect(() => {
-    let mounted = true
-    const loadCompletenessForTransactions = async () => {
-      if (!projectId || !currentAccountId || transactions.length === 0) return
-      try {
-        // If the backend surfaces `needsReview` on the transaction, we can skip
-        // the per-transaction completeness fetch for the list view to improve perf.
-        const txsToFetch = transactions.filter(t => t.needsReview === undefined)
-        const promises = txsToFetch.map(t =>
-          transactionService.getTransactionCompleteness(currentAccountId, projectId, t.transactionId)
-            .catch(err => {
-              console.debug('Failed to load completeness for', t.transactionId, err)
-              return null
-            })
-        )
-        const results = await Promise.all(promises)
-        if (!mounted) return
-        const map: Record<string, TransactionCompleteness | null> = {}
-        // Populate map only for transactions we fetched
-        txsToFetch.forEach((t, idx) => {
-          map[t.transactionId] = results[idx]
-        })
-        setCompletenessById(map)
-      } catch (err) {
-        console.error('Error loading transaction completeness:', err)
-      }
-    }
-
-    loadCompletenessForTransactions()
-    return () => { mounted = false }
-  }, [transactions, projectId, currentAccountId])
 
   const selectedBudgetCategory = useMemo(
     () => budgetCategories.find(category => category.id === budgetCategoryFilter),
@@ -727,7 +693,6 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     budgetCategoryFilter,
     completenessFilter,
     selectedBudgetCategory,
-    completenessById,
   ])
 
   const handleExportCsv = useCallback(() => {
@@ -1719,13 +1684,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
                           Needs Review
                         </span>
-                      ) : (
-                        completenessById[transaction.transactionId] && completenessById[transaction.transactionId]?.completenessStatus !== 'complete' && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                            Missing Items
-                          </span>
-                        )
-                      )}
+                      ) : null}
                     </div>
 
                   </div>

@@ -1,8 +1,41 @@
 // React import unused in modern JSX runtime; removed to fix TS6133
-import { render, screen, waitFor } from '@testing-library/react'
-import { describe, test, expect } from 'vitest'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { describe, test, expect, vi } from 'vitest'
 import BudgetProgress from '../BudgetProgress'
 import { BudgetCategory, ProjectBudgetCategories, Transaction } from '@/types'
+
+const categoryIds = {
+  furnishings: 'cat-furnishings',
+  install: 'cat-install',
+  storageReceiving: 'cat-storage-receiving',
+  propertyManagement: 'cat-property-management',
+  kitchen: 'cat-kitchen',
+  designFee: 'cat-design-fee',
+  fuel: 'cat-fuel'
+}
+
+vi.mock('@/contexts/AccountContext', () => ({
+  useAccount: () => ({
+    currentAccountId: 'account-1',
+    loading: false
+  })
+}))
+
+vi.mock('@/components/CategorySelect', () => ({
+  useCategories: () => ({
+    categories: [
+      { id: categoryIds.furnishings, name: BudgetCategory.FURNISHINGS },
+      { id: categoryIds.install, name: BudgetCategory.INSTALL },
+      { id: categoryIds.storageReceiving, name: BudgetCategory.STORAGE_RECEIVING },
+      { id: categoryIds.propertyManagement, name: BudgetCategory.PROPERTY_MANAGEMENT },
+      { id: categoryIds.kitchen, name: BudgetCategory.KITCHEN },
+      { id: categoryIds.designFee, name: BudgetCategory.DESIGN_FEE },
+      { id: categoryIds.fuel, name: BudgetCategory.FUEL }
+    ],
+    isLoading: false,
+    error: null
+  })
+}))
 
 const makeTransaction = (overrides: Partial<Transaction>): Transaction => ({
   transactionId: overrides.transactionId || Math.random().toString(36).slice(2),
@@ -21,19 +54,13 @@ const makeTransaction = (overrides: Partial<Transaction>): Transaction => ({
 describe('BudgetProgress calculations', () => {
   test('Furnishings handles purchases and returns correctly', async () => {
     const budgetCategories: ProjectBudgetCategories = {
-      designFee: 0,
-      furnishings: 1000,
-      propertyManagement: 0,
-      kitchen: 0,
-      install: 0,
-      storageReceiving: 0,
-      fuel: 0,
+      [categoryIds.furnishings]: 1000
     }
 
     const transactions: Transaction[] = [
-      makeTransaction({ amount: '300', budgetCategory: BudgetCategory.FURNISHINGS, transactionType: 'Purchase' }),
-      makeTransaction({ amount: '200', budgetCategory: BudgetCategory.FURNISHINGS, transactionType: 'Purchase' }),
-      makeTransaction({ amount: '100', budgetCategory: BudgetCategory.FURNISHINGS, transactionType: 'Return' }),
+      makeTransaction({ amount: '300', categoryId: categoryIds.furnishings, budgetCategory: BudgetCategory.FURNISHINGS, transactionType: 'Purchase' }),
+      makeTransaction({ amount: '200', categoryId: categoryIds.furnishings, budgetCategory: BudgetCategory.FURNISHINGS, transactionType: 'Purchase' }),
+      makeTransaction({ amount: '100', categoryId: categoryIds.furnishings, budgetCategory: BudgetCategory.FURNISHINGS, transactionType: 'Return' })
     ]
 
     const { container } = render(
@@ -64,18 +91,12 @@ describe('BudgetProgress calculations', () => {
 
   test('Install category calculates correctly with multiple purchases', async () => {
     const budgetCategories: ProjectBudgetCategories = {
-      designFee: 0,
-      furnishings: 0,
-      propertyManagement: 0,
-      kitchen: 0,
-      install: 800,
-      storageReceiving: 0,
-      fuel: 0,
+      [categoryIds.install]: 800
     }
 
     const transactions: Transaction[] = [
-      makeTransaction({ amount: '300', budgetCategory: BudgetCategory.INSTALL, transactionType: 'Purchase' }),
-      makeTransaction({ amount: '200', budgetCategory: BudgetCategory.INSTALL, transactionType: 'Purchase' }),
+      makeTransaction({ amount: '300', categoryId: categoryIds.install, budgetCategory: BudgetCategory.INSTALL, transactionType: 'Purchase' }),
+      makeTransaction({ amount: '200', categoryId: categoryIds.install, budgetCategory: BudgetCategory.INSTALL, transactionType: 'Purchase' })
     ]
 
     const { container } = render(
@@ -86,6 +107,8 @@ describe('BudgetProgress calculations', () => {
       />
     )
 
+    const showAllButton = await screen.findByRole('button', { name: /Show All Budget Categories/i })
+    fireEvent.click(showAllButton)
     await waitFor(() => expect(screen.getByText(/Install Budget/)).toBeInTheDocument())
 
     // Spent should be 500
@@ -106,18 +129,12 @@ describe('BudgetProgress calculations', () => {
 
   test('Storage & Receiving handles a return and purchase', async () => {
     const budgetCategories: ProjectBudgetCategories = {
-      designFee: 0,
-      furnishings: 0,
-      propertyManagement: 0,
-      kitchen: 0,
-      install: 0,
-      storageReceiving: 400,
-      fuel: 0,
+      [categoryIds.storageReceiving]: 400
     }
 
     const transactions: Transaction[] = [
-      makeTransaction({ amount: '250', budgetCategory: BudgetCategory.STORAGE_RECEIVING, transactionType: 'Purchase' }),
-      makeTransaction({ amount: '50', budgetCategory: BudgetCategory.STORAGE_RECEIVING, transactionType: 'Return' }),
+      makeTransaction({ amount: '250', categoryId: categoryIds.storageReceiving, budgetCategory: BudgetCategory.STORAGE_RECEIVING, transactionType: 'Purchase' }),
+      makeTransaction({ amount: '50', categoryId: categoryIds.storageReceiving, budgetCategory: BudgetCategory.STORAGE_RECEIVING, transactionType: 'Return' })
     ]
 
     const { container } = render(
@@ -128,6 +145,8 @@ describe('BudgetProgress calculations', () => {
       />
     )
 
+    const showAllButton = await screen.findByRole('button', { name: /Show All Budget Categories/i })
+    fireEvent.click(showAllButton)
     await waitFor(() => expect(screen.getByText(/Storage & Receiving Budget/)).toBeInTheDocument())
 
     // Spent should be 200
@@ -144,19 +163,12 @@ describe('BudgetProgress calculations', () => {
     expect(has50).toBe(true)
   })
 
-  test('Fuel category with zero budget does not render', async () => {
+  test('Fuel category with transactions renders after expanding', async () => {
     const budgetCategories: ProjectBudgetCategories = {
-      designFee: 0,
-      furnishings: 0,
-      propertyManagement: 0,
-      kitchen: 0,
-      install: 0,
-      storageReceiving: 0,
-      fuel: 0,
     }
 
     const transactions: Transaction[] = [
-      makeTransaction({ amount: '50', budgetCategory: BudgetCategory.FUEL, transactionType: 'Purchase' }),
+      makeTransaction({ amount: '50', categoryId: categoryIds.fuel, budgetCategory: BudgetCategory.FUEL, transactionType: 'Purchase' })
     ]
 
     render(
@@ -167,29 +179,21 @@ describe('BudgetProgress calculations', () => {
       />
     )
 
-    // Fuel has zero budget defined so it should not show a category row
-    await waitFor(() => {
-      const fuelLabel = screen.queryByText(/Fuel Budget/)
-      expect(fuelLabel).toBeNull()
-    })
+    const showAllButton = await screen.findByRole('button', { name: /Show All Budget Categories/i })
+    fireEvent.click(showAllButton)
+
+    await waitFor(() => expect(screen.getByText(/Fuel Budget/)).toBeInTheDocument())
   })
 
   test('Design Fee tracks received and remaining correctly', async () => {
     const budgetCategories: ProjectBudgetCategories = {
-      designFee: 0,
-      furnishings: 0,
-      propertyManagement: 0,
-      kitchen: 0,
-      install: 0,
-      storageReceiving: 0,
-      fuel: 0,
     }
 
     const designFeeAmount = 1000
 
     const transactions: Transaction[] = [
-      makeTransaction({ amount: '400', budgetCategory: BudgetCategory.DESIGN_FEE, transactionType: 'Purchase' }),
-      makeTransaction({ amount: '100', budgetCategory: BudgetCategory.DESIGN_FEE, transactionType: 'Return' }),
+      makeTransaction({ amount: '400', categoryId: categoryIds.designFee, budgetCategory: BudgetCategory.DESIGN_FEE, transactionType: 'Purchase' }),
+      makeTransaction({ amount: '100', categoryId: categoryIds.designFee, budgetCategory: BudgetCategory.DESIGN_FEE, transactionType: 'Return' })
     ]
 
     const { container } = render(
@@ -198,6 +202,7 @@ describe('BudgetProgress calculations', () => {
         designFee={designFeeAmount}
         budgetCategories={budgetCategories}
         transactions={transactions}
+        previewMode
       />
     )
 
@@ -220,17 +225,11 @@ describe('BudgetProgress calculations', () => {
 
   test('Kitchen caps at 100% and shows negative remaining when over budget', async () => {
     const budgetCategories: ProjectBudgetCategories = {
-      designFee: 0,
-      furnishings: 0,
-      propertyManagement: 0,
-      kitchen: 500,
-      install: 0,
-      storageReceiving: 0,
-      fuel: 0,
+      [categoryIds.kitchen]: 500
     }
 
     const transactions: Transaction[] = [
-      makeTransaction({ amount: '600', budgetCategory: BudgetCategory.KITCHEN, transactionType: 'Purchase' }),
+      makeTransaction({ amount: '600', categoryId: categoryIds.kitchen, budgetCategory: BudgetCategory.KITCHEN, transactionType: 'Purchase' })
     ]
 
     const { container } = render(
@@ -241,6 +240,8 @@ describe('BudgetProgress calculations', () => {
       />
     )
 
+    const showAllButton = await screen.findByRole('button', { name: /Show All Budget Categories/i })
+    fireEvent.click(showAllButton)
     await waitFor(() => expect(screen.getByText(/Kitchen Budget/)).toBeInTheDocument())
 
     // Spent should be 600
@@ -260,18 +261,12 @@ describe('BudgetProgress calculations', () => {
 
   test('Property Management counts returns correctly', async () => {
     const budgetCategories: ProjectBudgetCategories = {
-      designFee: 0,
-      furnishings: 0,
-      propertyManagement: 200,
-      kitchen: 0,
-      install: 0,
-      storageReceiving: 0,
-      fuel: 0,
+      [categoryIds.propertyManagement]: 200
     }
 
     const transactions: Transaction[] = [
-      makeTransaction({ amount: '100', budgetCategory: BudgetCategory.PROPERTY_MANAGEMENT, transactionType: 'Purchase' }),
-      makeTransaction({ amount: '50', budgetCategory: BudgetCategory.PROPERTY_MANAGEMENT, transactionType: 'Return' }),
+      makeTransaction({ amount: '100', categoryId: categoryIds.propertyManagement, budgetCategory: BudgetCategory.PROPERTY_MANAGEMENT, transactionType: 'Purchase' }),
+      makeTransaction({ amount: '50', categoryId: categoryIds.propertyManagement, budgetCategory: BudgetCategory.PROPERTY_MANAGEMENT, transactionType: 'Return' })
     ]
 
     const { container } = render(
@@ -282,6 +277,8 @@ describe('BudgetProgress calculations', () => {
       />
     )
 
+    const showAllButton = await screen.findByRole('button', { name: /Show All Budget Categories/i })
+    fireEvent.click(showAllButton)
     await waitFor(() => expect(screen.getByText(/Property Management Budget/)).toBeInTheDocument())
 
     // Spent should be 100 - 50 = 50

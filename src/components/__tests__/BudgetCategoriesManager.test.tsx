@@ -1,13 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import BudgetCategoriesManager from '../BudgetCategoriesManager'
 import { budgetCategoriesService } from '@/services/budgetCategoriesService'
 import { useAccount } from '@/contexts/AccountContext'
+import { getDefaultCategory, setDefaultCategory, setBudgetCategoryOrder } from '@/services/accountPresetsService'
 
 // Mock the services and contexts
 vi.mock('@/services/budgetCategoriesService')
 vi.mock('@/contexts/AccountContext')
+vi.mock('@/services/accountPresetsService')
+vi.mock('@/hooks/useNetworkState', () => ({
+  useNetworkState: () => ({ isOnline: true })
+}))
+vi.mock('../ui/OfflinePrerequisiteBanner', () => ({
+  useOfflinePrerequisiteGate: () => ({ isReady: true, blockingReason: null })
+}))
 
 const mockCategories = [
   { id: 'cat-1', accountId: 'account-1', name: 'Design Fee', slug: 'design-fee', isArchived: false, metadata: null, createdAt: new Date(), updatedAt: new Date() },
@@ -28,6 +36,9 @@ describe('BudgetCategoriesManager', () => {
       loading: false
     })
     vi.mocked(budgetCategoriesService.getCategories).mockResolvedValue(mockCategories.filter(c => !c.isArchived))
+    vi.mocked(getDefaultCategory).mockResolvedValue(null)
+    vi.mocked(setDefaultCategory).mockResolvedValue(undefined)
+    vi.mocked(setBudgetCategoryOrder).mockResolvedValue(undefined)
   })
 
   it('should render categories list', async () => {
@@ -39,20 +50,19 @@ describe('BudgetCategoriesManager', () => {
     })
   })
 
-  it('should show create form when "Add Category" is clicked', async () => {
+  it('should show create form when create row is clicked', async () => {
     const user = userEvent.setup()
     render(<BudgetCategoriesManager />)
     
     await waitFor(() => {
-      expect(screen.getByText('Add Category')).toBeInTheDocument()
+      expect(screen.getByText('Click to create new category')).toBeInTheDocument()
     })
 
-    const addButton = screen.getByText('Add Category')
-    await user.click(addButton)
+    await user.click(screen.getByText('Click to create new category'))
     
     await waitFor(() => {
-      expect(screen.getByText('Create New Category')).toBeInTheDocument()
-      expect(screen.getByLabelText(/Name/)).toBeInTheDocument()
+      expect(screen.getByText('Create budget category')).toBeInTheDocument()
+      expect(screen.getByLabelText(/Category Name/)).toBeInTheDocument()
     })
   })
 
@@ -75,23 +85,23 @@ describe('BudgetCategoriesManager', () => {
     render(<BudgetCategoriesManager />)
     
     await waitFor(() => {
-      expect(screen.getByText('Add Category')).toBeInTheDocument()
+      expect(screen.getByText('Click to create new category')).toBeInTheDocument()
     })
 
-    // Click Add Category
-    await user.click(screen.getByText('Add Category'))
+    // Click create row
+    await user.click(screen.getByText('Click to create new category'))
     
     await waitFor(() => {
-      expect(screen.getByLabelText(/Name/)).toBeInTheDocument()
+      expect(screen.getByLabelText(/Category Name/)).toBeInTheDocument()
     })
 
     // Fill in form
-    const nameInput = screen.getByLabelText(/Name/)
+    const nameInput = screen.getByLabelText(/Category Name/)
     
     await user.type(nameInput, 'New Category')
 
     // Submit form
-    const saveButton = screen.getByRole('button', { name: /Create|Save/ })
+    const saveButton = screen.getByRole('button', { name: /Create category/i })
     await user.click(saveButton)
     
     await waitFor(() => {
@@ -111,7 +121,9 @@ describe('BudgetCategoriesManager', () => {
     }
 
     vi.mocked(budgetCategoriesService.updateCategory).mockResolvedValue(updatedCategory)
-    vi.mocked(budgetCategoriesService.getCategories).mockResolvedValue([updatedCategory, mockCategories[1]])
+    vi.mocked(budgetCategoriesService.getCategories)
+      .mockResolvedValueOnce(mockCategories.filter(c => !c.isArchived))
+      .mockResolvedValueOnce([updatedCategory, mockCategories[1]])
 
     render(<BudgetCategoriesManager />)
     
@@ -119,9 +131,10 @@ describe('BudgetCategoriesManager', () => {
       expect(screen.getByText('Design Fee')).toBeInTheDocument()
     })
 
-    // Find and click Edit button
-    const editButtons = screen.getAllByText('Edit')
-    await user.click(editButtons[0])
+    // Open actions menu, then click Edit
+    const actionButtons = screen.getAllByRole('button', { name: /Open actions/i })
+    await user.click(actionButtons[0])
+    await user.click(screen.getByText('Edit'))
     
     await waitFor(() => {
       const nameInput = screen.getByDisplayValue('Design Fee')
@@ -134,7 +147,9 @@ describe('BudgetCategoriesManager', () => {
     await user.type(nameInput, 'Updated Design Fee')
 
     // Save
-    const saveButton = screen.getByRole('button', { name: /Save/ })
+    const row = nameInput.closest('tr')
+    if (!row) throw new Error('Edit row not found')
+    const saveButton = within(row).getByRole('button', { name: /Save/ })
     await user.click(saveButton)
     
     await waitFor(() => {
@@ -183,7 +198,9 @@ describe('BudgetCategoriesManager', () => {
     const archivedCategory = { ...mockCategories[0], isArchived: true }
 
     vi.mocked(budgetCategoriesService.archiveCategory).mockResolvedValue(archivedCategory)
-    vi.mocked(budgetCategoriesService.getCategories).mockResolvedValue([mockCategories[1]])
+    vi.mocked(budgetCategoriesService.getCategories)
+      .mockResolvedValueOnce(mockCategories.filter(c => !c.isArchived))
+      .mockResolvedValueOnce([mockCategories[1]])
 
     render(<BudgetCategoriesManager />)
     
@@ -191,9 +208,10 @@ describe('BudgetCategoriesManager', () => {
       expect(screen.getByText('Design Fee')).toBeInTheDocument()
     })
 
-    // Find and click Archive button
-    const archiveButtons = screen.getAllByText('Archive')
-    await user.click(archiveButtons[0])
+    // Open actions menu, then click Archive
+    const actionButtons = screen.getAllByRole('button', { name: /Open actions/i })
+    await user.click(actionButtons[0])
+    await user.click(screen.getByText('Archive'))
     
     await waitFor(() => {
       expect(budgetCategoriesService.archiveCategory).toHaveBeenCalledWith('account-1', 'cat-1')
@@ -206,7 +224,7 @@ describe('BudgetCategoriesManager', () => {
 
   // transaction counts removed from settings UI
 
-  it('should show archived categories when toggle is clicked', async () => {
+  it('should hide archived categories when toggle is clicked', async () => {
     const user = userEvent.setup()
     vi.mocked(budgetCategoriesService.getCategories).mockResolvedValue(mockCategories)
 
@@ -216,13 +234,13 @@ describe('BudgetCategoriesManager', () => {
       expect(screen.getByText('Design Fee')).toBeInTheDocument()
     })
 
-    // Find "Show Archived" button
-    const showArchivedButton = screen.getByText(/Show.*Archived/i)
-    await user.click(showArchivedButton)
+    // Find "Hide Archived" button (default shows archived)
+    const hideArchivedButton = screen.getByText(/Hide.*Archived/i)
+    await user.click(hideArchivedButton)
     
     await waitFor(() => {
-      expect(budgetCategoriesService.getCategories).toHaveBeenCalledWith('account-1', true)
-      expect(screen.getByText('Archived Category')).toBeInTheDocument()
+      expect(budgetCategoriesService.getCategories).toHaveBeenCalledWith('account-1', false)
+      expect(screen.queryByText('Archived Category')).not.toBeInTheDocument()
     })
   })
 
@@ -259,17 +277,17 @@ describe('BudgetCategoriesManager', () => {
     render(<BudgetCategoriesManager />)
     
     await waitFor(() => {
-      expect(screen.getByText('Add Category')).toBeInTheDocument()
+      expect(screen.getByText('Click to create new category')).toBeInTheDocument()
     })
 
-    await user.click(screen.getByText('Add Category'))
+    await user.click(screen.getByText('Click to create new category'))
     
     await waitFor(() => {
-      expect(screen.getByLabelText(/Name/)).toBeInTheDocument()
+      expect(screen.getByLabelText(/Category Name/)).toBeInTheDocument()
     })
 
-    await user.type(screen.getByLabelText(/Name/), 'New Category')
-    await user.click(screen.getByRole('button', { name: /Create/ }))
+    await user.type(screen.getByLabelText(/Category Name/), 'New Category')
+    await user.click(screen.getByRole('button', { name: /Create category/i }))
     
     await waitFor(() => {
       expect(screen.getByText(/Category created successfully/)).toBeInTheDocument()

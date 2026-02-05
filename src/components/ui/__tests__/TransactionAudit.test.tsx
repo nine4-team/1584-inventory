@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import TransactionAudit from '../TransactionAudit'
-import type { Transaction, TransactionCompleteness } from '@/types'
+import type { Item, Transaction, TransactionCompleteness } from '@/types'
 
 const inventoryServiceMocks = vi.hoisted(() => ({
   getTransactionCompleteness: vi.fn<[], Promise<TransactionCompleteness>>()
@@ -70,5 +70,40 @@ describe('TransactionAudit amount immutability', () => {
       return text.includes('$725.00')
     })
     expect(subtotalDisplays.length).toBeGreaterThan(0)
+  })
+
+  it('allows injecting the edit-item navigation href', async () => {
+    const transaction = {
+      transactionId: 'txn-1',
+      projectId: 'project-1',
+      amount: '725.00',
+      transactionType: 'Purchase',
+      source: 'Vendor',
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      createdBy: 'user-1',
+      paymentMethod: 'Card'
+    } as unknown as Transaction
+
+    const missingPriceItem = {
+      itemId: 'item-1',
+      description: 'Lamp',
+      sku: 'SKU-1',
+      purchasePrice: ''
+    } as unknown as Item
+
+    render(
+      <TransactionAudit
+        transaction={transaction}
+        projectId="project-1"
+        transactionItems={[missingPriceItem]}
+        getItemEditHref={(item) => `/custom/edit/${item.itemId}`}
+      />
+    )
+
+    await waitFor(() => expect(inventoryServiceMocks.getTransactionCompleteness).toHaveBeenCalledTimes(1))
+
+    const link = await screen.findByRole('link', { name: /edit price/i })
+    expect(link).toHaveAttribute('href', '/custom/edit/item-1')
   })
 })

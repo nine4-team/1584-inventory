@@ -192,18 +192,55 @@ const isCanonicalAmountTransactionId = (transactionId: string | null | undefined
   return isCanonicalSaleOrPurchaseTransactionId(transactionId)
 }
 
+type NotifyTransactionChangedDiagnosticsContext = {
+  accountId: string
+  transactionId: string
+  reason?: string
+  caller?: string
+  deltaSum?: number | string
+  flushImmediately?: boolean
+}
+
+const notifyTransactionChangedDiagnostics = {
+  counts: new Map<string, number>(),
+  lastLogAt: 0
+}
+
+const recordNotifyTransactionChangedDiagnostics = (context: NotifyTransactionChangedDiagnosticsContext): void => {
+  const reason = context.reason ?? 'unknown'
+  const caller = context.caller ?? 'unknown'
+  const key = `${reason}::${caller}`
+  const next = (notifyTransactionChangedDiagnostics.counts.get(key) ?? 0) + 1
+  notifyTransactionChangedDiagnostics.counts.set(key, next)
+
+  const now = Date.now()
+  const shouldLog = next === 1 || next % 25 === 0 || now - notifyTransactionChangedDiagnostics.lastLogAt > 60000
+  if (shouldLog) {
+    notifyTransactionChangedDiagnostics.lastLogAt = now
+    console.debug('notifyTransactionChanged diagnostics:', {
+      key,
+      count: next,
+      reason,
+      caller,
+      transactionId: context.transactionId,
+      flushImmediately: context.flushImmediately,
+      deltaSum: context.deltaSum
+    })
+  }
+}
+
 /**
  * Compute the canonical transaction total from associated items.
  * Includes items that are moved out via lineage edges.
  * 
  * @param accountId - Account ID
  * @param transactionId - Canonical transaction ID
- * @param itemIds - Optional array of item IDs to use (if not provided, fetches from transaction.item_ids)
- * @param lineageEdges - Optional array of lineage edges (if not provided, fetches edges from transaction)
+ * @param itemIds - Optional array of item IDs to use (if not provided, queries items by transaction_id)
+ * @param lineageEdges - Optional array of lineage edges (if not provided, fetches edges from transaction). Correction edges are excluded.
  * @returns Computed total as string with fixed 2 decimals on success, or null if compute fails
  * 
  * Returns null when:
- * - Transaction row missing / cannot be fetched (when itemIds not provided)
+ * - Current item IDs cannot be fetched (when itemIds not provided)
  * - Items query fails (Supabase error) for the union of itemIds + moved-out IDs
  * 
  * Still returns a number (not null) when:
@@ -214,7 +251,7 @@ export const computeCanonicalTransactionTotal = async (
   accountId: string,
   transactionId: string,
   itemIds?: string[],
-  lineageEdges?: Array<{ itemId: string }>
+  lineageEdges?: Array<{ itemId: string; movementKind?: string | null }>
 ): Promise<string | null> => {
   await ensureAuthenticatedForDatabase()
 
@@ -223,30 +260,33 @@ export const computeCanonicalTransactionTotal = async (
   if (itemIds && itemIds.length > 0) {
     resolvedItemIds = itemIds
   } else {
-    // Fetch transaction to get item_ids
-    const { data: transaction, error: txError } = await supabase
-      .from('transactions')
-      .select('item_ids')
+    // Query current items by transaction_id (truth), rather than relying on transaction.item_ids (cache)
+    const { data: rows, error: itemsIdError } = await supabase
+      .from('items')
+      .select('item_id')
       .eq('account_id', accountId)
       .eq('transaction_id', transactionId)
-      .single()
 
-    if (txError || !transaction) {
-      console.warn('computeCanonicalTransactionTotal - transaction not found (compute failure):', transactionId)
+    if (itemsIdError) {
+      console.warn('computeCanonicalTransactionTotal - failed to fetch current item ids (compute failure):', itemsIdError)
       return null
     }
 
-    resolvedItemIds = Array.isArray(transaction.item_ids) ? transaction.item_ids : []
+    resolvedItemIds = (rows || [])
+      .map((r: any) => r?.item_id)
+      .filter((id: any): id is string => typeof id === 'string' && id.length > 0)
   }
 
   // Resolve lineage edges if not provided
-  let resolvedEdges: Array<{ itemId: string }> = []
+  let resolvedEdges: Array<{ itemId: string; movementKind?: string | null }> = []
   if (lineageEdges) {
     resolvedEdges = lineageEdges
   } else {
     try {
       const edges = await lineageService.getEdgesFromTransaction(transactionId, accountId)
-      resolvedEdges = edges.map(edge => ({ itemId: edge.itemId }))
+      resolvedEdges = edges
+        .filter(edge => edge.movementKind !== 'correction')
+        .map(edge => ({ itemId: edge.itemId, movementKind: edge.movementKind }))
     } catch (error) {
       console.warn('computeCanonicalTransactionTotal - failed to fetch lineage edges (non-fatal):', error)
       // Continue without moved-out items - this is NOT a compute failure
@@ -256,7 +296,9 @@ export const computeCanonicalTransactionTotal = async (
 
   // Collect all item IDs (current + moved-out)
   const allItemIds = new Set<string>(resolvedItemIds)
-  resolvedEdges.forEach(edge => allItemIds.add(edge.itemId))
+  resolvedEdges
+    .filter(edge => edge.movementKind !== 'correction')
+    .forEach(edge => allItemIds.add(edge.itemId))
 
   // Empty item set is valid - return "0.00" (not null)
   if (allItemIds.size === 0) {
@@ -1958,10 +2000,23 @@ export const transactionService = {
   async adjustSumItemPurchasePrices(accountId: string, transactionId: string, delta: number | string): Promise<string> {
     return await _adjustSumItemPurchasePrices(accountId, transactionId, delta)
   },
-  async notifyTransactionChanged(accountId: string, transactionId: string, opts?: { deltaSum?: number | string; flushImmediately?: boolean }): Promise<void> {
+  async notifyTransactionChanged(
+    accountId: string,
+    transactionId: string,
+    opts?: { deltaSum?: number | string; flushImmediately?: boolean; reason?: string; caller?: string }
+  ): Promise<void> {
     const deltaSum = opts?.deltaSum
     const flushImmediately = opts?.flushImmediately
     const isCanonicalAmount = isCanonicalAmountTransactionId(transactionId)
+
+    recordNotifyTransactionChangedDiagnostics({
+      accountId,
+      transactionId,
+      reason: opts?.reason,
+      caller: opts?.caller,
+      deltaSum,
+      flushImmediately
+    })
 
     // Only non-canonical transactions rely on client-provided deltas
     if (deltaSum !== undefined && !isCanonicalAmount) {
@@ -2255,38 +2310,30 @@ export const transactionService = {
   ): Promise<TransactionCompleteness> {
     await ensureAuthenticatedForDatabase()
 
-    // Get transaction and associated items. Prefer the itemIds stored on the
-    // transaction record so we include deallocated/moved items that no longer
-    // have this transaction_id—mirrors TransactionDetail logic. Fall back to
-    // a direct items query when itemIds is empty.
+    // Get transaction and associated items using the canonical item set:
+    // - current items where item.transaction_id === transactionId
+    // - moved-out items via lineage edges (excluding correction edges)
     const transaction = await this.getTransaction(accountId, projectId, transactionId)
 
     if (!transaction) {
       throw new Error('Transaction not found')
     }
 
-    const itemIdsFromTransaction = Array.isArray((transaction as any).itemIds)
-      ? ((transaction as any).itemIds as string[])
-      : []
-
-    let items: Item[]
-    if (itemIdsFromTransaction.length > 0) {
-      const itemPromises = itemIdsFromTransaction.map(itemId =>
-        unifiedItemsService.getItemById(accountId, itemId)
-      )
-      const fetched = await Promise.all(itemPromises)
-      items = fetched.filter((item): item is Item => item !== null)
-    } else {
-      items = await unifiedItemsService.getItemsForTransaction(accountId, projectId, transactionId)
-    }
+    const items = await unifiedItemsService.getItemsForTransaction(accountId, projectId, transactionId)
 
     // Include items that were moved out of this transaction by consulting lineage edges.
     // The UI displays both "in transaction" and "moved out" items; completeness should
     // count both sets when the item has this transaction in its lineage.
     let combinedItems = items.slice()
+    let edgesFromTransaction: ItemLineageEdge[] = []
+    let movedOutItemIds: string[] = []
     try {
-      const edgesFromTransaction = await lineageService.getEdgesFromTransaction(transactionId, accountId)
-      const movedOutItemIds = Array.from(new Set(edgesFromTransaction.map(edge => edge.itemId)))
+      edgesFromTransaction = await lineageService.getEdgesFromTransaction(transactionId, accountId)
+      movedOutItemIds = Array.from(new Set(
+        edgesFromTransaction
+          .filter(edge => edge.movementKind !== 'correction')
+          .map(edge => edge.itemId)
+      ))
 
       // Fetch any moved item records that aren't already in the items list
       const missingMovedItemIds = movedOutItemIds.filter(id => !combinedItems.some(it => it.itemId === id))
@@ -2296,121 +2343,104 @@ export const transactionService = {
         const validMovedItems = movedItems.filter(mi => mi !== null) as Item[]
         combinedItems = combinedItems.concat(validMovedItems)
       }
-
-      // IMPORTANT: Avoid "ghost completeness".
-      // If a transaction row has stale/incorrect `itemIds`, those items may no longer be
-      // attached to this transaction AND may not have a lineage edge. In that case, the
-      // Transaction Detail UI will often show 0 items, but completeness would still count
-      // them unless we filter here.
-      //
-      // We only count an item if:
-      // - it is currently attached (item.transactionId === transactionId), OR
-      // - it is explicitly moved-out via lineage (edge from this transaction), OR
-      // - it has legacy lineage pointers indicating association (latest/origin/previous).
-      const movedOutSet = new Set<string>(movedOutItemIds)
-      combinedItems = combinedItems.filter(item => {
-        const currentTxId = (item as any).transactionId ?? null
-        if (currentTxId === transactionId) return true
-        if (movedOutSet.has(item.itemId)) return true
-        const latestTxId = (item as any).latestTransactionId ?? null
-        const originTxId = (item as any).originTransactionId ?? null
-        const previousProjectTxId = (item as any).previousProjectTransactionId ?? null
-        return latestTxId === transactionId || originTxId === transactionId || previousProjectTxId === transactionId
-      })
     } catch (edgeErr) {
       // Non-fatal: if lineage lookup fails, fall back to items returned by getItemsForTransaction
       console.debug('getTransactionCompleteness - failed to fetch lineage edges:', edgeErr)
     }
 
-    // Calculate items net total using purchase price for audit consistency.
-    const resolveItemPrice = (item: Item) => {
-      const candidate = item.purchasePrice
-      const parsed = parseFloat(candidate || '0')
-      return isNaN(parsed) ? 0 : parsed
-    }
+    const computeCompletenessFromItems = async (itemsForCompleteness: Item[]): Promise<TransactionCompleteness> => {
+      // Calculate items net total using purchase price for audit consistency.
+      const resolveItemPrice = (item: Item) => {
+        const candidate = item.purchasePrice
+        const parsed = parseFloat(candidate || '0')
+        return isNaN(parsed) ? 0 : parsed
+      }
 
-    const itemsNetTotal = combinedItems.reduce((sum, item) => {
-      return sum + resolveItemPrice(item)
-    }, 0)
+      const itemsNetTotal = itemsForCompleteness.reduce((sum, item) => {
+        return sum + resolveItemPrice(item)
+      }, 0)
 
-    const itemsCount = combinedItems.length
-    const itemsMissingPriceCount = combinedItems.filter(item => {
-      const candidate = item.purchasePrice
-      if (!candidate || candidate.trim() === '') return true
-      const parsed = parseFloat(candidate)
-      return isNaN(parsed) || parsed === 0
-    }).length
+      const itemsCount = itemsForCompleteness.length
+      const itemsMissingPriceCount = itemsForCompleteness.filter(item => {
+        const candidate = item.purchasePrice
+        if (!candidate || candidate.trim() === '') return true
+        const parsed = parseFloat(candidate)
+        return isNaN(parsed) || parsed === 0
+      }).length
 
-    // Calculate transaction subtotal (pre-tax amount)
-    const transactionAmount = parseFloat(transaction.amount || '0')
-    let transactionSubtotal = 0
-    let inferredTax: number | undefined
-    let taxAmount: number | undefined
-    let missingTaxData = false
+      // Calculate transaction subtotal (pre-tax amount)
+      const transactionAmount = parseFloat(transaction.amount || '0')
+      let transactionSubtotal = 0
+      let inferredTax: number | undefined
+      let taxAmount: number | undefined
+      let missingTaxData = false
 
-    // If subtotal is stored, use it
-    if (transaction.subtotal) {
-      transactionSubtotal = parseFloat(transaction.subtotal)
-    } else if (transaction.taxRatePct !== undefined && transaction.taxRatePct !== null) {
-      // Infer subtotal from tax rate: subtotal = total / (1 + taxRate/100)
-      const taxRate = transaction.taxRatePct / 100
-      transactionSubtotal = transactionAmount / (1 + taxRate)
-      inferredTax = transactionAmount - transactionSubtotal
-      // Round to cents
-      transactionSubtotal = Math.round(transactionSubtotal * 100) / 100
-      inferredTax = Math.round(inferredTax * 100) / 100
-    } else if (transaction.taxRatePreset) {
-      try {
-        const preset = await getTaxPresetById(accountId, transaction.taxRatePreset)
-        if (preset) {
-          const taxRate = preset.rate / 100
-          transactionSubtotal = transactionAmount / (1 + taxRate)
-          inferredTax = transactionAmount - transactionSubtotal
-          transactionSubtotal = Math.round(transactionSubtotal * 100) / 100
-          inferredTax = Math.round(inferredTax * 100) / 100
-        } else {
+      // If subtotal is stored, use it
+      if (transaction.subtotal) {
+        transactionSubtotal = parseFloat(transaction.subtotal)
+      } else if (transaction.taxRatePct !== undefined && transaction.taxRatePct !== null) {
+        // Infer subtotal from tax rate: subtotal = total / (1 + taxRate/100)
+        const taxRate = transaction.taxRatePct / 100
+        transactionSubtotal = transactionAmount / (1 + taxRate)
+        inferredTax = transactionAmount - transactionSubtotal
+        // Round to cents
+        transactionSubtotal = Math.round(transactionSubtotal * 100) / 100
+        inferredTax = Math.round(inferredTax * 100) / 100
+      } else if (transaction.taxRatePreset) {
+        try {
+          const preset = await getTaxPresetById(accountId, transaction.taxRatePreset)
+          if (preset) {
+            const taxRate = preset.rate / 100
+            transactionSubtotal = transactionAmount / (1 + taxRate)
+            inferredTax = transactionAmount - transactionSubtotal
+            transactionSubtotal = Math.round(transactionSubtotal * 100) / 100
+            inferredTax = Math.round(inferredTax * 100) / 100
+          } else {
+            transactionSubtotal = transactionAmount
+            missingTaxData = true
+          }
+        } catch (presetError) {
+          console.warn('getTransactionCompleteness - failed to resolve tax preset:', presetError)
           transactionSubtotal = transactionAmount
           missingTaxData = true
         }
-      } catch (presetError) {
-        console.warn('getTransactionCompleteness - failed to resolve tax preset:', presetError)
+      } else {
+        // Fall back to gross total when tax data is missing
         transactionSubtotal = transactionAmount
         missingTaxData = true
       }
-    } else {
-      // Fall back to gross total when tax data is missing
-      transactionSubtotal = transactionAmount
-      missingTaxData = true
+
+      // Calculate completeness ratio
+      // If no items, ratio is 0; if no subtotal but items exist, treat as incomplete (100% variance)
+      const completenessRatio = transactionSubtotal > 0 
+        ? itemsNetTotal / transactionSubtotal 
+        : (itemsCount > 0 ? 0 : 0) // 0 when no items, 0 when no subtotal (will show as incomplete)
+
+      // Calculate variance
+      const varianceDollars = itemsNetTotal - transactionSubtotal
+      const variancePercent = transactionSubtotal > 0 
+        ? (varianceDollars / transactionSubtotal) * 100 
+        : (itemsCount > 0 ? -100 : 0) // -100% when items exist but no subtotal, 0 when no items
+
+      // Determine completeness status based on tolerance bands
+      const completenessStatus = this._calculateCompletenessStatus(completenessRatio, variancePercent)
+
+      return {
+        itemsNetTotal: Math.round(itemsNetTotal * 100) / 100,
+        itemsCount,
+        itemsMissingPriceCount,
+        transactionSubtotal: Math.round(transactionSubtotal * 100) / 100,
+        completenessRatio,
+        completenessStatus,
+        missingTaxData,
+        inferredTax,
+        taxAmount,
+        varianceDollars: Math.round(varianceDollars * 100) / 100,
+        variancePercent: Math.round(variancePercent * 100) / 100
+      }
     }
 
-    // Calculate completeness ratio
-    // If no items, ratio is 0; if no subtotal but items exist, treat as incomplete (100% variance)
-    const completenessRatio = transactionSubtotal > 0 
-      ? itemsNetTotal / transactionSubtotal 
-      : (itemsCount > 0 ? 0 : 0) // 0 when no items, 0 when no subtotal (will show as incomplete)
-
-    // Calculate variance
-    const varianceDollars = itemsNetTotal - transactionSubtotal
-    const variancePercent = transactionSubtotal > 0 
-      ? (varianceDollars / transactionSubtotal) * 100 
-      : (itemsCount > 0 ? -100 : 0) // -100% when items exist but no subtotal, 0 when no items
-
-    // Determine completeness status based on tolerance bands
-    const completenessStatus = this._calculateCompletenessStatus(completenessRatio, variancePercent)
-
-    return {
-      itemsNetTotal: Math.round(itemsNetTotal * 100) / 100,
-      itemsCount,
-      itemsMissingPriceCount,
-      transactionSubtotal: Math.round(transactionSubtotal * 100) / 100,
-      completenessRatio,
-      completenessStatus,
-      missingTaxData,
-      inferredTax,
-      taxAmount,
-      varianceDollars: Math.round(varianceDollars * 100) / 100,
-      variancePercent: Math.round(variancePercent * 100) / 100
-    }
+    return await computeCompletenessFromItems(combinedItems)
   },
 
   // Helper: Calculate completeness status from ratio and variance
@@ -3101,6 +3131,14 @@ export const transactionService = {
     // If offline, delegate to offlineTransactionService
     if (!online) {
       await offlineTransactionService.updateTransaction(accountId, transactionId, updates)
+      if (updates.needsReview === undefined) {
+        transactionService.notifyTransactionChanged(accountId, transactionId, {
+          reason: 'transaction-update',
+          caller: 'updateTransaction'
+        }).catch((e: any) => {
+          console.warn('Failed to notifyTransactionChanged after offline transaction update:', e)
+        })
+      }
       return
     }
 
@@ -3238,10 +3276,13 @@ export const transactionService = {
       }
       // Recompute and persist needs_review unless caller explicitly provided it
       if (finalUpdates.needsReview === undefined) {
-      // Schedule recompute asynchronously; do not await to keep updates fast
-      this._enqueueRecomputeNeedsReview(accountId, _projectId, transactionId).catch((e: any) => {
-        console.warn('Failed to recompute needs_review after transaction update:', e)
-      })
+        // Schedule recompute asynchronously; do not await to keep updates fast
+        transactionService.notifyTransactionChanged(accountId, transactionId, {
+          reason: 'transaction-update',
+          caller: 'updateTransaction'
+        }).catch((e: any) => {
+          console.warn('Failed to notifyTransactionChanged after transaction update:', e)
+        })
       }
 
       // Invalidate transaction display info cache so UI updates immediately
@@ -4163,7 +4204,7 @@ export const transactionService = {
       // Fetch all canonical transactions for the account (optionally filtered by project)
       const query = supabase
         .from('transactions')
-        .select('transaction_id, item_ids, amount, project_id')
+        .select('transaction_id, amount, project_id')
         .eq('account_id', accountId)
         .or('transaction_id.like.INV_PURCHASE_%,transaction_id.like.INV_SALE_%')
 
@@ -4188,8 +4229,7 @@ export const transactionService = {
         try {
           const computed = await computeCanonicalTransactionTotal(
             accountId,
-            tx.transaction_id,
-            Array.isArray(tx.item_ids) ? tx.item_ids : undefined
+            tx.transaction_id
           )
           
           // Skip healing if compute failed (returns null)
@@ -5175,7 +5215,11 @@ export const unifiedItemsService = {
             try {
               const purchasePriceRaw = dbItem.purchase_price ?? dbItem.price ?? '0'
               const delta = parseFloat(String(purchasePriceRaw) || '0')
-              transactionService.notifyTransactionChanged(accountId, txId, { deltaSum: delta }).catch((e: any) => {
+              transactionService.notifyTransactionChanged(accountId, txId, {
+                deltaSum: delta,
+                reason: 'item:create',
+                caller: 'createItem'
+              }).catch((e: any) => {
                 console.warn('Failed to notifyTransactionChanged after creating item:', e)
               })
             } catch (e) {
@@ -5370,7 +5414,11 @@ export const unifiedItemsService = {
             if (previousTransactionId && nextTransactionId && previousTransactionId === nextTransactionId && txId === previousTransactionId) {
               const delta = newPrice - prevPrice
               if (delta !== 0) {
-                transactionService.notifyTransactionChanged(accountId, txId, { deltaSum: delta }).catch((e: any) => {
+                transactionService.notifyTransactionChanged(accountId, txId, {
+                  deltaSum: delta,
+                  reason: 'item:update',
+                  caller: 'updateItem'
+                }).catch((e: any) => {
                   console.warn('Failed to notifyTransactionChanged after updating item for tx', txId, e)
                 })
               }
@@ -5378,13 +5426,21 @@ export const unifiedItemsService = {
               // Moved between transactions: subtract from old and add to new
               if (txId === previousTransactionId) {
                 const delta = -prevPrice
-                transactionService.notifyTransactionChanged(accountId, txId, { deltaSum: delta }).catch((e: any) => {
+                transactionService.notifyTransactionChanged(accountId, txId, {
+                  deltaSum: delta,
+                  reason: 'item:move:from',
+                  caller: 'updateItem'
+                }).catch((e: any) => {
                   console.warn('Failed to notifyTransactionChanged for old tx after moving item', txId, e)
                 })
               }
               if (txId === nextTransactionId) {
                 const delta = newPrice
-                transactionService.notifyTransactionChanged(accountId, txId, { deltaSum: delta }).catch((e: any) => {
+                transactionService.notifyTransactionChanged(accountId, txId, {
+                  deltaSum: delta,
+                  reason: 'item:move:to',
+                  caller: 'updateItem'
+                }).catch((e: any) => {
                   console.warn('Failed to notifyTransactionChanged for new tx after moving item', txId, e)
                 })
               }
@@ -5458,7 +5514,11 @@ export const unifiedItemsService = {
 
     try {
       if (!transactionService._isBatchActive(accountId, transactionId)) {
-        transactionService.notifyTransactionChanged(accountId, transactionId, { flushImmediately: true }).catch((e: any) => {
+        transactionService.notifyTransactionChanged(accountId, transactionId, {
+          flushImmediately: true,
+          reason: 'item:unlink',
+          caller: 'unlinkItemFromTransaction'
+        }).catch((e: any) => {
           console.warn('unlinkItemFromTransaction - notifyTransactionChanged failed:', e)
         })
       }
@@ -5589,10 +5649,18 @@ export const unifiedItemsService = {
     // Notify changes
     try {
         if (!transactionService._isBatchActive(accountId, transactionId)) {
-            transactionService.notifyTransactionChanged(accountId, transactionId, { flushImmediately: true }).catch(console.warn)
+            transactionService.notifyTransactionChanged(accountId, transactionId, {
+              flushImmediately: true,
+              reason: 'item:assign',
+              caller: 'assignItemsToTransaction'
+            }).catch(console.warn)
         }
         if (itemPreviousTransactionId && itemPreviousTransactionId !== transactionId && !transactionService._isBatchActive(accountId, itemPreviousTransactionId)) {
-            transactionService.notifyTransactionChanged(accountId, itemPreviousTransactionId, { flushImmediately: true }).catch(console.warn)
+            transactionService.notifyTransactionChanged(accountId, itemPreviousTransactionId, {
+              flushImmediately: true,
+              reason: 'item:assign:previous',
+              caller: 'assignItemsToTransaction'
+            }).catch(console.warn)
         }
     } catch (e) {
         console.warn('assignItemsToTransaction - notifyTransactionChanged failed:', e)

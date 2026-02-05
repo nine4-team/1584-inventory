@@ -11,6 +11,10 @@ vi.mock('@/hooks/useNavigationContext', () => ({
   })
 }))
 
+vi.mock('@/hooks/useStackedNavigate', () => ({
+  useStackedNavigate: () => vi.fn()
+}))
+
 vi.mock('@/contexts/AccountContext', () => ({
   useAccount: () => ({
     currentAccountId: 'account-1'
@@ -43,7 +47,7 @@ const makeTxn = (partial: Partial<Transaction>): Transaction => ({
   createdAt: partial.createdAt ?? new Date().toISOString(),
   createdBy: partial.createdBy ?? 'user-1',
   notes: partial.notes,
-  // Avoid triggering per-transaction completeness fetch in this component test
+  // Ensure needsReview is defined for list badges/filters
   needsReview: partial.needsReview ?? true
 })
 
@@ -87,7 +91,8 @@ describe('TransactionsList sorting and filtering', () => {
     ])
 
     await user.click(screen.getByRole('button', { name: 'Filter' }))
-    await user.click(screen.getByRole('button', { name: 'No Email Receipt' }))
+    await user.click(screen.getByLabelText('Email receipt'))
+    await user.click(screen.getByRole('button', { name: 'No' }))
 
     expect(screen.queryByRole('heading', { name: 'Emailed' })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'No Email' })).toBeInTheDocument()
