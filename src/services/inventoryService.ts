@@ -235,12 +235,12 @@ const recordNotifyTransactionChangedDiagnostics = (context: NotifyTransactionCha
  * 
  * @param accountId - Account ID
  * @param transactionId - Canonical transaction ID
- * @param itemIds - Optional array of item IDs to use (if not provided, fetches from transaction.item_ids)
- * @param lineageEdges - Optional array of lineage edges (if not provided, fetches edges from transaction)
+ * @param itemIds - Optional array of item IDs to use (if not provided, queries items by transaction_id)
+ * @param lineageEdges - Optional array of lineage edges (if not provided, fetches edges from transaction). Correction edges are excluded.
  * @returns Computed total as string with fixed 2 decimals on success, or null if compute fails
  * 
  * Returns null when:
- * - Transaction row missing / cannot be fetched (when itemIds not provided)
+ * - Current item IDs cannot be fetched (when itemIds not provided)
  * - Items query fails (Supabase error) for the union of itemIds + moved-out IDs
  * 
  * Still returns a number (not null) when:
@@ -251,7 +251,7 @@ export const computeCanonicalTransactionTotal = async (
   accountId: string,
   transactionId: string,
   itemIds?: string[],
-  lineageEdges?: Array<{ itemId: string }>
+  lineageEdges?: Array<{ itemId: string; movementKind?: string | null }>
 ): Promise<string | null> => {
   await ensureAuthenticatedForDatabase()
 
@@ -260,30 +260,33 @@ export const computeCanonicalTransactionTotal = async (
   if (itemIds && itemIds.length > 0) {
     resolvedItemIds = itemIds
   } else {
-    // Fetch transaction to get item_ids
-    const { data: transaction, error: txError } = await supabase
-      .from('transactions')
-      .select('item_ids')
+    // Query current items by transaction_id (truth), rather than relying on transaction.item_ids (cache)
+    const { data: rows, error: itemsIdError } = await supabase
+      .from('items')
+      .select('item_id')
       .eq('account_id', accountId)
       .eq('transaction_id', transactionId)
-      .single()
 
-    if (txError || !transaction) {
-      console.warn('computeCanonicalTransactionTotal - transaction not found (compute failure):', transactionId)
+    if (itemsIdError) {
+      console.warn('computeCanonicalTransactionTotal - failed to fetch current item ids (compute failure):', itemsIdError)
       return null
     }
 
-    resolvedItemIds = Array.isArray(transaction.item_ids) ? transaction.item_ids : []
+    resolvedItemIds = (rows || [])
+      .map((r: any) => r?.item_id)
+      .filter((id: any): id is string => typeof id === 'string' && id.length > 0)
   }
 
   // Resolve lineage edges if not provided
-  let resolvedEdges: Array<{ itemId: string }> = []
+  let resolvedEdges: Array<{ itemId: string; movementKind?: string | null }> = []
   if (lineageEdges) {
     resolvedEdges = lineageEdges
   } else {
     try {
       const edges = await lineageService.getEdgesFromTransaction(transactionId, accountId)
-      resolvedEdges = edges.map(edge => ({ itemId: edge.itemId }))
+      resolvedEdges = edges
+        .filter(edge => edge.movementKind !== 'correction')
+        .map(edge => ({ itemId: edge.itemId, movementKind: edge.movementKind }))
     } catch (error) {
       console.warn('computeCanonicalTransactionTotal - failed to fetch lineage edges (non-fatal):', error)
       // Continue without moved-out items - this is NOT a compute failure
@@ -293,7 +296,9 @@ export const computeCanonicalTransactionTotal = async (
 
   // Collect all item IDs (current + moved-out)
   const allItemIds = new Set<string>(resolvedItemIds)
-  resolvedEdges.forEach(edge => allItemIds.add(edge.itemId))
+  resolvedEdges
+    .filter(edge => edge.movementKind !== 'correction')
+    .forEach(edge => allItemIds.add(edge.itemId))
 
   // Empty item set is valid - return "0.00" (not null)
   if (allItemIds.size === 0) {
@@ -2305,30 +2310,16 @@ export const transactionService = {
   ): Promise<TransactionCompleteness> {
     await ensureAuthenticatedForDatabase()
 
-    // Get transaction and associated items. Prefer the itemIds stored on the
-    // transaction record so we include deallocated/moved items that no longer
-    // have this transaction_id—mirrors TransactionDetail logic. Fall back to
-    // a direct items query when itemIds is empty.
+    // Get transaction and associated items using the canonical item set:
+    // - current items where item.transaction_id === transactionId
+    // - moved-out items via lineage edges (excluding correction edges)
     const transaction = await this.getTransaction(accountId, projectId, transactionId)
 
     if (!transaction) {
       throw new Error('Transaction not found')
     }
 
-    const itemIdsFromTransaction = Array.isArray((transaction as any).itemIds)
-      ? ((transaction as any).itemIds as string[])
-      : []
-
-    let items: Item[]
-    if (itemIdsFromTransaction.length > 0) {
-      const itemPromises = itemIdsFromTransaction.map(itemId =>
-        unifiedItemsService.getItemById(accountId, itemId)
-      )
-      const fetched = await Promise.all(itemPromises)
-      items = fetched.filter((item): item is Item => item !== null)
-    } else {
-      items = await unifiedItemsService.getItemsForTransaction(accountId, projectId, transactionId)
-    }
+    const items = await unifiedItemsService.getItemsForTransaction(accountId, projectId, transactionId)
 
     // Include items that were moved out of this transaction by consulting lineage edges.
     // The UI displays both "in transaction" and "moved out" items; completeness should
@@ -2338,7 +2329,11 @@ export const transactionService = {
     let movedOutItemIds: string[] = []
     try {
       edgesFromTransaction = await lineageService.getEdgesFromTransaction(transactionId, accountId)
-      movedOutItemIds = Array.from(new Set(edgesFromTransaction.map(edge => edge.itemId)))
+      movedOutItemIds = Array.from(new Set(
+        edgesFromTransaction
+          .filter(edge => edge.movementKind !== 'correction')
+          .map(edge => edge.itemId)
+      ))
 
       // Fetch any moved item records that aren't already in the items list
       const missingMovedItemIds = movedOutItemIds.filter(id => !combinedItems.some(it => it.itemId === id))
@@ -2348,27 +2343,6 @@ export const transactionService = {
         const validMovedItems = movedItems.filter(mi => mi !== null) as Item[]
         combinedItems = combinedItems.concat(validMovedItems)
       }
-
-      // IMPORTANT: Avoid "ghost completeness".
-      // If a transaction row has stale/incorrect `itemIds`, those items may no longer be
-      // attached to this transaction AND may not have a lineage edge. In that case, the
-      // Transaction Detail UI will often show 0 items, but completeness would still count
-      // them unless we filter here.
-      //
-      // We only count an item if:
-      // - it is currently attached (item.transactionId === transactionId), OR
-      // - it is explicitly moved-out via lineage (edge from this transaction), OR
-      // - it has legacy lineage pointers indicating association (latest/origin/previous).
-      const movedOutSet = new Set<string>(movedOutItemIds)
-      combinedItems = combinedItems.filter(item => {
-        const currentTxId = (item as any).transactionId ?? null
-        if (currentTxId === transactionId) return true
-        if (movedOutSet.has(item.itemId)) return true
-        const latestTxId = (item as any).latestTransactionId ?? null
-        const originTxId = (item as any).originTransactionId ?? null
-        const previousProjectTxId = (item as any).previousProjectTransactionId ?? null
-        return latestTxId === transactionId || originTxId === transactionId || previousProjectTxId === transactionId
-      })
     } catch (edgeErr) {
       // Non-fatal: if lineage lookup fails, fall back to items returned by getItemsForTransaction
       console.debug('getTransactionCompleteness - failed to fetch lineage edges:', edgeErr)
@@ -2466,61 +2440,7 @@ export const transactionService = {
       }
     }
 
-    const currentCompleteness = await computeCompletenessFromItems(combinedItems)
-
-    // Shadow compute using canonical item set (current items + moved-out via lineage, excluding corrections)
-    try {
-      const shadowBaseItems = await unifiedItemsService.getItemsForTransaction(accountId, projectId, transactionId)
-      const movedOutShadowItemIds = Array.from(new Set(
-        edgesFromTransaction
-          .filter(edge => edge.movementKind !== 'correction')
-          .map(edge => edge.itemId)
-      ))
-
-      let shadowItems = shadowBaseItems.slice()
-      const missingShadowMovedItemIds = movedOutShadowItemIds.filter(id => !shadowItems.some(it => it.itemId === id))
-      if (missingShadowMovedItemIds.length > 0) {
-        const movedItemsPromises = missingShadowMovedItemIds.map(id => unifiedItemsService.getItemById(accountId, id))
-        const movedItems = await Promise.all(movedItemsPromises)
-        const validMovedItems = movedItems.filter(mi => mi !== null) as Item[]
-        shadowItems = shadowItems.concat(validMovedItems)
-      }
-
-      const shadowCompleteness = await computeCompletenessFromItems(shadowItems)
-      const statusMismatch = currentCompleteness.completenessStatus !== shadowCompleteness.completenessStatus
-      const varianceMismatch = Math.abs(currentCompleteness.variancePercent - shadowCompleteness.variancePercent) > 0.01
-
-      if (statusMismatch || varianceMismatch) {
-        console.warn('getTransactionCompleteness - shadow mismatch:', {
-          accountId,
-          projectId,
-          transactionId,
-          current: {
-            status: currentCompleteness.completenessStatus,
-            variancePercent: currentCompleteness.variancePercent,
-            itemsCount: currentCompleteness.itemsCount,
-            itemsNetTotal: currentCompleteness.itemsNetTotal,
-            transactionSubtotal: currentCompleteness.transactionSubtotal
-          },
-          shadow: {
-            status: shadowCompleteness.completenessStatus,
-            variancePercent: shadowCompleteness.variancePercent,
-            itemsCount: shadowCompleteness.itemsCount,
-            itemsNetTotal: shadowCompleteness.itemsNetTotal,
-            transactionSubtotal: shadowCompleteness.transactionSubtotal
-          },
-          itemIdsFromTransactionCount: itemIdsFromTransaction.length,
-          currentItemsCount: combinedItems.length,
-          shadowItemsCount: shadowItems.length,
-          movedOutEdgeCount: movedOutItemIds.length,
-          movedOutShadowEdgeCount: movedOutShadowItemIds.length
-        })
-      }
-    } catch (shadowError) {
-      console.debug('getTransactionCompleteness - shadow compute failed (non-fatal):', shadowError)
-    }
-
-    return currentCompleteness
+    return await computeCompletenessFromItems(combinedItems)
   },
 
   // Helper: Calculate completeness status from ratio and variance
@@ -3211,6 +3131,14 @@ export const transactionService = {
     // If offline, delegate to offlineTransactionService
     if (!online) {
       await offlineTransactionService.updateTransaction(accountId, transactionId, updates)
+      if (updates.needsReview === undefined) {
+        transactionService.notifyTransactionChanged(accountId, transactionId, {
+          reason: 'transaction-update',
+          caller: 'updateTransaction'
+        }).catch((e: any) => {
+          console.warn('Failed to notifyTransactionChanged after offline transaction update:', e)
+        })
+      }
       return
     }
 
@@ -3348,10 +3276,13 @@ export const transactionService = {
       }
       // Recompute and persist needs_review unless caller explicitly provided it
       if (finalUpdates.needsReview === undefined) {
-      // Schedule recompute asynchronously; do not await to keep updates fast
-      this._enqueueRecomputeNeedsReview(accountId, _projectId, transactionId).catch((e: any) => {
-        console.warn('Failed to recompute needs_review after transaction update:', e)
-      })
+        // Schedule recompute asynchronously; do not await to keep updates fast
+        transactionService.notifyTransactionChanged(accountId, transactionId, {
+          reason: 'transaction-update',
+          caller: 'updateTransaction'
+        }).catch((e: any) => {
+          console.warn('Failed to notifyTransactionChanged after transaction update:', e)
+        })
       }
 
       // Invalidate transaction display info cache so UI updates immediately
@@ -4273,7 +4204,7 @@ export const transactionService = {
       // Fetch all canonical transactions for the account (optionally filtered by project)
       const query = supabase
         .from('transactions')
-        .select('transaction_id, item_ids, amount, project_id')
+        .select('transaction_id, amount, project_id')
         .eq('account_id', accountId)
         .or('transaction_id.like.INV_PURCHASE_%,transaction_id.like.INV_SALE_%')
 
@@ -4298,8 +4229,7 @@ export const transactionService = {
         try {
           const computed = await computeCanonicalTransactionTotal(
             accountId,
-            tx.transaction_id,
-            Array.isArray(tx.item_ids) ? tx.item_ids : undefined
+            tx.transaction_id
           )
           
           // Skip healing if compute failed (returns null)

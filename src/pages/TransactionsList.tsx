@@ -486,8 +486,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
         try {
           const computed = await computeCanonicalTransactionTotal(
             currentAccountId,
-            tx.transactionId,
-            Array.isArray(tx.itemIds) ? tx.itemIds : undefined
+            tx.transactionId
           )
           
           // Only proceed if compute succeeded (non-null)

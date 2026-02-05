@@ -307,7 +307,7 @@ export default function TransactionItemPicker({
     if (nextTab && counts[activeTab] === 0 && activeTab !== nextTab) {
       setActiveTab(nextTab)
     }
-  }, [activeTab, outsideMatches.length, projectMatches.length, suggestedMatches.length, targetProjectId])
+  }, [activeTab, normalizedQuery, outsideMatches.length, projectMatches.length, suggestedMatches.length, targetProjectId])
 
   const currentTabItems = useMemo(() => {
     if (activeTab === 'outside') return outsideMatches

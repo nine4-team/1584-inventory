@@ -8,6 +8,12 @@ import { useAccount } from '@/contexts/AccountContext'
 // Mock the services and contexts
 vi.mock('@/services/budgetCategoriesService')
 vi.mock('@/contexts/AccountContext')
+vi.mock('@/hooks/useNetworkState', () => ({
+  useNetworkState: () => ({ isOnline: true })
+}))
+vi.mock('../ui/OfflinePrerequisiteBanner', () => ({
+  useOfflinePrerequisiteGate: () => ({ isReady: true, blockingReason: null })
+}))
 
 const mockCategories = [
   { id: 'cat-1', accountId: 'account-1', name: 'Design Fee', slug: 'design-fee', isArchived: false, metadata: null, createdAt: new Date(), updatedAt: new Date() },
@@ -65,8 +71,8 @@ describe('CategorySelect', () => {
       expect(screen.getByText('Design Fee')).toBeInTheDocument()
     })
 
-    const select = screen.getByRole('combobox')
-    await user.selectOptions(select, 'cat-1')
+    const option = screen.getByLabelText('Design Fee')
+    await user.click(option)
     
     expect(mockOnChange).toHaveBeenCalledWith('cat-1')
   })
@@ -75,8 +81,8 @@ describe('CategorySelect', () => {
     render(<CategorySelect value="cat-2" onChange={mockOnChange} />)
     
     await waitFor(() => {
-      const select = screen.getByRole('combobox') as HTMLSelectElement
-      expect(select.value).toBe('cat-2')
+      const option = screen.getByLabelText('Furnishings') as HTMLInputElement
+      expect(option.checked).toBe(true)
     })
   })
 
@@ -101,24 +107,24 @@ describe('CategorySelect', () => {
     render(<CategorySelect value="" onChange={mockOnChange} disabled={true} />)
     
     await waitFor(() => {
-      const select = screen.getByRole('combobox')
-      expect(select).toBeDisabled()
+      const option = screen.getByLabelText('Design Fee')
+      expect(option).toBeDisabled()
     })
   })
 
-  it('should show "Select a category" option when not required', async () => {
+  it('should show "None" option when not required', async () => {
     render(<CategorySelect value="" onChange={mockOnChange} required={false} />)
     
     await waitFor(() => {
-      expect(screen.getByText('Select a category')).toBeInTheDocument()
+      expect(screen.getByText('None')).toBeInTheDocument()
     })
   })
 
-  it('should not show "Select a category" option when required', async () => {
+  it('should not show "None" option when required', async () => {
     render(<CategorySelect value="" onChange={mockOnChange} required={true} />)
     
     await waitFor(() => {
-      expect(screen.queryByText('Select a category')).not.toBeInTheDocument()
+      expect(screen.queryByText('None')).not.toBeInTheDocument()
     })
   })
 

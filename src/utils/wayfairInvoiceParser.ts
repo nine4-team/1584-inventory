@@ -470,8 +470,10 @@ function extractStandaloneAttributeLine(line: string): {
   const s = line.trim()
   if (!s) return undefined
 
+  const isSizeLine = /^Size\s*:/i.test(s)
   // Only treat these as standalone attribute lines (no money columns).
-  if (extractMoneyTokens(s).length > 0) return undefined
+  // Size lines can include decimal measurements that look like money, so allow them.
+  if (!isSizeLine && extractMoneyTokens(s).length > 0) return undefined
 
   // Most Wayfair attribute lines are "Key: Value" (Fabric, Color, Size, Material, Finish, etc.)
   // Keep this conservative to reduce false positives.
@@ -829,6 +831,13 @@ export function parseWayfairInvoiceText(fullText: string): WayfairInvoiceParseRe
    * (pdf extraction can emit the SKU after the money row)
    */
   let lastItemAwaitingSku: WayfairInvoiceLineItem | undefined
+  /**
+   * Lines that appear after a money row while we are still waiting for a SKU.
+   * These can belong either to the previous item (if a delayed SKU follows)
+   * or to the next item (if a new money row appears first).
+   */
+  let deferredPostMoneyLines: string[] = []
+  let deferredPostMoneyItem: WayfairInvoiceLineItem | undefined
 
   const enqueueDescriptionFragment = (fragment?: string) => {
     const normalized = normalizeDescriptionFragment(fragment)
@@ -856,6 +865,8 @@ export function parseWayfairInvoiceText(fullText: string): WayfairInvoiceParseRe
       allowLooseContinuationForPreviousItem = false
       awaitingPostMoneyContinuation = false
       lastItemAwaitingSku = undefined
+      deferredPostMoneyLines = []
+      deferredPostMoneyItem = undefined
       continue
     }
 
@@ -869,6 +880,8 @@ export function parseWayfairInvoiceText(fullText: string): WayfairInvoiceParseRe
       allowLooseContinuationForPreviousItem = false
       awaitingPostMoneyContinuation = false
       lastItemAwaitingSku = undefined
+      deferredPostMoneyLines = []
+      deferredPostMoneyItem = undefined
       continue
     }
 
@@ -881,6 +894,13 @@ export function parseWayfairInvoiceText(fullText: string): WayfairInvoiceParseRe
       // a quoted title for the *next* item).
       const previousLineItem = lineItems[lineItems.length - 1]
       if (previousLineItem && lastItemAwaitingSku === previousLineItem && !previousLineItem.sku) {
+        if (deferredPostMoneyItem === previousLineItem && deferredPostMoneyLines.length > 0) {
+          const baseDescription = previousLineItem.description.trim()
+          const joiner = /[-–—]$/.test(baseDescription) ? ' ' : ' - '
+          previousLineItem.description = `${baseDescription}${joiner}${deferredPostMoneyLines.join(' ').trim()}`.trim()
+          deferredPostMoneyLines = []
+          deferredPostMoneyItem = undefined
+        }
         previousLineItem.sku = standaloneSku
         lastItemAwaitingSku = undefined
         continue
@@ -1017,13 +1037,6 @@ export function parseWayfairInvoiceText(fullText: string): WayfairInvoiceParseRe
       !!previousItem &&
       (allowLooseContinuationForPreviousItem || awaitingPostMoneyContinuation) &&
       isSoftLeadingWordContinuation(line)
-    const looksLikeAwaitingSkuContinuation =
-      !!previousItem &&
-      previousItem === lastItemAwaitingSku &&
-      awaitingPostMoneyContinuation &&
-      extractMoneyTokens(line).length === 0 &&
-      line.length > 0
-
     // Handle trailing bullet fragments, dangling parenthetical tails, or soft continuations belonging to the previous item.
     const canAppendToPreviousDescription =
       !hasPendingDescription &&
@@ -1035,8 +1048,7 @@ export function parseWayfairInvoiceText(fullText: string): WayfairInvoiceParseRe
         startsWithBullet ||
         looksLikeParentheticalTail ||
         looksLikeParentheticalLead ||
-        looksLikeSoftContinuation ||
-        looksLikeAwaitingSkuContinuation
+        looksLikeSoftContinuation
       )
 
     if (canAppendToPreviousDescription && previousItem) {
@@ -1049,7 +1061,7 @@ export function parseWayfairInvoiceText(fullText: string): WayfairInvoiceParseRe
             ? ' '
             : ' - '
         previousItem.description = `${baseDescription}${joiner}${cleanedFragment}`.trim()
-        if (!looksLikeAwaitingSkuContinuation) {
+        if (previousItem !== lastItemAwaitingSku) {
           awaitingPostMoneyContinuation = false
         }
         if (hasUnclosedParenthesis(previousItem.description)) {
@@ -1060,6 +1072,23 @@ export function parseWayfairInvoiceText(fullText: string): WayfairInvoiceParseRe
           allowLooseContinuationForPreviousItem = false
         }
       }
+      continue
+    }
+
+    const shouldDeferPostMoneyLine =
+      !!previousItem &&
+      previousItem === lastItemAwaitingSku &&
+      awaitingPostMoneyContinuation &&
+      extractMoneyTokens(line).length === 0 &&
+      !startsWithBullet &&
+      !looksLikeParentheticalTail &&
+      !looksLikeParentheticalLead &&
+      !looksLikeSoftContinuation &&
+      !isLikelyItemPositionIndicator(line)
+
+    if (shouldDeferPostMoneyLine) {
+      deferredPostMoneyLines.push(line.trim())
+      deferredPostMoneyItem = previousItem
       continue
     }
 
@@ -1102,8 +1131,22 @@ export function parseWayfairInvoiceText(fullText: string): WayfairInvoiceParseRe
 
     // Accumulate possible multi-line descriptions, then parse when we see a numeric row.
     const bufferedDescriptionText = bufferedDescriptionParts.join(' ').trim()
-    const maybeParsed = parseLineItemFromLine(line, bufferedDescriptionText)
+    if (
+      bufferedDescriptionText &&
+      hasUnclosedParenthesis(bufferedDescriptionText) &&
+      /^\d+\)/.test(line) &&
+      extractMoneyTokens(line).length >= 2
+    ) {
+      const closeMatch = line.match(/^(\d+\))/)
+      if (closeMatch?.[1]) {
+        bufferedDescriptionParts.push(closeMatch[1])
+      }
+    }
+    const bufferedDescriptionTextForParse = bufferedDescriptionParts.join(' ').trim()
+    const deferredDescriptionText = deferredPostMoneyLines.join(' ').trim()
+    const maybeParsed = parseLineItemFromLine(line, bufferedDescriptionTextForParse || deferredDescriptionText)
     if (maybeParsed) {
+      const usedDeferredDescription = !bufferedDescriptionTextForParse && deferredPostMoneyLines.length > 0
       const extracted = extractInlineAttributesFromDescription(maybeParsed.description)
       const skuSplit = pendingSku
         ? { sku: pendingSku, cleanedDescription: extracted.cleanedDescription }
@@ -1197,6 +1240,10 @@ export function parseWayfairInvoiceText(fullText: string): WayfairInvoiceParseRe
       pendingSku = undefined
       pendingAttributes = {}
       pendingAttributeLines = []
+      if (usedDeferredDescription) {
+        deferredPostMoneyLines = []
+        deferredPostMoneyItem = undefined
+      }
       continue
     }
 

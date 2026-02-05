@@ -6,7 +6,8 @@ const retrySyncMocks = vi.hoisted(() => ({
   triggerManualSync: vi.fn(),
   requestForegroundSync: vi.fn(),
   getSnapshot: vi.fn(),
-  subscribe: vi.fn()
+  subscribe: vi.fn(),
+  getSyncSchedulerSnapshot: vi.fn()
 }))
 
 vi.mock('@/services/operationQueue', () => ({
@@ -21,7 +22,8 @@ vi.mock('@/services/serviceWorker', () => ({
 }))
 
 vi.mock('@/services/syncScheduler', () => ({
-  requestForegroundSync: retrySyncMocks.requestForegroundSync
+  requestForegroundSync: retrySyncMocks.requestForegroundSync,
+  getSyncSchedulerSnapshot: retrySyncMocks.getSyncSchedulerSnapshot
 }))
 
 describe('RetrySyncButton', () => {
@@ -39,6 +41,14 @@ describe('RetrySyncButton', () => {
     retrySyncMocks.subscribe.mockImplementation(() => () => {})
     retrySyncMocks.triggerManualSync.mockResolvedValue(undefined)
     retrySyncMocks.requestForegroundSync.mockResolvedValue(undefined)
+    retrySyncMocks.getSyncSchedulerSnapshot.mockReturnValue({
+      isRunning: false,
+      pendingOperations: 0,
+      retryAttempt: 0,
+      nextRunAt: null,
+      lastTrigger: null,
+      lastError: null
+    })
   })
 
   afterEach(() => {

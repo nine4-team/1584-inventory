@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { OfflineTransactionService } from '../offlineTransactionService'
+import { OfflineTransactionService, MissingOfflinePrerequisiteError } from '../offlineTransactionService'
 import { offlineItemService } from '../offlineItemService'
 import { offlineStore } from '../offlineStore'
 import { operationQueue } from '../operationQueue'
@@ -349,7 +349,7 @@ describe('Offline Integration: Validation Failures', () => {
         amount: '100.00',
         taxRatePreset: 'stale-preset-id'
       } as any)
-    ).rejects.toThrow('MissingOfflinePrerequisiteError')
+    ).rejects.toBeInstanceOf(MissingOfflinePrerequisiteError)
 
     expect(mockedOperationQueue.add).not.toHaveBeenCalled()
   })
@@ -364,7 +364,7 @@ describe('Offline Integration: Validation Failures', () => {
         amount: '100.00',
         categoryId: 'stale-category-id'
       } as any)
-    ).rejects.toThrow('MissingOfflinePrerequisiteError')
+    ).rejects.toBeInstanceOf(MissingOfflinePrerequisiteError)
 
     expect(mockedOperationQueue.add).not.toHaveBeenCalled()
   })

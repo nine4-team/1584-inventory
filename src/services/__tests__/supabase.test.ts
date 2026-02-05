@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createMockSupabaseClient, createMockUser } from './test-utils'
+import { UserRole } from '@/types'
 
-// Mock Supabase client only
-vi.mock('../supabase', async () => {
-  const actual = await vi.importActual<typeof import('../supabase')>('../supabase')
+vi.mock('@supabase/supabase-js', async () => {
+  const actual = await vi.importActual<typeof import('@supabase/supabase-js')>('@supabase/supabase-js')
   const { createMockSupabaseClient } = await import('./test-utils')
   return {
     ...actual,
-    supabase: createMockSupabaseClient()
+    createClient: vi.fn(() => createMockSupabaseClient())
   }
 })
 
@@ -23,15 +23,12 @@ vi.mock('../accountService', () => ({
 import {
   signInWithGoogle,
   signOutUser,
-  createOrUpdateUserDocument,
   getUserData,
-  getCurrentUserWithData,
   createUserInvitation,
   checkUserInvitation,
   acceptUserInvitation
 } from '../supabase'
 import * as supabaseModule from '../supabase'
-import * as accountServiceModule from '../accountService'
 
 describe('Supabase Auth Functions', () => {
   beforeEach(() => {
@@ -110,12 +107,18 @@ describe('Supabase Auth Functions', () => {
       
       vi.mocked(supabaseModule.supabase.from).mockReturnValue({
         ...mockQueryBuilder,
-        insert: vi.fn().mockResolvedValue({ data: null, error: null })
+        insert: vi.fn().mockReturnThis(),
+        select: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: { id: 'invitation-id' }, error: null })
       } as any)
 
-      await expect(
-        createUserInvitation('test@example.com', 'admin' as any, 'inviter-id', 'account-id')
-      ).resolves.not.toThrow()
+      const invitationLink = await createUserInvitation(
+        'test@example.com',
+        UserRole.ADMIN,
+        'inviter-id',
+        'account-id'
+      )
+      expect(invitationLink).toContain('/invite/')
     })
   })
 
@@ -140,6 +143,7 @@ describe('Supabase Auth Functions', () => {
       const invitation = await checkUserInvitation('test@example.com')
       expect(invitation).toBeTruthy()
       expect(invitation?.invitationId).toBe('invitation-id')
+      expect(invitation?.role).toBe(UserRole.ADMIN)
     })
 
     it('should return null when invitation not found', async () => {
@@ -162,8 +166,7 @@ describe('Supabase Auth Functions', () => {
       vi.mocked(supabaseModule.supabase.from).mockReturnValue({
         ...mockQueryBuilder,
         update: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        then: vi.fn().mockResolvedValue({ data: null, error: null })
+        eq: vi.fn().mockResolvedValue({ data: null, error: null })
       } as any)
 
       await expect(
