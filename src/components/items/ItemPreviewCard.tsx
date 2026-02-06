@@ -8,6 +8,7 @@ import { offlineMediaService } from '@/services/offlineMediaService'
 import ItemActionsMenu from '@/components/items/ItemActionsMenu'
 import { displayDispositionLabel } from '@/utils/dispositionUtils'
 import type { ItemDisposition, ItemImage } from '@/types'
+import { useStackedNavigate } from '@/hooks/useStackedNavigate'
 
 // Common interface for item data that can be displayed
 export interface ItemPreviewData {
@@ -70,6 +71,9 @@ interface ItemPreviewCardProps {
   headerAction?: React.ReactNode
   footer?: React.ReactNode
 }
+
+const isModifiedEvent = (e: React.MouseEvent) =>
+  e.metaKey || e.altKey || e.ctrlKey || e.shiftKey || e.button !== 0
 
 export default function ItemPreviewCard({
   item,
@@ -528,6 +532,8 @@ function ItemContent({
   formatCurrency: (amount?: string | number | null) => string
   buildContextUrl: (path: string, params?: { project?: string }) => string
 }) {
+  const stackedNavigate = useStackedNavigate()
+
   return (
     <div>
       {item.description && (
@@ -550,10 +556,19 @@ function ItemContent({
                 className="inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors cursor-pointer hover:underline"
                 onClick={(e) => {
                   e.stopPropagation()
-                  if (transactionRoute) {
-                    // Programmatically navigate instead of using nested link
-                    window.location.href = buildContextUrl(transactionRoute.path, transactionRoute.projectId ? { project: transactionRoute.projectId } : undefined)
+                  if (!transactionRoute) return
+
+                  const href = buildContextUrl(
+                    transactionRoute.path,
+                    transactionRoute.projectId ? { project: transactionRoute.projectId } : undefined
+                  )
+
+                  if (isModifiedEvent(e)) {
+                    window.open(href, '_blank', 'noopener,noreferrer')
+                    return
                   }
+
+                  stackedNavigate(href, undefined, { scrollY: window.scrollY })
                 }}
                 title={`View transaction: ${transactionDisplayInfo.title}`}
               >
