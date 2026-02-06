@@ -62,6 +62,9 @@ const parseItemSortMode = (value: string | null) =>
     ? (value as (typeof ITEM_SORT_MODES)[number])
     : DEFAULT_ITEM_SORT
 
+const isModifiedEvent = (e: React.MouseEvent) =>
+  e.metaKey || e.altKey || e.ctrlKey || e.shiftKey || e.button !== 0
+
 export default function InventoryList({ projectId, projectName, items: propItems }: InventoryListProps) {
   const { currentAccountId, loading: accountLoading } = useAccount()
   const ENABLE_QR = import.meta.env.VITE_ENABLE_QR === 'true'
@@ -1587,9 +1590,19 @@ export default function InventoryList({ projectId, projectName, items: propItems
                                       title={`View transaction: ${transactionDisplayInfo.title}`}
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        if (transactionRoute) {
-                                          window.location.href = buildContextUrl(transactionRoute.path, transactionRoute.projectId ? { project: transactionRoute.projectId } : undefined)
+                                        if (!transactionRoute) return
+
+                                        const href = buildContextUrl(
+                                          transactionRoute.path,
+                                          transactionRoute.projectId ? { project: transactionRoute.projectId } : undefined
+                                        )
+
+                                        if (isModifiedEvent(e)) {
+                                          window.open(href, '_blank', 'noopener,noreferrer')
+                                          return
                                         }
+
+                                        stackedNavigate(href, undefined, { scrollY: window.scrollY })
                                       }}
                                     >
                                       {transactionDisplayInfo.title} {transactionDisplayInfo.amount}

@@ -9,12 +9,18 @@ interface ContextBackLinkProps {
   title?: string
 }
 
+const isModifiedEvent = (e: React.MouseEvent) =>
+  e.metaKey || e.altKey || e.ctrlKey || e.shiftKey || e.button !== 0
+
 export default function ContextBackLink({ fallback, className, children, title }: ContextBackLinkProps) {
   const navigate = useNavigate()
   const location = useLocation()
   const navigationStack = useNavigationStack()
 
   const handleClick = (e: React.MouseEvent) => {
+    // Allow ctrl/cmd-click (open in new tab) and other modified clicks to behave like a normal link.
+    if (e.defaultPrevented || isModifiedEvent(e)) return
+
     e.preventDefault()
     try {
       const entry = navigationStack.pop(location.pathname + location.search)
