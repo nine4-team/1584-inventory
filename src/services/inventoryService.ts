@@ -14,6 +14,7 @@ import { operationQueue, OfflineContextError } from './operationQueue'
 import { refreshBusinessInventorySnapshot, refreshProjectSnapshot } from '@/utils/realtimeSnapshotUpdater'
 import { removeTransactionFromCaches, removeItemFromCaches } from '@/utils/queryCacheHelpers'
 import { looksLikeUuid } from '@/utils/idUtils'
+import { getAmountPrefixRange, matchesItemSearch } from '@/utils/itemSearch'
 import type { Item, Project, FilterOptions, PaginationOptions, Transaction, TransactionItemFormData, TransactionCompleteness, CompletenessStatus, ItemImage, ItemDisposition } from '@/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import type { QueryClient } from '@tanstack/react-query'
@@ -4422,14 +4423,11 @@ export const unifiedItemsService = {
       }
 
       if (options.searchQuery) {
-        const query = options.searchQuery.toLowerCase()
-        items = items.filter(item => (
-          (item.description || '').toLowerCase().includes(query) ||
-          (item.source || '').toLowerCase().includes(query) ||
-          (item.sku || '').toLowerCase().includes(query) ||
-          (item.paymentMethod || '').toLowerCase().includes(query) ||
-          (item.businessInventoryLocation || '').toLowerCase().includes(query)
-        ))
+        items = items.filter(item =>
+          matchesItemSearch(item, options.searchQuery ?? '', {
+            locationFields: ['space', 'businessInventoryLocation']
+          }).matches
+        )
       }
 
       const sorted = sortItemsOffline(items)
@@ -4457,12 +4455,10 @@ export const unifiedItemsService = {
         items = items.filter(item => item.inventoryStatus === filters.status)
       }
       if (filters?.searchQuery) {
-        const query = filters.searchQuery.toLowerCase()
         items = items.filter(item =>
-          (item.description || '').toLowerCase().includes(query) ||
-          (item.source || '').toLowerCase().includes(query) ||
-          (item.sku || '').toLowerCase().includes(query) ||
-          (item.businessInventoryLocation || '').toLowerCase().includes(query)
+          matchesItemSearch(item, filters.searchQuery ?? '', {
+            locationFields: ['businessInventoryLocation']
+          }).matches
         )
       }
 
@@ -4667,8 +4663,10 @@ export const unifiedItemsService = {
     const online = isNetworkOnline()
     const includeBusinessInventory = options.includeBusinessInventory !== false
     const normalizedExcludeProjectId = options.excludeProjectId || null
+    const normalizedSearchQuery = options.searchQuery?.trim() ?? ''
+    const hasSearchQuery = normalizedSearchQuery.length > 0
 
-    if (online) {
+    if (online && !hasSearchQuery) {
       try {
         await ensureAuthenticatedForDatabase()
 
@@ -4715,15 +4713,61 @@ export const unifiedItemsService = {
       }
     }
 
-    return await this._searchItemsOutsideProjectOffline(
+    const offlineResults = await this._searchItemsOutsideProjectOffline(
       accountId,
       {
         excludeProjectId: normalizedExcludeProjectId,
         includeBusinessInventory,
         searchQuery: options.searchQuery
       },
-      options.pagination
+      hasSearchQuery ? undefined : options.pagination
     )
+
+    if (!online || !hasSearchQuery) {
+      if (!hasSearchQuery) {
+        return offlineResults
+      }
+      const sorted = sortItemsOffline(offlineResults)
+      return applyPagination(sorted, options.pagination)
+    }
+
+    try {
+      await ensureAuthenticatedForDatabase()
+
+      const amountRange = getAmountPrefixRange(normalizedSearchQuery)
+      const pagination = options.pagination
+      const maxPage = pagination ? Math.max(1, pagination.page) : 1
+      const pageLimit = pagination ? pagination.limit : undefined
+      const fetchLimit = pageLimit ? maxPage * pageLimit : undefined
+
+      const { data, error } = await supabase.rpc('rpc_search_items_outside_project', {
+        p_account_id: accountId,
+        p_exclude_project_id: normalizedExcludeProjectId,
+        p_include_business_inventory: includeBusinessInventory,
+        p_query: normalizedSearchQuery,
+        p_amount_min: amountRange ? (amountRange.minCents / 100).toFixed(2) : null,
+        p_amount_max: amountRange ? (amountRange.maxCents / 100).toFixed(2) : null,
+        p_limit: fetchLimit ?? null,
+        p_offset: 0
+      })
+
+      if (error) throw error
+
+      const onlineRows = data || []
+      void cacheItemsOffline(onlineRows)
+      const onlineResults = onlineRows.map(item => this._convertItemFromDb(item))
+
+      const merged = new Map<string, Item>()
+      offlineResults.forEach(item => merged.set(item.itemId, item))
+      onlineResults.forEach(item => merged.set(item.itemId, item))
+
+      const combined = sortItemsOffline(Array.from(merged.values()))
+      return applyPagination(combined, options.pagination)
+    } catch (error) {
+      console.warn('Failed to fetch outside items from network, using offline search:', error)
+      const sorted = sortItemsOffline(offlineResults)
+      return applyPagination(sorted, options.pagination)
+    }
   },
 
   /**
