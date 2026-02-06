@@ -117,7 +117,7 @@ export default function AccountItemSearchModal({ open, onClose }: AccountItemSea
 
         try {
           const results = await unifiedItemsService.searchAccountItems(currentAccountId, {
-            searchQuery: isAmountQuery ? undefined : normalizedQuery || undefined,
+            searchQuery: normalizedQuery || undefined,
             includeBusinessInventory: true,
             pagination: { page, limit: PAGE_LIMIT }
           })
@@ -218,7 +218,7 @@ export default function AccountItemSearchModal({ open, onClose }: AccountItemSea
         </div>
         {isAmountQuery && normalizedQuery.length > 0 && (
           <div className="text-xs text-gray-500">
-            Amount search looks at loaded items. Load more to search further.
+            Price matches include cached items first; online results may add more.
           </div>
         )}
 
