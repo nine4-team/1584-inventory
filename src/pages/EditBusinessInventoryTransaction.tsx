@@ -1,7 +1,9 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { useParams, useLocation } from 'react-router-dom'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
+import { useNavigationStack } from '@/contexts/NavigationStackContext'
 import ContextBackLink from '@/components/ContextBackLink'
-import { useStackedNavigate } from '@/hooks/useStackedNavigate'
+import { useNavigationContext } from '@/hooks/useNavigationContext'
+import { getReturnToFromLocation } from '@/utils/navigationReturnTo'
 import { ArrowLeft, Save, X } from 'lucide-react'
 import { Transaction, Project, TaxPreset } from '@/types'
 import { CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
@@ -20,8 +22,10 @@ import { useBusinessInventoryRealtime } from '@/contexts/BusinessInventoryRealti
 
 export default function EditBusinessInventoryTransaction() {
   const { projectId, transactionId } = useParams<{ projectId: string; transactionId: string }>()
-  const navigate = useStackedNavigate()
+  const navigate = useNavigate()
+  const navigationStack = useNavigationStack()
   const location = useLocation()
+  const { getBackDestination } = useNavigationContext()
   const hasSyncError = useSyncError()
   const { currentAccountId } = useAccount()
   const { refreshCollections } = useBusinessInventoryRealtime()
@@ -77,15 +81,23 @@ export default function EditBusinessInventoryTransaction() {
   const [selectedPresetRate, setSelectedPresetRate] = useState<number | undefined>(undefined)
 
   // Navigation context logic
-  const backDestination = useMemo(() => {
-    // Check if we have a returnTo parameter
-    const searchParams = new URLSearchParams(location.search)
-    const returnTo = searchParams.get('returnTo')
-    if (returnTo) return returnTo
+  const defaultBackPath = '/business-inventory'
 
-    // Default fallback
-    return '/business-inventory'
-  }, [location.search])
+  const handleBackNavigation = () => {
+    const returnTo = getReturnToFromLocation(location)
+    if (returnTo) {
+      navigate(returnTo, { replace: true })
+      return
+    }
+    const fallback = getBackDestination(defaultBackPath)
+    const entry = navigationStack.pop(location.pathname + location.search)
+    const target = entry?.path || fallback
+    if (Number.isFinite(entry?.scrollY)) {
+      navigate(target, { state: { restoreScrollY: entry?.scrollY } })
+    } else {
+      navigate(target)
+    }
+  }
 
   // Load tax presets on mount
   useEffect(() => {
@@ -289,7 +301,13 @@ export default function EditBusinessInventoryTransaction() {
       } catch (error) {
         console.debug('EditBusinessInventoryTransaction: realtime refresh failed', error)
       }
-      navigate(`/business-inventory`)
+      
+      const returnTo = getReturnToFromLocation(location)
+      if (returnTo) {
+        navigate(returnTo, { replace: true })
+      } else {
+        navigate(defaultBackPath, { replace: true })
+      }
     } catch (error) {
       console.error('Error updating transaction:', error)
       setFormErrors({ general: 'Error updating transaction. Please try again.' })
@@ -299,7 +317,7 @@ export default function EditBusinessInventoryTransaction() {
   }
 
   const handleCancel = () => {
-    navigate(backDestination)
+    handleBackNavigation()
   }
 
   if (isLoading) {
@@ -321,7 +339,7 @@ export default function EditBusinessInventoryTransaction() {
           The transaction you're looking for doesn't exist or has been deleted.
         </p>
         <ContextBackLink
-          fallback={backDestination}
+          fallback={defaultBackPath}
           className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700"
         >
           Back to Business Inventory
@@ -336,13 +354,14 @@ export default function EditBusinessInventoryTransaction() {
       <div className="space-y-4">
         {/* Back button row */}
         <div className="flex items-center justify-between">
-          <ContextBackLink
-            fallback={backDestination}
+          <button
+            type="button"
+            onClick={handleBackNavigation}
             className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700"
           >
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back
-          </ContextBackLink>
+          </button>
           {hasSyncError && <RetrySyncButton size="sm" variant="secondary" />}
         </div>
       </div>

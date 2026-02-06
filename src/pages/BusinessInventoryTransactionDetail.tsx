@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useLocation } from 'react-router-dom'
 import { ArrowLeft, Pencil } from 'lucide-react'
 
 import ContextBackLink from '@/components/ContextBackLink'
@@ -18,6 +18,7 @@ import { useNavigationContext } from '@/hooks/useNavigationContext'
 export default function BusinessInventoryTransactionDetail() {
   const { transactionId } = useParams<{ transactionId: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const { currentAccountId } = useAccount()
   const { buildContextUrl, getBackDestination } = useNavigationContext()
 
@@ -33,8 +34,9 @@ export default function BusinessInventoryTransactionDetail() {
 
   const editTransactionHref = useMemo(() => {
     if (!transactionId) return '/business-inventory'
-    return `/business-inventory/transaction/null/${transactionId}/edit`
-  }, [transactionId])
+    const returnTo = encodeURIComponent(location.pathname + location.search)
+    return `/business-inventory/transaction/null/${transactionId}/edit?returnTo=${returnTo}`
+  }, [transactionId, location.pathname, location.search])
 
   const load = useCallback(async () => {
     if (!currentAccountId || !transactionId) return
