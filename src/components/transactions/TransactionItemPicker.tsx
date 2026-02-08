@@ -9,6 +9,7 @@ import ItemPreviewCard, { type ItemPreviewData } from '@/components/items/ItemPr
 import { getInventoryListGroupKey } from '@/utils/itemGrouping'
 import BlockingConfirmDialog from '@/components/ui/BlockingConfirmDialog'
 import { getTransactionDisplayInfo } from '@/utils/transactionDisplayUtils'
+import { matchesItemSearch } from '@/utils/itemSearch'
 
 type TransactionItemPickerProps = {
   transaction: Transaction
@@ -18,7 +19,7 @@ type TransactionItemPickerProps = {
   containerId?: string
 }
 
-type PickerTab = 'suggested' | 'project' | 'outside'
+type PickerTab = 'suggested' | 'project' | 'inventory' | 'outside'
 
 type ReassignmentConflict = {
   item: Item
@@ -65,9 +66,11 @@ export default function TransactionItemPicker({
   const [searchQuery, setSearchQuery] = useState('')
   const [suggestedItems, setSuggestedItems] = useState<Item[]>([])
   const [projectItems, setProjectItems] = useState<Item[]>([])
+  const [inventoryItems, setInventoryItems] = useState<Item[]>([])
   const [outsideItems, setOutsideItems] = useState<Item[]>([])
   const [isLoadingSuggested, setIsLoadingSuggested] = useState(false)
   const [isLoadingProject, setIsLoadingProject] = useState(false)
+  const [isLoadingInventory, setIsLoadingInventory] = useState(false)
   const [isLoadingOutside, setIsLoadingOutside] = useState(false)
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set())
   const [isAdding, setIsAdding] = useState(false)
@@ -157,32 +160,48 @@ export default function TransactionItemPicker({
 
   const suggestedMatches = useMemo(() => {
     if (!normalizedQuery) return suggestedItems
-    return suggestedItems.filter(item => {
-      const description = item.description?.toLowerCase() ?? ''
-      const sku = item.sku?.toLowerCase() ?? ''
-      const source = item.source?.toLowerCase() ?? ''
-      const purchasePrice = item.purchasePrice?.toLowerCase() ?? ''
-      const projectPrice = item.projectPrice?.toLowerCase() ?? ''
-      return (
-        description.includes(normalizedQuery) ||
-        sku.includes(normalizedQuery) ||
-        source.includes(normalizedQuery) ||
-        purchasePrice.includes(normalizedQuery) ||
-        projectPrice.includes(normalizedQuery)
-      )
-    })
-  }, [normalizedQuery, suggestedItems])
+    return suggestedItems.filter(item =>
+      matchesItemSearch(item, searchQuery, {
+        locationFields: ['space', 'businessInventoryLocation']
+      }).matches
+    )
+  }, [normalizedQuery, searchQuery, suggestedItems])
 
-  const projectMatches = useMemo(() => projectItems, [projectItems])
-  const outsideMatches = useMemo(() => outsideItems, [outsideItems])
+  const projectMatches = useMemo(() => {
+    if (!normalizedQuery) return projectItems
+    return projectItems.filter(item =>
+      matchesItemSearch(item, searchQuery, {
+        locationFields: ['space', 'businessInventoryLocation']
+      }).matches
+    )
+  }, [normalizedQuery, searchQuery, projectItems])
+
+  const inventoryMatches = useMemo(() => {
+    if (!normalizedQuery) return inventoryItems
+    return inventoryItems.filter(item =>
+      matchesItemSearch(item, searchQuery, {
+        locationFields: ['space', 'businessInventoryLocation']
+      }).matches
+    )
+  }, [normalizedQuery, searchQuery, inventoryItems])
+
+  const outsideMatches = useMemo(() => {
+    if (!normalizedQuery) return outsideItems
+    return outsideItems.filter(item =>
+      matchesItemSearch(item, searchQuery, {
+        locationFields: ['space', 'businessInventoryLocation']
+      }).matches
+    )
+  }, [normalizedQuery, searchQuery, outsideItems])
 
   const allVisibleItems = useMemo(() => {
     const map = new Map<string, Item>()
     suggestedMatches.forEach(item => map.set(item.itemId, item))
     projectMatches.forEach(item => map.set(item.itemId, item))
+    inventoryMatches.forEach(item => map.set(item.itemId, item))
     outsideMatches.forEach(item => map.set(item.itemId, item))
     return map
-  }, [suggestedMatches, projectMatches, outsideMatches])
+  }, [suggestedMatches, projectMatches, inventoryMatches, outsideMatches])
 
   useEffect(() => {
     setSelectedItemIds(prev => {
@@ -255,6 +274,39 @@ export default function TransactionItemPicker({
     }
   }, [currentAccountId, normalizedQuery, targetProjectId])
 
+  // Load business inventory items when in business inventory transaction context
+  useEffect(() => {
+    if (!currentAccountId || targetProjectId !== null) {
+      setInventoryItems([])
+      return
+    }
+    let cancelled = false
+    const loadInventoryItems = async () => {
+      setIsLoadingInventory(true)
+      try {
+        const items = await unifiedItemsService.getBusinessInventoryItems(
+          currentAccountId,
+          { searchQuery: normalizedQuery || undefined }
+        )
+        if (!cancelled) {
+          setInventoryItems(items || [])
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('TransactionItemPicker: failed to load inventory items', error)
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingInventory(false)
+        }
+      }
+    }
+    void loadInventoryItems()
+    return () => {
+      cancelled = true
+    }
+  }, [currentAccountId, normalizedQuery, targetProjectId])
+
   useEffect(() => {
     if (!currentAccountId) {
       setOutsideItems([])
@@ -292,28 +344,33 @@ export default function TransactionItemPicker({
     if (!normalizedQuery) return
     const suggestedCount = suggestedMatches.length
     const projectCount = projectMatches.length
+    const inventoryCount = inventoryMatches.length
     const outsideCount = outsideMatches.length
     const availableTabs: PickerTab[] = ['suggested']
-    if (targetProjectId) {
+    if (targetProjectId !== null) {
       availableTabs.push('project')
+    } else {
+      availableTabs.push('inventory')
     }
     availableTabs.push('outside')
     const counts: Record<PickerTab, number> = {
       suggested: suggestedCount,
       project: projectCount,
+      inventory: inventoryCount,
       outside: outsideCount
     }
     const nextTab = availableTabs.find(tab => counts[tab] > 0)
     if (nextTab && counts[activeTab] === 0 && activeTab !== nextTab) {
       setActiveTab(nextTab)
     }
-  }, [activeTab, normalizedQuery, outsideMatches.length, projectMatches.length, suggestedMatches.length, targetProjectId])
+  }, [activeTab, normalizedQuery, outsideMatches.length, projectMatches.length, inventoryMatches.length, suggestedMatches.length, targetProjectId])
 
   const currentTabItems = useMemo(() => {
     if (activeTab === 'outside') return outsideMatches
     if (activeTab === 'project') return projectMatches
+    if (activeTab === 'inventory') return inventoryMatches
     return suggestedMatches
-  }, [activeTab, outsideMatches, projectMatches, suggestedMatches])
+  }, [activeTab, outsideMatches, projectMatches, inventoryMatches, suggestedMatches])
 
   const selectableCurrentItems = useMemo(
     () => getSelectableItems(currentTabItems),
@@ -515,6 +572,7 @@ export default function TransactionItemPicker({
       ))
       setSuggestedItems(applyLocalUpdates)
       setProjectItems(applyLocalUpdates)
+      setInventoryItems(prev => prev.filter(item => !addedItemIds.has(item.itemId)))
       setOutsideItems(prev => prev.filter(item => !addedItemIds.has(item.itemId)))
 
       showSuccess(addableItems.length === 1 ? 'Item added' : `Added ${addableItems.length} items`)
@@ -740,6 +798,19 @@ export default function TransactionItemPicker({
               Project ({projectMatches.length})
             </button>
           )}
+          {!targetProjectId && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('inventory')}
+              className={`pb-2 text-xs font-semibold border-b-2 ${
+                activeTab === 'inventory'
+                  ? 'border-primary-600 text-primary-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Inventory ({inventoryMatches.length})
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setActiveTab('outside')}
@@ -792,6 +863,20 @@ export default function TransactionItemPicker({
               renderGroupedItems(projectMatches, () => 'project', targetProjectId)
             ) : (
               <div className="text-sm text-gray-500">No project items match this search.</div>
+            )}
+          </>
+        )}
+        {activeTab === 'inventory' && !targetProjectId && (
+          <>
+            {isLoadingInventory ? (
+              <div className="text-sm text-gray-500">Loading inventory items...</div>
+            ) : inventoryMatches.length > 0 ? (
+              renderGroupedItems(
+                inventoryMatches,
+                () => 'businessInventory'
+              )
+            ) : (
+              <div className="text-sm text-gray-500">No inventory items match this search.</div>
             )}
           </>
         )}

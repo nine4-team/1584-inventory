@@ -4663,10 +4663,8 @@ export const unifiedItemsService = {
     const online = isNetworkOnline()
     const includeBusinessInventory = options.includeBusinessInventory !== false
     const normalizedExcludeProjectId = options.excludeProjectId || null
-    const normalizedSearchQuery = options.searchQuery?.trim() ?? ''
-    const hasSearchQuery = normalizedSearchQuery.length > 0
 
-    if (online && !hasSearchQuery) {
+    if (online) {
       try {
         await ensureAuthenticatedForDatabase()
 
@@ -4713,61 +4711,15 @@ export const unifiedItemsService = {
       }
     }
 
-    const offlineResults = await this._searchItemsOutsideProjectOffline(
+    return await this._searchItemsOutsideProjectOffline(
       accountId,
       {
         excludeProjectId: normalizedExcludeProjectId,
         includeBusinessInventory,
         searchQuery: options.searchQuery
       },
-      hasSearchQuery ? undefined : options.pagination
+      options.pagination
     )
-
-    if (!online || !hasSearchQuery) {
-      if (!hasSearchQuery) {
-        return offlineResults
-      }
-      const sorted = sortItemsOffline(offlineResults)
-      return applyPagination(sorted, options.pagination)
-    }
-
-    try {
-      await ensureAuthenticatedForDatabase()
-
-      const amountRange = getAmountPrefixRange(normalizedSearchQuery)
-      const pagination = options.pagination
-      const maxPage = pagination ? Math.max(1, pagination.page) : 1
-      const pageLimit = pagination ? pagination.limit : undefined
-      const fetchLimit = pageLimit ? maxPage * pageLimit : undefined
-
-      const { data, error } = await supabase.rpc('rpc_search_items_outside_project', {
-        p_account_id: accountId,
-        p_exclude_project_id: normalizedExcludeProjectId,
-        p_include_business_inventory: includeBusinessInventory,
-        p_query: normalizedSearchQuery,
-        p_amount_min: amountRange ? (amountRange.minCents / 100).toFixed(2) : null,
-        p_amount_max: amountRange ? (amountRange.maxCents / 100).toFixed(2) : null,
-        p_limit: fetchLimit ?? null,
-        p_offset: 0
-      })
-
-      if (error) throw error
-
-      const onlineRows = data || []
-      void cacheItemsOffline(onlineRows)
-      const onlineResults = onlineRows.map(item => this._convertItemFromDb(item))
-
-      const merged = new Map<string, Item>()
-      offlineResults.forEach(item => merged.set(item.itemId, item))
-      onlineResults.forEach(item => merged.set(item.itemId, item))
-
-      const combined = sortItemsOffline(Array.from(merged.values()))
-      return applyPagination(combined, options.pagination)
-    } catch (error) {
-      console.warn('Failed to fetch outside items from network, using offline search:', error)
-      const sorted = sortItemsOffline(offlineResults)
-      return applyPagination(sorted, options.pagination)
-    }
   },
 
   /**
