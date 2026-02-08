@@ -159,12 +159,36 @@ export default function TransactionItemPicker({
   }, [])
 
   const suggestedMatches = useMemo(() => {
+    console.log('[DEBUG] Filtering suggested items:', {
+      normalizedQuery,
+      searchQuery,
+      totalSuggestedItems: suggestedItems.length,
+      suggestedItemSkus: suggestedItems.map(i => i.sku)
+    })
+
     if (!normalizedQuery) return suggestedItems
-    return suggestedItems.filter(item =>
-      matchesItemSearch(item, searchQuery, {
+
+    const filtered = suggestedItems.filter(item => {
+      const result = matchesItemSearch(item, searchQuery, {
         locationFields: ['space', 'businessInventoryLocation']
-      }).matches
-    )
+      })
+      if (item.sku?.includes('400297')) {
+        console.log('[DEBUG] Item 400297 match result:', {
+          sku: item.sku,
+          searchQuery,
+          normalizedQuery,
+          matchResult: result
+        })
+      }
+      return result.matches
+    })
+
+    console.log('[DEBUG] Filtered suggested items:', {
+      filteredCount: filtered.length,
+      filteredSkus: filtered.map(i => i.sku)
+    })
+
+    return filtered
   }, [normalizedQuery, searchQuery, suggestedItems])
 
   const projectMatches = useMemo(() => {
@@ -225,6 +249,10 @@ export default function TransactionItemPicker({
           SUGGESTED_LIMIT
         )
         if (!cancelled) {
+          console.log('[DEBUG] Loaded suggested items in component:', {
+            count: items?.length || 0,
+            skus: items?.map(i => i.sku)
+          })
           setSuggestedItems(items || [])
         }
       } catch (error) {
