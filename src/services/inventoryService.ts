@@ -2779,7 +2779,6 @@ export const transactionService = {
           const bTime = new Date(b.dateCreated || b.createdAt || b.lastUpdated || 0).getTime()
           return bTime - aTime
         })
-        .slice(0, limit)
         .map(item => unifiedItemsService._convertOfflineItem(item))
       return filtered
     } catch (error) {
@@ -2808,9 +2807,20 @@ export const transactionService = {
         .eq('source', transactionSource)
         .is('transaction_id', null)
         .order('date_created', { ascending: false })
-        .limit(limit)
 
       if (error) throw error
+
+      console.log('[DEBUG] getSuggestedItemsForTransaction results:', {
+        transactionSource,
+        limit,
+        itemCount: data?.length || 0,
+        items: data?.map(i => ({
+          itemId: i.item_id,
+          sku: i.sku,
+          description: i.description?.substring(0, 30),
+          dateCreated: i.date_created
+        }))
+      })
 
       if (data && data.length) {
         void cacheItemsOffline(data)
