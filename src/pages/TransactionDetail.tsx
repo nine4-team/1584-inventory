@@ -508,13 +508,13 @@ export default function TransactionDetail() {
       soldItems: buildItems(
         latestByItem(
           'sold',
-          isBusinessInventoryTransaction ? edgesToTransaction : edgesFromTransaction,
-          isBusinessInventoryTransaction ? 'to' : 'from'
+          edgesFromTransaction,
+          'from'
         )
       ),
       returnedItems: buildItems(latestByItem('returned', edgesFromTransaction, 'from'))
     }
-  }, [edgesFromTransaction, edgesToTransaction, isBusinessInventoryTransaction, items, transactionId])
+  }, [edgesFromTransaction, items, transactionId])
   const auditItems = useMemo(() => {
     if (!itemsInTransaction.length) {
       return []
