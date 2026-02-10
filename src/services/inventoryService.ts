@@ -6041,12 +6041,12 @@ export const unifiedItemsService = {
     // inventory -> purchase flow.
     if (!currentTransactionId) {
       console.log('📋 Scenario C: Item in inventory, allocating to project')
-      return await this.handleInventoryToPurchaseMove(accountId, itemId, projectId, finalAmount, notes, space)
+      return await this.handleInventoryToPurchaseMove(accountId, itemId, projectId, finalAmount, notes, space, item.previousProjectTransactionId || null)
     }
 
     // Fallback: Unknown scenario, treat as new allocation
     console.log('📋 Fallback: Unknown scenario, treating as new allocation')
-    return await this.handleInventoryToPurchaseMove(accountId, itemId, projectId, finalAmount, notes, space)
+    return await this.handleInventoryToPurchaseMove(accountId, itemId, projectId, finalAmount, notes, space, currentTransactionId || item.previousProjectTransactionId || null)
   },
 
   // Helper: Handle A.1 - Remove item from Sale (same project)
@@ -6427,7 +6427,8 @@ export const unifiedItemsService = {
     projectId: string,
     finalAmount: string,
     notes?: string,
-    space?: string
+    space?: string,
+    sourceTransactionId?: string | null
   ): Promise<string> {
     const purchaseTransactionId = `INV_PURCHASE_${projectId}`
 
@@ -6447,7 +6448,7 @@ export const unifiedItemsService = {
 
     // Append lineage edge and update pointers
     try {
-      await lineageService.appendItemLineageEdge(accountId, itemId, null, purchaseTransactionId, notes, {
+      await lineageService.appendItemLineageEdge(accountId, itemId, sourceTransactionId ?? null, purchaseTransactionId, notes, {
         movementKind: 'sold',
         source: 'app'
       })

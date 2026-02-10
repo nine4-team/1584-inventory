@@ -300,6 +300,33 @@ export default function SpaceDetail() {
 
   const handleAddExistingItems = useCallback(async (items: Item[]) => {
     if (!currentAccountId || !projectId || !spaceId || items.length === 0) return
+
+    // Check if any items are outside items with transactions
+    const normalizeProjectId = (value?: string | null) => {
+      if (!value || value === 'null') return null
+      return value
+    }
+
+    const normalizedProjectId = normalizeProjectId(projectId)
+    const outsideItemsWithTransactions = items.filter(item => {
+      const normalizedItemProjectId = normalizeProjectId(item.projectId)
+      const isOutsideItem = normalizedItemProjectId !== normalizedProjectId
+      return isOutsideItem && item.transactionId
+    })
+
+    // Show confirmation if there are outside items with transactions
+    if (outsideItemsWithTransactions.length > 0) {
+      const confirmed = window.confirm(
+        outsideItemsWithTransactions.length === 1
+          ? 'This requires the project to buy the item. A sale will be logged in the background. Are you sure you want to proceed?'
+          : `This requires the project to buy ${outsideItemsWithTransactions.length} items. Sales will be logged in the background. Are you sure you want to proceed?`
+      )
+
+      if (!confirmed) {
+        return
+      }
+    }
+
     try {
       for (const item of items) {
         await ensureItemInProjectForSpace(currentAccountId, item, projectId, { spaceName: space?.name })
@@ -315,15 +342,11 @@ export default function SpaceDetail() {
   }, [currentAccountId, fetchSpace, projectId, showSuccess, space?.name, spaceId])
 
   const getExistingItemDisableState = useCallback((item: Item) => {
-    const isOutsideItem = item.projectId !== projectId
-    if (isOutsideItem && item.transactionId) {
-      return {
-        disabled: true,
-        reason: 'This item is tied to a transaction; move the transaction instead.'
-      }
-    }
+    // No blocking - allow all items to be added
+    // Confirmation will be shown in handleAddExistingItems for outside items with transactions
+    console.log('[DEBUG] getExistingItemDisableState called for item:', item.itemId, 'transactionId:', item.transactionId, 'returning disabled:false')
     return { disabled: false }
-  }, [projectId])
+  }, [])
 
   const updateChecklists = useCallback(
     async (nextChecklists: SpaceChecklist[]) => {
