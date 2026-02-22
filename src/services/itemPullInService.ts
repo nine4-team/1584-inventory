@@ -22,21 +22,10 @@ export const ensureItemInProjectForSpace = async (
 
   const note = buildPullInNote(targetProjectId, options?.spaceName)
 
-  if (!item.projectId) {
-    await integrationService.allocateBusinessInventoryToProject(
-      accountId,
-      item.itemId,
-      targetProjectId,
-      undefined,
-      note
-    )
-    return
-  }
-
   await integrationService.sellItemToProject(
     accountId,
     item.itemId,
-    item.projectId,
+    item.projectId ?? null,
     targetProjectId,
     { notes: note, space: options?.spaceName }
   )

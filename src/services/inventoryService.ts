@@ -5834,10 +5834,12 @@ export const unifiedItemsService = {
   },
 
   // Sell item from one project into another (source sale → target purchase)
+  // Sell item to project. When sourceProjectId is provided, deallocates from source first (two-hop transfer).
+  // When sourceProjectId is null, item is in business inventory and only allocation is needed.
   async sellItemToProject(
     accountId: string,
     itemId: string,
-    sourceProjectId: string,
+    sourceProjectId: string | null,
     targetProjectId: string,
     options?: {
       amount?: string
@@ -5849,6 +5851,14 @@ export const unifiedItemsService = {
     if (!isNetworkOnline()) {
       if (queueOptions.queueIfOffline === false) {
         throw new SellItemToProjectError('OFFLINE', 'Sell to project is not available offline.')
+      }
+      if (sourceProjectId === null) {
+        // Item is in business inventory — just enqueue allocation
+        await enqueueAllocateItemToProject(accountId, itemId, targetProjectId, options?.amount, options?.notes, options?.space)
+        return {
+          saleTransactionId: null,
+          purchaseTransactionId: `INV_PURCHASE_${targetProjectId}`
+        }
       }
       await enqueueSellItemToProject(
         accountId,
@@ -5872,35 +5882,40 @@ export const unifiedItemsService = {
       throw new SellItemToProjectError('ITEM_NOT_FOUND', 'Item not found.')
     }
 
-    if (sourceProjectId === targetProjectId) {
-      throw new SellItemToProjectError('TARGET_SAME_AS_SOURCE', 'Source and target projects must be different.')
-    }
+    if (sourceProjectId !== null) {
+      if (sourceProjectId === targetProjectId) {
+        throw new SellItemToProjectError('TARGET_SAME_AS_SOURCE', 'Source and target projects must be different.')
+      }
 
-    if (item.projectId !== sourceProjectId) {
-      throw new SellItemToProjectError(
-        'SOURCE_PROJECT_MISMATCH',
-        'Item is no longer in the source project. Refresh and try again.',
-        {
-          details: {
-            expectedProjectId: sourceProjectId,
-            actualProjectId: item.projectId ?? null
+      if (item.projectId !== sourceProjectId) {
+        throw new SellItemToProjectError(
+          'SOURCE_PROJECT_MISMATCH',
+          'Item is no longer in the source project. Refresh and try again.',
+          {
+            details: {
+              expectedProjectId: sourceProjectId,
+              actualProjectId: item.projectId ?? null
+            }
           }
-        }
-      )
+        )
+      }
     }
 
     const purchaseTransactionIdExpected = `INV_PURCHASE_${targetProjectId}`
 
-    await deallocationService.handleInventoryDesignation(accountId, itemId, sourceProjectId, 'inventory')
-
+    // Deallocate from source project if item is in one
     let saleTransactionId: string | null = null
-    try {
-      const postSaleItem = await this.getItemById(accountId, itemId)
-      if (postSaleItem?.transactionId?.startsWith('INV_SALE_')) {
-        saleTransactionId = postSaleItem.transactionId
+    if (sourceProjectId !== null) {
+      await deallocationService.handleInventoryDesignation(accountId, itemId, sourceProjectId, 'inventory')
+
+      try {
+        const postSaleItem = await this.getItemById(accountId, itemId)
+        if (postSaleItem?.transactionId?.startsWith('INV_SALE_')) {
+          saleTransactionId = postSaleItem.transactionId
+        }
+      } catch (readError) {
+        console.warn('[sellItemToProject] Failed to verify sale transaction id:', readError)
       }
-    } catch (readError) {
-      console.warn('[sellItemToProject] Failed to verify sale transaction id:', readError)
     }
 
     try {
@@ -6027,7 +6042,7 @@ export const unifiedItemsService = {
         console.log('📋 Scenario B.1: Item in Purchase, allocating to same project')
         return await this.handlePurchaseToInventoryMove(accountId, itemId, currentTransactionId, projectId, finalAmount, notes, space)
       } else {
-        // B.2: Allocate to different project - remove from Purchase, add to Sale (Project Y)
+        // B.2: Allocate to different project - revert Purchase(X), add to Purchase(Y)
         console.log('📋 Scenario B.2: Item in Purchase, allocating to different project')
         return await this.handlePurchaseToDifferentProjectMove(accountId, itemId, currentTransactionId, projectId, finalAmount, notes, space)
       }
@@ -6360,7 +6375,7 @@ export const unifiedItemsService = {
     return currentTransactionId // Return the original transaction ID since item is now in inventory
   },
 
-  // Helper: Handle B.2 - Remove item from Purchase, add to Sale (different project)
+  // Helper: Handle B.2 - Revert Purchase(X), add to Purchase(Y) (different project)
   async handlePurchaseToDifferentProjectMove(
     accountId: string,
     itemId: string,
@@ -6370,54 +6385,51 @@ export const unifiedItemsService = {
     notes?: string,
     space?: string
   ): Promise<string> {
-    const saleTransactionId = `INV_SALE_${newProjectId}`
+    const purchaseTransactionId = `INV_PURCHASE_${newProjectId}`
 
-    // Remove item from existing Purchase transaction
-    await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount, {
-      preserveEmptyTransaction: true
-    })
+    // Step 1: Remove item from existing Purchase(X) — revert the purchase, delete if empty
+    await this.removeItemFromTransaction(accountId, itemId, currentTransactionId, finalAmount)
 
-    // Add item to Sale transaction for new project (create if none)
-    await this.addItemToTransaction(accountId, itemId, saleTransactionId, finalAmount, 'To Inventory', 'Inventory sale', notes)
+    // Step 2: Add item to Purchase(Y) — new allocation
+    await this.addItemToTransaction(accountId, itemId, purchaseTransactionId, finalAmount, 'Purchase', 'Inventory allocation', notes)
 
-    // Update item status
+    // Step 3: Update item — item goes to new project Y
     await this.updateItem(accountId, itemId, {
-      projectId: null,
-      inventoryStatus: 'available',
-      transactionId: saleTransactionId,
-      disposition: 'inventory',
-      space: space ?? '',
+      projectId: newProjectId,
+      inventoryStatus: 'allocated',
+      transactionId: purchaseTransactionId,
+      disposition: 'purchased',
+      space: space,
       previousProjectTransactionId: null,
       previousProjectId: null
     })
 
-    // Append lineage edge and update pointers
+    // Lineage: Purchase(X) → Purchase(Y)
     try {
-      await lineageService.appendItemLineageEdge(accountId, itemId, currentTransactionId, saleTransactionId, notes, {
+      await lineageService.appendItemLineageEdge(accountId, itemId, currentTransactionId, purchaseTransactionId, notes, {
         movementKind: 'sold',
         source: 'app'
       })
-      await lineageService.updateItemLineagePointers(accountId, itemId, saleTransactionId)
+      await lineageService.updateItemLineagePointers(accountId, itemId, purchaseTransactionId)
     } catch (lineageError) {
       console.warn('⚠️ Failed to append lineage edge (non-critical):', lineageError)
     }
 
-    console.log('✅ B.2 completed: Purchase → Sale (different project)')
+    console.log('✅ B.2 completed: Purchase(X) → Purchase(Y) (different project)')
 
-    // Log successful allocation (catch errors to prevent cascading failures)
     try {
-      await auditService.logAllocationEvent(accountId, 'allocation', itemId, null, saleTransactionId, {
+      await auditService.logAllocationEvent(accountId, 'allocation', itemId, newProjectId, purchaseTransactionId, {
         action: 'allocation_completed',
         scenario: 'B.2',
         from_transaction: currentTransactionId,
-        to_transaction: saleTransactionId,
+        to_transaction: purchaseTransactionId,
         amount: finalAmount
       })
     } catch (auditError) {
       console.warn('⚠️ Failed to log allocation completion:', auditError)
     }
 
-    return saleTransactionId
+    return purchaseTransactionId
   },
 
   // Helper: Handle C - Add item to Purchase (new allocation)
@@ -7916,7 +7928,7 @@ export const deallocationService = {
 
 // Integration Service for Business Inventory and Transactions
 export const integrationService = {
-  // Allocate business inventory item to project (unified collection)
+  // @deprecated Use sellItemToProject(accountId, itemId, null, projectId) or allocateItemToProject directly.
   async allocateBusinessInventoryToProject(
     accountId: string,
     itemId: string,
@@ -7941,7 +7953,7 @@ export const integrationService = {
   async sellItemToProject(
     accountId: string,
     itemId: string,
-    sourceProjectId: string,
+    sourceProjectId: string | null,
     targetProjectId: string,
     options?: { amount?: string; notes?: string; space?: string }
   ): Promise<{ saleTransactionId: string | null; purchaseTransactionId: string }> {
