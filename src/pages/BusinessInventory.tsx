@@ -1778,6 +1778,7 @@ export default function BusinessInventory() {
                             onDuplicate={duplicateItem}
                             onEdit={handleNavigateToEdit}
                             onAddToTransaction={openTransactionDialog}
+                            onSellToProject={openProjectDialog}
                             onMoveToProject={openProjectDialog}
                             onChangeStatus={updateDisposition}
                             onDelete={(itemId) => {
@@ -1928,6 +1929,7 @@ export default function BusinessInventory() {
                                   onDuplicate={duplicateItem}
                                   onEdit={handleNavigateToEdit}
                                   onAddToTransaction={openTransactionDialog}
+                                  onSellToProject={openProjectDialog}
                                   onMoveToProject={openProjectDialog}
                                   onChangeStatus={updateDisposition}
                                   onDelete={(itemId) => {

@@ -746,6 +746,7 @@ export default function BusinessInventoryItemDetail() {
               }}
               onDuplicate={(quantity) => duplicateItem(item.itemId, quantity)}
               onAddToTransaction={openTransactionDialog}
+              onSellToProject={openAllocationModal}
               onMoveToProject={openAllocationModal}
               onChangeStatus={updateDisposition}
               onDelete={handleDeleteItem}
