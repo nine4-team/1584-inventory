@@ -95,11 +95,9 @@ export default function ItemActionsMenu({
 
   const sellToProjectDisabledReason = useMemo(() => {
     if (isUnpersisted) return 'Save this item before selling.'
-    if (isInBusinessInventory) return 'This item is already in business inventory. Use Move to Project.'
     return null
   }, [
-    isUnpersisted,
-    isInBusinessInventory
+    isUnpersisted
   ])
 
   const duplicateDisabledReason = useMemo(() => {
