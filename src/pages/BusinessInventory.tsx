@@ -23,6 +23,7 @@ import { useDuplication } from '@/hooks/useDuplication'
 import { useAccount } from '@/contexts/AccountContext'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { getInventoryListGroupKey } from '@/utils/itemGrouping'
+import BulkItemControls from '@/components/ui/BulkItemControls'
 import CollapsedDuplicateGroup from '@/components/ui/CollapsedDuplicateGroup'
 import InventoryItemRow from '@/components/items/InventoryItemRow'
 import { getTransactionDisplayInfo, getTransactionRoute } from '@/utils/transactionDisplayUtils'
@@ -220,6 +221,7 @@ export default function BusinessInventory() {
     'date-desc' | 'date-asc' | 'created-desc' | 'created-asc' | 'source-asc' | 'source-desc' | 'amount-desc' | 'amount-asc'
   >(() => parseBusinessTxSortMode(searchParams.get('bizTxSort')))
   const [showTransactionSortMenu, setShowTransactionSortMenu] = useState(false)
+  const [selectedTxIds, setSelectedTxIds] = useState<Set<string>>(new Set())
 
   // Image upload state
   const [uploadingImages, setUploadingImages] = useState<Set<string>>(new Set())
@@ -846,6 +848,50 @@ export default function BusinessInventory() {
     selectedTransactionBudgetCategory
   ])
 
+  // Transaction selection helpers
+  const toggleTxSelection = useCallback((txId: string) => {
+    setSelectedTxIds(prev => {
+      const next = new Set(prev)
+      if (next.has(txId)) next.delete(txId)
+      else next.add(txId)
+      return next
+    })
+  }, [])
+
+  const clearTxSelection = useCallback(() => setSelectedTxIds(new Set()), [])
+
+  const toggleSelectAllTx = useCallback(() => {
+    setSelectedTxIds(prev =>
+      prev.size === filteredTransactions.length
+        ? new Set()
+        : new Set(filteredTransactions.map(t => t.transactionId))
+    )
+  }, [filteredTransactions])
+
+  // Prune stale selections when filters change
+  useEffect(() => {
+    setSelectedTxIds(prev => {
+      if (prev.size === 0) return prev
+      const visibleIds = new Set(filteredTransactions.map(t => t.transactionId))
+      const pruned = new Set([...prev].filter(id => visibleIds.has(id)))
+      return pruned.size === prev.size ? prev : pruned
+    })
+  }, [filteredTransactions])
+
+  const selectedTxTotal = useMemo(() => {
+    if (selectedTxIds.size === 0) return 0
+    const parseMoney = (value?: string | null): number => {
+      if (!value) return 0
+      const n = Number.parseFloat(value)
+      return Number.isFinite(n) ? n : 0
+    }
+    return filteredTransactions
+      .filter(t => selectedTxIds.has(t.transactionId))
+      .reduce((sum, t) => sum + parseMoney(t.amount), 0)
+  }, [filteredTransactions, selectedTxIds])
+
+  const allTxSelected = selectedTxIds.size > 0 && selectedTxIds.size === filteredTransactions.length
+
   const inventoryValue = useMemo(() => {
     return items.reduce((sum, item) => {
       const rawValue = item.projectPrice ?? item.purchasePrice ?? 0
@@ -1290,6 +1336,17 @@ export default function BusinessInventory() {
     if (selectedInGroup === groupItems.length) return 'checked'
     return 'indeterminate'
   }
+
+  const selectedItemsTotal = useMemo(() => {
+    if (selectedItems.size === 0) return undefined
+    let sum = 0
+    for (const item of items) {
+      if (!selectedItems.has(item.itemId)) continue
+      const price = parseFloat(item.projectPrice || item.purchasePrice || '0')
+      if (Number.isFinite(price)) sum += price
+    }
+    return formatCurrency(sum)
+  }, [items, selectedItems])
 
   // Guard against no account when not loading
   if (!isLoading && !accountLoading && !currentAccountId) {
@@ -1953,6 +2010,17 @@ export default function BusinessInventory() {
                   </ul>
                 </div>
               )}
+
+              <BulkItemControls
+                selectedItemIds={selectedItems}
+                onDelete={handleDeleteSelectedItems}
+                onClearSelection={() => setSelectedItems(new Set())}
+                enableAssignToTransaction={false}
+                enableLocation={false}
+                enableDisposition={false}
+                enableSku={false}
+                selectedTotalFormatted={selectedItemsTotal}
+              />
             </>
           )}
 
@@ -1970,25 +2038,19 @@ export default function BusinessInventory() {
               </div>
 
               {/* Search and Controls - Sticky Container */}
-              <div className="sticky top-0 z-10 bg-white border-b border-gray-200 pb-0 mb-2">
-                <div className="space-y-0">
-                  {/* Search Bar */}
-                  <div className="relative pt-2">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <Search className="h-5 w-5 text-gray-400" />
-                    </div>
+              <div className="sticky top-0 z-10 bg-white border-b border-gray-200 py-3 mb-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Select All */}
+                  <label className="flex items-center cursor-pointer flex-shrink-0" title={allTxSelected ? 'Deselect all' : 'Select all'}>
                     <input
-                      type="text"
-                      className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-base"
-                      placeholder="Search transactions by source, type, project, notes, or amount..."
-                      value={transactionSearchQuery || ''}
-                      onChange={(e) => setTransactionSearchQuery(e.target.value)}
+                      type="checkbox"
+                      className="h-4 w-4 text-primary-600 border-gray-300 rounded cursor-pointer"
+                      checked={allTxSelected}
+                      onChange={toggleSelectAllTx}
+                      disabled={filteredTransactions.length === 0}
                     />
-                  </div>
-
-                  {/* Filter Controls */}
-                  <div className="flex items-center justify-end gap-4 p-3 rounded-lg">
-                    {/* Sort Button */}
+                  </label>
+                  {/* Sort Button */}
                     <div className="relative">
                       <button
                         onClick={() => setShowTransactionSortMenu(!showTransactionSortMenu)}
@@ -2775,6 +2837,19 @@ export default function BusinessInventory() {
                         </div>
                       )}
                     </div>
+
+                  {/* Search Bar */}
+                  <div className="relative flex-1 min-w-[200px] w-full sm:w-auto">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Search className="h-5 w-5 text-gray-400" />
+                    </div>
+                    <input
+                      type="text"
+                      className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
+                      placeholder="Search transactions by source or amount..."
+                      value={transactionSearchQuery || ''}
+                      onChange={(e) => setTransactionSearchQuery(e.target.value)}
+                    />
                   </div>
                 </div>
               </div>
@@ -2801,11 +2876,20 @@ export default function BusinessInventory() {
                   </p>
                 </div>
               ) : (
-                <div className="bg-white overflow-hidden sm:rounded-md -mx-6">
+                <div className="bg-white overflow-hidden sm:rounded-md">
                   <ul className="space-y-3 pb-3">
                     {filteredTransactions.map((transaction) => (
-                      <li key={transaction.transactionId} className="relative">
+                      <li key={transaction.transactionId} className="relative flex items-stretch gap-3">
+                        <label className="flex items-center pl-1 cursor-pointer" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 text-primary-600 border-gray-300 rounded cursor-pointer"
+                            checked={selectedTxIds.has(transaction.transactionId)}
+                            onChange={() => toggleTxSelection(transaction.transactionId)}
+                          />
+                        </label>
                         <a
+                          className="flex-1"
                           href={buildContextUrl(`/business-inventory/transaction/${transaction.transactionId}`)}
                           onClick={(event) => {
                             if (
@@ -2895,6 +2979,23 @@ export default function BusinessInventory() {
                   </ul>
                 </div>
               )}
+
+              {/* Bulk selection bar */}
+              {selectedTxIds.size > 0 ? (
+                <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-[0_-2px_8px_rgba(0,0,0,0.08)] px-4 py-3 flex items-center z-50">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-semibold text-gray-900">{selectedTxIds.size} selected</span>
+                    <span className="text-sm font-semibold text-gray-900">{formatCurrency(selectedTxTotal.toFixed(2))}</span>
+                  </div>
+                  <div className="flex-1" />
+                  <button
+                    onClick={clearTxSelection}
+                    className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors duration-200"
+                  >
+                    Clear
+                  </button>
+                </div>
+              ) : null}
             </>
           )}
         </div>

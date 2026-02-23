@@ -27,6 +27,7 @@ interface BulkItemControlsProps {
   enableDelete?: boolean
   deleteButtonLabel?: string
   placement?: 'fixed' | 'container'
+  selectedTotalFormatted?: string
 }
 
 export default function BulkItemControls({
@@ -47,7 +48,8 @@ export default function BulkItemControls({
   enableSku = true,
   enableDelete = true,
   deleteButtonLabel = 'Delete',
-  placement = 'fixed'
+  placement = 'fixed',
+  selectedTotalFormatted
 }: BulkItemControlsProps) {
   const { currentAccountId } = useAccount()
   const canAssign = enableAssignToTransaction && !!onAssignToTransaction
@@ -238,6 +240,9 @@ export default function BulkItemControls({
             <span className="text-sm font-medium text-gray-700">
               {selectedItemIds.size} item{selectedItemIds.size !== 1 ? 's' : ''} selected
             </span>
+            {selectedTotalFormatted ? (
+              <span className="text-sm font-medium text-gray-700">{selectedTotalFormatted}</span>
+            ) : null}
             <button
               onClick={onClearSelection}
               className="text-gray-400 hover:text-gray-600 transition-colors"

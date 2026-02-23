@@ -465,6 +465,17 @@ export default function TransactionItemsList({
     [items, selectedItemIds]
   )
 
+  const selectedItemsTotal = useMemo(() => {
+    if (selectedItemIds.size === 0) return null
+    let sum = 0
+    for (const item of items) {
+      if (!selectedItemIds.has(item.id)) continue
+      const price = parseFloat(item.projectPrice || item.purchasePrice || '0')
+      if (Number.isFinite(price)) sum += price
+    }
+    return formatCurrency(sum.toFixed(2))
+  }, [items, selectedItemIds])
+
   const hasNonEmptyMoneyString = (value: string | undefined) => {
     if (value === undefined) return false
     if (typeof value !== 'string') return false
@@ -1808,6 +1819,7 @@ export default function TransactionItemsList({
             onSetSku={handleBulkSetSku}
             deleteButtonLabel="Delete"
             placement="container"
+            selectedTotalFormatted={selectedItemsTotal ?? undefined}
           />
         )
       )}

@@ -232,6 +232,16 @@ export default function InventoryList({ projectId, projectName, items: propItems
     return undefined
   }
 
+  const selectedItemsTotal = useMemo(() => {
+    if (selectedItems.size === 0) return undefined
+    let sum = 0
+    for (const item of items) {
+      if (!selectedItems.has(item.itemId)) continue
+      sum += parseMoney(getPrimaryPrice(item))
+    }
+    return formatCurrency(sum)
+  }, [items, selectedItems])
+
   // Debug logging
   useEffect(() => {
     console.log('🔍 InventoryList - accountLoading:', accountLoading, 'propItems length:', propItems?.length || 0, 'isLoading:', isLoading)
@@ -1706,6 +1716,7 @@ export default function InventoryList({ projectId, projectName, items: propItems
         onDelete={handleBulkDelete}
         onClearSelection={() => setSelectedItems(new Set())}
         itemListContainerWidth={itemListContainerWidth}
+        selectedTotalFormatted={selectedItemsTotal}
       />
     </div>
   )
