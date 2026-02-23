@@ -265,8 +265,20 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     | 'amount-asc'
   >(() => parseSortMode(searchParams.get('txSort')))
   const [showSortMenu, setShowSortMenu] = useState(false)
+  const [selectedTxIds, setSelectedTxIds] = useState<Set<string>>(new Set())
   const isSyncingFromUrlRef = useRef(false)
   const hasRestoredScrollRef = useRef(false)
+
+  const toggleTxSelection = useCallback((txId: string) => {
+    setSelectedTxIds(prev => {
+      const next = new Set(prev)
+      if (next.has(txId)) next.delete(txId)
+      else next.add(txId)
+      return next
+    })
+  }, [])
+
+  const clearSelection = useCallback(() => setSelectedTxIds(new Set()), [])
 
   const handleTransactionNavigate = useCallback(
     (transactionId: string) => {
@@ -695,6 +707,38 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     selectedBudgetCategory,
   ])
 
+  // Prune selections for transactions no longer visible after filter/search changes
+  useEffect(() => {
+    setSelectedTxIds(prev => {
+      if (prev.size === 0) return prev
+      const visibleIds = new Set(filteredTransactions.map(t => t.transactionId))
+      const pruned = new Set([...prev].filter(id => visibleIds.has(id)))
+      return pruned.size === prev.size ? prev : pruned
+    })
+  }, [filteredTransactions])
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedTxIds(prev =>
+      prev.size === filteredTransactions.length
+        ? new Set()
+        : new Set(filteredTransactions.map(t => t.transactionId))
+    )
+  }, [filteredTransactions])
+
+  const selectedTotal = useMemo(() => {
+    if (selectedTxIds.size === 0) return 0
+    return filteredTransactions
+      .filter(t => selectedTxIds.has(t.transactionId))
+      .reduce((sum, t) => {
+        const display = isCanonicalSaleOrPurchaseTransactionId(t.transactionId) && computedTotalByTxId[t.transactionId]
+          ? computedTotalByTxId[t.transactionId]
+          : t.amount
+        return sum + parseMoney(display)
+      }, 0)
+  }, [filteredTransactions, selectedTxIds, computedTotalByTxId])
+
+  const allSelected = selectedTxIds.size > 0 && selectedTxIds.size === filteredTransactions.length
+
   const handleExportCsv = useCallback(() => {
     if (!transactions.length) return
     const sortedTransactions = sortTransactionsByMode(transactions, sortMode)
@@ -793,6 +837,16 @@ export default function TransactionsList({ projectId: propProjectId, transaction
       {/* Controls - Sticky Container */}
       <div className="sticky top-0 z-10 bg-white border-b border-gray-200 py-3 mb-2">
         <div className="flex flex-wrap items-center gap-3">
+          {/* Select All */}
+          <label className="flex items-center cursor-pointer flex-shrink-0" title={allSelected ? 'Deselect all' : 'Select all'}>
+            <input
+              type="checkbox"
+              className="h-4 w-4 text-primary-600 border-gray-300 rounded cursor-pointer"
+              checked={allSelected}
+              onChange={toggleSelectAll}
+              disabled={filteredTransactions.length === 0}
+            />
+          </label>
           {/* Add Menu */}
           <div className="relative flex-shrink-0">
             <button
@@ -1585,7 +1639,15 @@ export default function TransactionsList({ projectId: propProjectId, transaction
         <div className="bg-white overflow-hidden sm:rounded-md">
           <ul className="space-y-3 pb-3">
             {filteredTransactions.map((transaction) => (
-              <li key={transaction.transactionId} className="relative">
+              <li key={transaction.transactionId} className="relative flex items-stretch gap-3">
+                <label className="flex items-center pl-1 cursor-pointer" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 text-primary-600 border-gray-300 rounded cursor-pointer"
+                    checked={selectedTxIds.has(transaction.transactionId)}
+                    onChange={() => toggleTxSelection(transaction.transactionId)}
+                  />
+                </label>
                 <a
                   href={buildContextUrl(
                     projectTransactionDetail(projectId, transaction.transactionId),
@@ -1605,7 +1667,7 @@ export default function TransactionsList({ projectId: propProjectId, transaction
                     event.preventDefault()
                     handleTransactionNavigate(transaction.transactionId)
                   }}
-                  className="block bg-gray-50 border border-gray-200 rounded-lg transition-colors duration-200 hover:bg-gray-100"
+                  className="block flex-1 bg-gray-50 border border-gray-200 rounded-lg transition-colors duration-200 hover:bg-gray-100"
                 >
                   <div className="px-4 py-4 sm:px-6">
                     {/* Top row: Header with canonical title and type */}
@@ -1694,6 +1756,23 @@ export default function TransactionsList({ projectId: propProjectId, transaction
           </ul>
         </div>
       )}
+
+      {/* Bulk selection bar */}
+      {selectedTxIds.size > 0 ? (
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-[0_-2px_8px_rgba(0,0,0,0.08)] px-4 py-3 flex items-center z-50">
+          <div className="flex flex-col">
+            <span className="text-sm font-semibold text-gray-900">{selectedTxIds.size} selected</span>
+            <span className="text-sm font-semibold text-gray-900">{formatCurrency(selectedTotal.toFixed(2))}</span>
+          </div>
+          <div className="flex-1" />
+          <button
+            onClick={clearSelection}
+            className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors duration-200"
+          >
+            Clear
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }
