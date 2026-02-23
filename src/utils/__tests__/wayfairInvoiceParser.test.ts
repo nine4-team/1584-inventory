@@ -485,6 +485,75 @@ Order Total $5,000.00
     expect(result.taxTotal).toBeUndefined()
     expect(result.calculatedSubtotal).toBeUndefined()
   })
+
+  it('handles compound attribute labels split across lines (e.g. "Frame Color/Cushion Color:") without corrupting the next item description', () => {
+    const fixture = `
+Wayfair
+Invoice # 4396189806
+Order Date: Jan 14, 2026
+Order Total $6,972.74
+
+Shipped On Jan 28, 2026
+Braxton Deep Seating Sofa
+OCGV1726
+$1,520.99 1 $1,520.99 $0.00 ($76.05) $97.53 $1,542.47
+Frame Color/Cushion Color:
+Mahogany/Spiced Burlap
+Oxford 3-Piece Farmhouse Dining
+Set
+$859.99 2 $1,719.98 $0.00 ($51.60) $112.62 $1,781.00
+OCGV1867
+Color: Sand
+`
+    const result = parseWayfairInvoiceText(fixture)
+    expect(result.lineItems.length).toBe(2)
+
+    const sofa = result.lineItems[0]
+    expect(sofa.description).toContain('Braxton Deep Seating Sofa')
+    expect(sofa.sku).toBe('OCGV1726')
+
+    const diningSet = result.lineItems[1]
+    expect(diningSet.description).toContain('Oxford 3-Piece Farmhouse Dining')
+    expect(diningSet.description).not.toContain('Frame Color/Cushion')
+    expect(diningSet.sku).toBe('OCGV1867')
+    expect(diningSet.qty).toBe(2)
+  })
+
+  it('does not swallow a money row when it shares a line with a Size attribute value', () => {
+    const fixture = `
+Wayfair
+Invoice # 4396189806
+Order Date: Jan 14, 2026
+Order Total $749.75
+
+Shipped On Jan 15, 2026
+Prism Performance Outdoor Pillow
+VCCH1377
+Shape: Square $95.99 6 $575.94 $0.00 ($28.80) $36.93 $584.07
+Color/Pattern: Amber Yellow
+Size: 22"H x 22"W
+Prism Performance Outdoor Pillow
+VCCH1376
+Size: 14"H x 26"W $80.00 2 $160.00 $0.00 ($4.80) $10.48 $165.68
+Color: Natural
+Shape: Rectangular
+`
+    const result = parseWayfairInvoiceText(fixture)
+    expect(result.lineItems.length).toBe(2)
+
+    const squarePillow = result.lineItems[0]
+    expect(squarePillow.description).toBe('Prism Performance Outdoor Pillow')
+    expect(squarePillow.description).not.toContain('Shape')
+    expect(squarePillow.sku).toBe('VCCH1377')
+    expect(squarePillow.qty).toBe(6)
+    expect(squarePillow.total).toBe('584.07')
+
+    const rectPillow = result.lineItems[1]
+    expect(rectPillow.description).toBe('Prism Performance Outdoor Pillow')
+    expect(rectPillow.sku).toBe('VCCH1376')
+    expect(rectPillow.qty).toBe(2)
+    expect(rectPillow.total).toBe('165.68')
+  })
 })
 
 

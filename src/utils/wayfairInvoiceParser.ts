@@ -471,9 +471,13 @@ function extractStandaloneAttributeLine(line: string): {
   if (!s) return undefined
 
   const isSizeLine = /^Size\s*:/i.test(s)
+  const moneyCount = extractMoneyTokens(s).length
   // Only treat these as standalone attribute lines (no money columns).
-  // Size lines can include decimal measurements that look like money, so allow them.
-  if (!isSizeLine && extractMoneyTokens(s).length > 0) return undefined
+  // Size lines can include decimal measurements that look like money, so allow them —
+  // BUT if a Size line has 2+ money tokens AND a detectable qty, it's actually a money row
+  // with a Size prefix (e.g., "Size: 14"H x 26"W $80.00 2 $160.00 ...").
+  if (!isSizeLine && moneyCount > 0) return undefined
+  if (isSizeLine && moneyCount >= 2 && extractQty(s) !== undefined) return undefined
 
   // Most Wayfair attribute lines are "Key: Value" (Fabric, Color, Size, Material, Finish, etc.)
   // Keep this conservative to reduce false positives.
@@ -547,7 +551,7 @@ function extractInlineAttributesFromDescription(description: string): {
   // Keep conservative: only remove the single word "Delivery" when it is the leading token.
   s = s.replace(/^Delivery\s+/i, '')
 
-  const inlineAttributePattern = /\b(Fabric|Color|Size)\s*:\s*([^:]+?)(?=\s+(?:Fabric|Color|Size)\b|$)/gi
+  const inlineAttributePattern = /\b(Fabric|Color|Size|Shape)\s*:\s*([^:]+?)(?=\s+(?:Fabric|Color|Size|Shape)\b|$)/gi
   const inlineMatches = Array.from(s.matchAll(inlineAttributePattern))
 
   if (inlineMatches.length > 0) {
@@ -838,6 +842,12 @@ export function parseWayfairInvoiceText(fullText: string): WayfairInvoiceParseRe
    */
   let deferredPostMoneyLines: string[] = []
   let deferredPostMoneyItem: WayfairInvoiceLineItem | undefined
+  /**
+   * When an attribute label line ends with a colon but has no value on the same line
+   * (e.g., "Frame Color/Cushion Color:"), we store the label here and combine it with
+   * the next line's value to form a complete attribute.
+   */
+  let pendingDanglingAttributeLabel: string | undefined
 
   const enqueueDescriptionFragment = (fragment?: string) => {
     const normalized = normalizeDescriptionFragment(fragment)
@@ -867,6 +877,7 @@ export function parseWayfairInvoiceText(fullText: string): WayfairInvoiceParseRe
       lastItemAwaitingSku = undefined
       deferredPostMoneyLines = []
       deferredPostMoneyItem = undefined
+      pendingDanglingAttributeLabel = undefined
       continue
     }
 
@@ -882,7 +893,39 @@ export function parseWayfairInvoiceText(fullText: string): WayfairInvoiceParseRe
       lastItemAwaitingSku = undefined
       deferredPostMoneyLines = []
       deferredPostMoneyItem = undefined
+      pendingDanglingAttributeLabel = undefined
       continue
+    }
+
+    // Handle dangling attribute labels from the previous line (e.g., "Frame Color/Cushion Color:"
+    // where the value "Mahogany/Spiced Burlap" appears on the next line).
+    if (pendingDanglingAttributeLabel) {
+      const label = pendingDanglingAttributeLabel
+      pendingDanglingAttributeLabel = undefined
+      // If this line is a plain value (no money, no colon suggesting another label, not a SKU),
+      // combine with the dangling label to form a complete attribute.
+      const isPlainValue = extractMoneyTokens(line).length === 0 &&
+        !extractStandaloneSkuLine(line) &&
+        !/:\s*$/.test(line) &&
+        !/^[A-Za-z][A-Za-z0-9 /&()-]{0,30}\s*:\s*.+$/.test(line)
+      if (isPlainValue) {
+        const combinedAttrLine = `${label}: ${line.trim()}`
+        const previousLineItem = lineItems[lineItems.length - 1]
+        const hasPendingDesc = bufferedDescriptionParts.some(part => part && part.trim())
+        if (!hasPendingDesc && previousLineItem) {
+          const lowerLabel = label.toLowerCase()
+          const key: 'color' | 'size' | undefined = lowerLabel.includes('color') ? 'color' : lowerLabel.includes('size') ? 'size' : undefined
+          appendStandaloneAttributeToLineItem(previousLineItem, { key, value: line.trim(), rawLine: combinedAttrLine })
+        } else {
+          pendingAttributeLines.push(combinedAttrLine)
+          const lowerLabel = label.toLowerCase()
+          if (lowerLabel.includes('color')) pendingAttributes.color = line.trim()
+          if (lowerLabel.includes('size')) pendingAttributes.size = line.trim()
+        }
+        continue
+      }
+      // If the next line doesn't look like a value, the dangling label was probably not an attribute.
+      // Fall through and process this line normally.
     }
 
     // Wayfair invoices often have: [Name line], [SKU line], [attribute lines], [money row].
@@ -1244,6 +1287,14 @@ export function parseWayfairInvoiceText(fullText: string): WayfairInvoiceParseRe
         deferredPostMoneyLines = []
         deferredPostMoneyItem = undefined
       }
+      continue
+    }
+
+    // Detect dangling attribute labels that end with a colon but have no value on the same line
+    // (e.g., "Frame Color/Cushion Color:"). The value will appear on the next line.
+    const danglingLabelMatch = line.match(/^([A-Za-z][A-Za-z0-9 /&()-]{0,40})\s*:\s*$/)
+    if (danglingLabelMatch && !isLikelyWayfairTableHeaderLine(line)) {
+      pendingDanglingAttributeLabel = danglingLabelMatch[1].replace(/\s+/g, ' ').trim()
       continue
     }
 
