@@ -14,7 +14,7 @@ import { useOfflineFeedback } from '@/utils/offlineUxFeedback'
 import { useNetworkState } from '@/hooks/useNetworkState'
 import { useBusinessInventoryRealtime } from '@/contexts/BusinessInventoryRealtimeContext'
 import { formatCurrency, formatDate } from '@/utils/dateUtils'
-import { normalizeMoneyToTwoDecimalString } from '@/utils/money'
+import { normalizeMoneyToTwoDecimalString, sumSelectedTransactionAmounts } from '@/utils/money'
 import { matchesItemSearch } from '@/utils/itemSearch'
 import { COMPANY_INVENTORY, COMPANY_INVENTORY_SALE, COMPANY_INVENTORY_PURCHASE, CLIENT_OWES_COMPANY, COMPANY_OWES_CLIENT } from '@/constants/company'
 import { supabase } from '@/services/supabase'
@@ -878,17 +878,10 @@ export default function BusinessInventory() {
     })
   }, [filteredTransactions])
 
-  const selectedTxTotal = useMemo(() => {
-    if (selectedTxIds.size === 0) return 0
-    const parseMoney = (value?: string | null): number => {
-      if (!value) return 0
-      const n = Number.parseFloat(value)
-      return Number.isFinite(n) ? n : 0
-    }
-    return filteredTransactions
-      .filter(t => selectedTxIds.has(t.transactionId))
-      .reduce((sum, t) => sum + parseMoney(t.amount), 0)
-  }, [filteredTransactions, selectedTxIds])
+  const selectedTxTotal = useMemo(
+    () => sumSelectedTransactionAmounts(filteredTransactions, selectedTxIds),
+    [filteredTransactions, selectedTxIds],
+  )
 
   const allTxSelected = selectedTxIds.size > 0 && selectedTxIds.size === filteredTransactions.length
 

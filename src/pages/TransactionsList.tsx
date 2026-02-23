@@ -21,7 +21,7 @@ const getCanonicalTransactionTitle = (transaction: TransactionType): string => {
   return transaction.source
 }
 import { formatDate, formatCurrency } from '@/utils/dateUtils'
-import { normalizeMoneyToTwoDecimalString } from '@/utils/money'
+import { normalizeMoneyToTwoDecimalString, sumSelectedTransactionAmounts } from '@/utils/money'
 
 // Remove any unwanted icons from transaction type badges
 const removeUnwantedIcons = () => {
@@ -725,17 +725,15 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     )
   }, [filteredTransactions])
 
-  const selectedTotal = useMemo(() => {
-    if (selectedTxIds.size === 0) return 0
-    return filteredTransactions
-      .filter(t => selectedTxIds.has(t.transactionId))
-      .reduce((sum, t) => {
-        const display = isCanonicalSaleOrPurchaseTransactionId(t.transactionId) && computedTotalByTxId[t.transactionId]
-          ? computedTotalByTxId[t.transactionId]
-          : t.amount
-        return sum + parseMoney(display)
-      }, 0)
-  }, [filteredTransactions, selectedTxIds, computedTotalByTxId])
+  const selectedTotal = useMemo(
+    () => sumSelectedTransactionAmounts(
+      filteredTransactions,
+      selectedTxIds,
+      computedTotalByTxId,
+      isCanonicalSaleOrPurchaseTransactionId,
+    ),
+    [filteredTransactions, selectedTxIds, computedTotalByTxId],
+  )
 
   const allSelected = selectedTxIds.size > 0 && selectedTxIds.size === filteredTransactions.length
 

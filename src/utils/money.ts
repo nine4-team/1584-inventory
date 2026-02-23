@@ -27,4 +27,29 @@ export function parseMoneyToNumber(input: string | undefined): number | undefine
   return Number.isFinite(n) ? n : undefined
 }
 
+export function sumSelectedTransactionAmounts(
+  transactions: Array<{ transactionId: string; amount?: string | null; transactionType?: string | null }>,
+  selectedIds: Set<string>,
+  computedTotalByTxId?: Record<string, string>,
+  isCanonicalId?: (id: string) => boolean,
+): number {
+  return transactions
+    .filter(t => selectedIds.has(t.transactionId))
+    .reduce((sum, t) => {
+      const display = isCanonicalId?.(t.transactionId) && computedTotalByTxId?.[t.transactionId]
+        ? computedTotalByTxId[t.transactionId]
+        : t.amount
+      const amount = parseMoneyToSafeNumber(display)
+      const type = (t.transactionType ?? '').toLowerCase()
+      const isNegative = type === 'return' || type === 'sale'
+      return sum + (isNegative ? -amount : amount)
+    }, 0)
+}
+
+function parseMoneyToSafeNumber(value?: string | null): number {
+  if (!value) return 0
+  const n = Number.parseFloat(value)
+  return Number.isFinite(n) ? n : 0
+}
+
 
