@@ -30,6 +30,8 @@ import { formatDate, formatCurrency } from '@/utils/dateUtils'
 import { useToast } from '@/components/ui/ToastContext'
 import UploadActivityIndicator from '@/components/ui/UploadActivityIndicator'
 import ItemEntryList from '@/components/ItemEntryList'
+import ReceiptListModal from '@/components/ReceiptListModal'
+import type { ParsedReceiptItem } from '@/utils/receiptListParser'
 import { useNavigationContext } from '@/hooks/useNavigationContext'
 import { useAccount } from '@/contexts/AccountContext'
 import { useProjectRealtime } from '@/contexts/ProjectRealtimeContext'
@@ -206,6 +208,7 @@ export default function TransactionDetail() {
   const [showGallery, setShowGallery] = useState(false)
   const [galleryInitialIndex, setGalleryInitialIndex] = useState(0)
   const [showExistingItemsModal, setShowExistingItemsModal] = useState(false)
+  const [showReceiptListModal, setShowReceiptListModal] = useState(false)
   const [modalPosition, setModalPosition] = useState<{ top: number; left: number; width: number; containerLeft: number } | null>(null)
   const transactionItemsContainerRef = useRef<HTMLDivElement>(null)
   const [isImagePinned, setIsImagePinned] = useState(false)
@@ -2244,6 +2247,44 @@ export default function TransactionDetail() {
     }
   }
 
+  const handleCreateItemsFromList = async (parsedItems: ParsedReceiptItem[]) => {
+    if (!transactionId || !transaction || !currentAccountId) return
+
+    try {
+      let lastResult: { mode: string; operationId: string | null } | null = null
+
+      for (const parsed of parsedItems) {
+        const priceStr = (parsed.priceCents / 100).toFixed(2)
+        const formItem: TransactionItemFormData = {
+          id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          description: parsed.name,
+          sku: parsed.sku,
+          purchasePrice: priceStr,
+          projectPrice: priceStr,
+        }
+
+        const itemData = buildCreateItemPayload(formItem)
+        const createResult = await unifiedItemsService.createItem(currentAccountId, itemData)
+        await hydrateOptimisticItem(currentAccountId, createResult.itemId, itemData)
+        lastResult = { mode: createResult.mode, operationId: createResult.operationId ?? null }
+      }
+
+      await refreshTransactionItems()
+      await refreshRealtimeAfterWrite()
+
+      if (lastResult?.mode === 'offline') {
+        showOfflineSaved(lastResult.operationId)
+      } else {
+        showSuccess(`Created ${parsedItems.length} item${parsedItems.length !== 1 ? 's' : ''} from receipt`)
+      }
+
+      setShowReceiptListModal(false)
+    } catch (error) {
+      console.error('Error creating items from receipt list:', error)
+      showError('Failed to create items. Please try again.')
+    }
+  }
+
   const handleDuplicateTransactionItem = async (item: TransactionItemFormData, quantity = 1) => {
     if (!transactionId || !transaction || !currentAccountId) return
 
@@ -2856,6 +2897,7 @@ export default function TransactionDetail() {
                       onItemsChange={() => {}}
                       onAddItem={handleCreateItem}
                       onAddExistingItems={() => setShowExistingItemsModal(true)}
+                      onCreateFromList={() => setShowReceiptListModal(true)}
                       onUpdateItem={handleUpdateItem}
                       onDuplicateItem={handleDuplicateTransactionItem}
                       projectId={projectId}
@@ -3136,6 +3178,13 @@ export default function TransactionDetail() {
             </div>
           </div>
         </>
+      )}
+
+      {showReceiptListModal && (
+        <ReceiptListModal
+          onSubmit={handleCreateItemsFromList}
+          onClose={() => setShowReceiptListModal(false)}
+        />
       )}
         </div>
       </div>

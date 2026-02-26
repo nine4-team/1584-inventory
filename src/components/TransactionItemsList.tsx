@@ -26,6 +26,7 @@ interface TransactionItemsListProps {
   onItemsChange: (items: TransactionItemFormData[]) => void
   onAddItem?: (item: TransactionItemFormData) => Promise<void> | void
   onAddExistingItems?: () => void
+  onCreateFromList?: () => void
   onUpdateItem?: (item: TransactionItemFormData) => Promise<void> | void
   onDuplicateItem?: (item: TransactionItemFormData, quantity?: number) => Promise<void> | void
   projectId?: string
@@ -64,6 +65,7 @@ export default function TransactionItemsList({
   onItemsChange,
   onAddItem,
   onAddExistingItems,
+  onCreateFromList,
   onUpdateItem,
   onDuplicateItem,
   projectId,
@@ -1412,7 +1414,7 @@ export default function TransactionItemsList({
               <button
                 type="button"
                 onClick={() => {
-                  if (onAddExistingItems) {
+                  if (onAddExistingItems || onCreateFromList) {
                     setShowAddItemMenu(prev => !prev)
                   } else {
                     setIsAddingItem(true)
@@ -1423,8 +1425,8 @@ export default function TransactionItemsList({
                 <Plus className="h-4 w-4" />
                 Add Item
               </button>
-              {onAddExistingItems && showAddItemMenu && (
-                <div className="add-item-menu absolute top-full left-0 mt-1 w-[min(12rem,calc(100vw-2rem))] bg-white border border-gray-200 rounded-md shadow-lg z-10">
+              {(onAddExistingItems || onCreateFromList) && showAddItemMenu && (
+                <div className="add-item-menu absolute top-full left-0 mt-1 w-[min(14rem,calc(100vw-2rem))] bg-white border border-gray-200 rounded-md shadow-lg z-10">
                   <div className="py-1">
                     <button
                       type="button"
@@ -1436,16 +1438,30 @@ export default function TransactionItemsList({
                     >
                       Create item
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onAddExistingItems()
-                        setShowAddItemMenu(false)
-                      }}
-                      className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                    >
-                      Add existing
-                    </button>
+                    {onAddExistingItems && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onAddExistingItems()
+                          setShowAddItemMenu(false)
+                        }}
+                        className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        Add existing
+                      </button>
+                    )}
+                    {onCreateFromList && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onCreateFromList()
+                          setShowAddItemMenu(false)
+                        }}
+                        className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        Create items from list
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
