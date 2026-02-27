@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Plus, Search, Sparkles } from 'lucide-react'
+import { Loader2, Plus, Search, Sparkles, X } from 'lucide-react'
 import { Item } from '@/types'
 import { transactionService, unifiedItemsService } from '@/services/inventoryService'
 import { useAccount } from '@/contexts/AccountContext'
@@ -7,6 +7,7 @@ import { useToast } from '@/components/ui/ToastContext'
 import CollapsedDuplicateGroup from '@/components/ui/CollapsedDuplicateGroup'
 import ItemPreviewCard, { type ItemPreviewData } from '@/components/items/ItemPreviewCard'
 import { getInventoryListGroupKey } from '@/utils/itemGrouping'
+import { searchItemsByDescription } from '@/utils/aiSpaceSearch'
 
 type ExistingItemsPickerMode = 'space' | 'transaction'
 
@@ -29,7 +30,6 @@ type ExistingItemsPickerProps = {
   isItemAlreadyAdded?: (item: Item) => boolean
   isItemDisabled?: (item: Item) => ItemDisableState
   onAddItems: (items: Item[]) => void | Promise<void>
-  onAiSearch?: () => void
   containerId?: string
   sentinelId?: string
   stickyMode?: 'fixed' | 'sticky'
@@ -83,7 +83,6 @@ export default function ExistingItemsPicker({
   isItemAlreadyAdded,
   isItemDisabled,
   onAddItems,
-  onAiSearch,
   containerId,
   sentinelId,
   stickyMode = 'fixed'
@@ -103,6 +102,11 @@ export default function ExistingItemsPicker({
   const [isLoadingOutside, setIsLoadingOutside] = useState(false)
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set())
   const [isAdding, setIsAdding] = useState(false)
+  const [aiMode, setAiMode] = useState(false)
+  const [aiDescription, setAiDescription] = useState('')
+  const [isAiSearching, setIsAiSearching] = useState(false)
+  const [aiUnmatched, setAiUnmatched] = useState<string[]>([])
+  const [aiFilteredIds, setAiFilteredIds] = useState<Set<string> | null>(null)
   const [shouldStick, setShouldStick] = useState(true)
   const [controlBarWidth, setControlBarWidth] = useState<number | undefined>(undefined)
 
@@ -234,13 +238,28 @@ export default function ExistingItemsPicker({
   const projectMatches = useMemo(() => projectItems, [projectItems])
   const outsideMatches = useMemo(() => outsideItems, [outsideItems])
 
+  const suggestedFiltered = useMemo(() => {
+    if (!aiFilteredIds) return suggestedMatches
+    return suggestedMatches.filter(item => aiFilteredIds.has(item.itemId))
+  }, [aiFilteredIds, suggestedMatches])
+
+  const projectFiltered = useMemo(() => {
+    if (!aiFilteredIds) return projectMatches
+    return projectMatches.filter(item => aiFilteredIds.has(item.itemId))
+  }, [aiFilteredIds, projectMatches])
+
+  const outsideFiltered = useMemo(() => {
+    if (!aiFilteredIds) return outsideMatches
+    return outsideMatches.filter(item => aiFilteredIds.has(item.itemId))
+  }, [aiFilteredIds, outsideMatches])
+
   const allVisibleItems = useMemo(() => {
     const map = new Map<string, Item>()
-    suggestedMatches.forEach(item => map.set(item.itemId, item))
-    projectMatches.forEach(item => map.set(item.itemId, item))
-    outsideMatches.forEach(item => map.set(item.itemId, item))
+    suggestedFiltered.forEach(item => map.set(item.itemId, item))
+    projectFiltered.forEach(item => map.set(item.itemId, item))
+    outsideFiltered.forEach(item => map.set(item.itemId, item))
     return map
-  }, [suggestedMatches, projectMatches, outsideMatches])
+  }, [suggestedFiltered, projectFiltered, outsideFiltered])
 
   useEffect(() => {
     setSelectedItemIds(prev => {
@@ -352,21 +371,21 @@ export default function ExistingItemsPicker({
   useEffect(() => {
     if (!normalizedQuery) return
     const counts: Record<PickerTab, number> = {
-      suggested: suggestedMatches.length,
-      project: projectMatches.length,
-      outside: outsideMatches.length
+      suggested: suggestedFiltered.length,
+      project: projectFiltered.length,
+      outside: outsideFiltered.length
     }
     const nextTab = availableTabs.find(tab => counts[tab] > 0)
     if (nextTab && counts[activeTab] === 0 && activeTab !== nextTab) {
       setActiveTab(nextTab)
     }
-  }, [activeTab, availableTabs, normalizedQuery, outsideMatches.length, projectMatches.length, suggestedMatches.length])
+  }, [activeTab, availableTabs, normalizedQuery, outsideFiltered.length, projectFiltered.length, suggestedFiltered.length])
 
   const currentTabItems = useMemo(() => {
-    if (activeTab === 'outside') return outsideMatches
-    if (activeTab === 'project') return projectMatches
-    return suggestedMatches
-  }, [activeTab, outsideMatches, projectMatches, suggestedMatches])
+    if (activeTab === 'outside') return outsideFiltered
+    if (activeTab === 'project') return projectFiltered
+    return suggestedFiltered
+  }, [activeTab, outsideFiltered, projectFiltered, suggestedFiltered])
 
   const selectableCurrentItems = useMemo(
     () => getSelectableItems(currentTabItems),
@@ -500,6 +519,38 @@ export default function ExistingItemsPicker({
       .filter((item): item is Item => Boolean(item))
     await handleAddItems(items)
   }, [allVisibleItems, handleAddItems, selectedItemIds])
+
+  const handleAiSearch = useCallback(async () => {
+    if (!aiDescription.trim() || isAiSearching) return
+    setIsAiSearching(true)
+    setAiUnmatched([])
+    try {
+      const allItems = Array.from(allVisibleItems.values()).map(item => ({
+        id: item.itemId,
+        name: item.description ?? '',
+        notes: item.notes ?? null,
+      }))
+      const result = await searchItemsByDescription(aiDescription.trim(), allItems)
+      const matchedIds = new Set(
+        result.matches
+          .map(m => m.itemId)
+          .filter(id => allVisibleItems.has(id))
+      )
+      setAiFilteredIds(matchedIds)
+      setSelectedItemIds(prev => {
+        const next = new Set(prev)
+        matchedIds.forEach(id => next.add(id))
+        return next
+      })
+      setAiUnmatched(result.unmatched)
+    } catch {
+      showError('AI search failed. Check your connection and try again.')
+    } finally {
+      setIsAiSearching(false)
+      setAiMode(false)
+      setAiDescription('')
+    }
+  }, [aiDescription, allVisibleItems, isAiSearching, showError])
 
   const renderItemRow = useCallback((
     item: Item,
@@ -638,23 +689,88 @@ export default function ExistingItemsPicker({
           <input
             type="search"
             value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
+            onChange={(event) => { setSearchQuery(event.target.value); setAiFilteredIds(null) }}
             placeholder={searchPlaceholder}
             className="w-full rounded-md border border-gray-300 pl-9 pr-3 py-2 text-base sm:text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
           />
         </div>
-        {onAiSearch && (
+        <button
+          type="button"
+          onClick={() => { setAiMode(true); setAiUnmatched([]); setAiFilteredIds(null) }}
+          disabled={isAiSearching}
+          className="inline-flex items-center gap-1.5 px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 whitespace-nowrap flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+          title="AI Search"
+        >
+          {isAiSearching
+            ? <Loader2 className="h-4 w-4 animate-spin text-primary-500" />
+            : <Sparkles className="h-4 w-4 text-primary-500" />
+          }
+          AI Search
+        </button>
+      </div>
+
+      {aiMode && (
+        <div className="mt-2 flex gap-2 items-start">
+          <input
+            type="text"
+            autoFocus
+            value={aiDescription}
+            onChange={(event) => setAiDescription(event.target.value)}
+            onKeyDown={(event) => { if (event.key === 'Enter') void handleAiSearch() }}
+            placeholder="Describe items to find, e.g. white linen sofa, brass lamp…"
+            className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-base sm:text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+          />
           <button
             type="button"
-            onClick={onAiSearch}
-            className="inline-flex items-center gap-1.5 px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 whitespace-nowrap flex-shrink-0"
-            title="AI Search"
+            onClick={() => void handleAiSearch()}
+            disabled={!aiDescription.trim() || isAiSearching}
+            className="inline-flex items-center gap-1.5 px-3 py-2 border border-primary-500 text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap flex-shrink-0"
           >
-            <Sparkles className="h-4 w-4 text-primary-500" />
-            AI Search
+            {isAiSearching && <Loader2 className="h-4 w-4 animate-spin" />}
+            {isAiSearching ? 'Searching…' : 'Find Items'}
           </button>
-        )}
-      </div>
+          <button
+            type="button"
+            onClick={() => { setAiMode(false); setAiDescription(''); setAiUnmatched([]) }}
+            className="p-2 text-gray-400 hover:text-gray-600"
+            title="Cancel"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {aiFilteredIds !== null && (
+        <div className="mt-2 flex items-center gap-2 rounded-md border border-primary-200 bg-primary-50 px-3 py-2">
+          <Sparkles className="h-3.5 w-3.5 text-primary-500 flex-shrink-0" />
+          <span className="flex-1 text-xs text-primary-800">
+            AI Results — {aiFilteredIds.size} match{aiFilteredIds.size !== 1 ? 'es' : ''}
+          </span>
+          <button
+            type="button"
+            onClick={() => setAiFilteredIds(null)}
+            className="text-primary-500 hover:text-primary-700 flex-shrink-0 text-xs font-medium"
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
+      {aiUnmatched.length > 0 && (
+        <div className="mt-2 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+          <span className="flex-1 text-xs text-amber-800">
+            No match found for: {aiUnmatched.map(p => `"${p}"`).join(', ')}
+          </span>
+          <button
+            type="button"
+            onClick={() => setAiUnmatched([])}
+            className="text-amber-500 hover:text-amber-700 flex-shrink-0"
+            title="Dismiss"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {availableTabs.length > 1 && (
         <div className="mt-4 border-b border-gray-200">
@@ -669,7 +785,7 @@ export default function ExistingItemsPicker({
                     : 'border-transparent text-gray-500 hover:text-gray-700'
                 }`}
               >
-                Suggested ({suggestedMatches.length})
+                Suggested ({suggestedFiltered.length})
               </button>
             )}
             {availableTabs.includes('project') && (
@@ -682,7 +798,7 @@ export default function ExistingItemsPicker({
                     : 'border-transparent text-gray-500 hover:text-gray-700'
                 }`}
               >
-                Project ({projectMatches.length})
+                Project ({projectFiltered.length})
               </button>
             )}
             {availableTabs.includes('outside') && (
@@ -695,7 +811,7 @@ export default function ExistingItemsPicker({
                     : 'border-transparent text-gray-500 hover:text-gray-700'
                 }`}
               >
-                Outside ({outsideMatches.length})
+                Outside ({outsideFiltered.length})
               </button>
             )}
           </nav>
@@ -722,9 +838,9 @@ export default function ExistingItemsPicker({
           <>
             {isLoadingSuggested ? (
               <div className="text-sm text-gray-500">Loading suggested items...</div>
-            ) : suggestedMatches.length > 0 ? (
+            ) : suggestedFiltered.length > 0 ? (
               renderGroupedItems(
-                suggestedMatches,
+                suggestedFiltered,
                 (item) => (normalizeProjectId(item.projectId ?? null) ? 'project' : 'businessInventory')
               )
             ) : (
@@ -736,8 +852,8 @@ export default function ExistingItemsPicker({
           <>
             {isLoadingProject ? (
               <div className="text-sm text-gray-500">Loading project items...</div>
-            ) : projectMatches.length > 0 ? (
-              renderGroupedItems(projectMatches, () => 'project', targetProjectId)
+            ) : projectFiltered.length > 0 ? (
+              renderGroupedItems(projectFiltered, () => 'project', targetProjectId)
             ) : (
               <div className="text-sm text-gray-500">No project items match this search.</div>
             )}
@@ -747,9 +863,9 @@ export default function ExistingItemsPicker({
           <>
             {isLoadingOutside ? (
               <div className="text-sm text-gray-500">Loading outside items...</div>
-            ) : outsideMatches.length > 0 ? (
+            ) : outsideFiltered.length > 0 ? (
               renderGroupedItems(
-                outsideMatches,
+                outsideFiltered,
                 (item) => (normalizeProjectId(item.projectId ?? null) ? 'project' : 'businessInventory')
               )
             ) : (
