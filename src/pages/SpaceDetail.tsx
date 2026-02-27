@@ -17,8 +17,43 @@ import { projectSpaces, projectSpaceEdit } from '@/utils/routes'
 import ItemEntryList from '@/components/ItemEntryList'
 import AddExistingItemsModal from '@/components/items/AddExistingItemsModal'
 import ExistingItemsPicker from '@/components/items/ExistingItemsPicker'
+import { AiSpaceSearchModal } from '@/components/spaces/AiSpaceSearchModal'
 import { mapItemToTransactionItemFormData, mapTransactionItemFormDataToItemUpdate } from '@/utils/spaceItemFormMapping'
 import { ensureItemInProjectForSpace } from '@/services/itemPullInService'
+import type { AiItemStub } from '@/utils/aiSpaceSearch'
+
+function AiSpaceSearchModalLoader({
+  projectId,
+  spaceId,
+  spaceItemIds,
+  onAddItems,
+  onClose,
+}: {
+  projectId: string
+  spaceId: string
+  spaceItemIds: Set<string>
+  onAddItems: (ids: string[]) => Promise<void>
+  onClose: () => void
+}) {
+  const { currentAccountId } = useAccount()
+  const [allItems, setAllItems] = useState<AiItemStub[]>([])
+
+  useEffect(() => {
+    if (!currentAccountId) return
+    unifiedItemsService.getItemsByProject(currentAccountId, projectId).then((items) => {
+      setAllItems(items.map((i) => ({ id: i.itemId, name: i.description, notes: i.notes })))
+    })
+  }, [currentAccountId, projectId])
+
+  return (
+    <AiSpaceSearchModal
+      allItems={allItems}
+      spaceItemIds={spaceItemIds}
+      onAddItems={onAddItems}
+      onClose={onClose}
+    />
+  )
+}
 
 export default function SpaceDetail() {
   const { projectId, spaceId } = useParams<{ projectId: string; spaceId: string }>()
@@ -33,6 +68,7 @@ export default function SpaceDetail() {
   const [spaceItems, setSpaceItems] = useState<TransactionItemFormData[]>([])
   const [imageFilesMap, setImageFilesMap] = useState<Map<string, File[]>>(new Map())
   const [showExistingItemsModal, setShowExistingItemsModal] = useState(false)
+  const [showAiSearchModal, setShowAiSearchModal] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -1036,6 +1072,22 @@ export default function SpaceDetail() {
       </div>
       <div id="space-items-sentinel" className="h-1" />
 
+      {/* AI Space Search Modal */}
+      {showAiSearchModal && projectId && spaceId && (
+        <AiSpaceSearchModalLoader
+          projectId={projectId}
+          spaceId={spaceId}
+          spaceItemIds={new Set(associatedItems.map(item => item.id))}
+          onAddItems={async (ids) => {
+            if (!currentAccountId) return
+            await Promise.all(ids.map(id => unifiedItemsService.updateItem(currentAccountId, id, { spaceId })))
+            await fetchSpace()
+            showSuccess(`Added ${ids.length} item${ids.length !== 1 ? 's' : ''} to space`)
+          }}
+          onClose={() => setShowAiSearchModal(false)}
+        />
+      )}
+
       {/* Add Existing Items Modal */}
       {showExistingItemsModal && projectId && spaceId && (
         <AddExistingItemsModal
@@ -1052,6 +1104,7 @@ export default function SpaceDetail() {
               excludedItemIds={new Set(associatedItems.map(item => item.itemId))}
               isItemDisabled={getExistingItemDisableState}
               onAddItems={handleAddExistingItems}
+              onAiSearch={() => { setShowExistingItemsModal(false); setShowAiSearchModal(true) }}
               stickyMode="sticky"
             />
           </div>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Plus, Search } from 'lucide-react'
+import { Plus, Search, Sparkles } from 'lucide-react'
 import { Item } from '@/types'
 import { transactionService, unifiedItemsService } from '@/services/inventoryService'
 import { useAccount } from '@/contexts/AccountContext'
@@ -29,6 +29,7 @@ type ExistingItemsPickerProps = {
   isItemAlreadyAdded?: (item: Item) => boolean
   isItemDisabled?: (item: Item) => ItemDisableState
   onAddItems: (items: Item[]) => void | Promise<void>
+  onAiSearch?: () => void
   containerId?: string
   sentinelId?: string
   stickyMode?: 'fixed' | 'sticky'
@@ -82,6 +83,7 @@ export default function ExistingItemsPicker({
   isItemAlreadyAdded,
   isItemDisabled,
   onAddItems,
+  onAiSearch,
   containerId,
   sentinelId,
   stickyMode = 'fixed'
@@ -630,8 +632,8 @@ export default function ExistingItemsPicker({
 
   return (
     <div className="mb-6 rounded-lg border border-gray-200 bg-white p-4">
-      <div className="flex flex-col gap-3">
-        <div className="relative w-full">
+      <div className="flex gap-2 items-center">
+        <div className="relative flex-1">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
           <input
             type="search"
@@ -641,6 +643,17 @@ export default function ExistingItemsPicker({
             className="w-full rounded-md border border-gray-300 pl-9 pr-3 py-2 text-base sm:text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
           />
         </div>
+        {onAiSearch && (
+          <button
+            type="button"
+            onClick={onAiSearch}
+            className="inline-flex items-center gap-1.5 px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 whitespace-nowrap flex-shrink-0"
+            title="AI Search"
+          >
+            <Sparkles className="h-4 w-4 text-primary-500" />
+            AI Search
+          </button>
+        )}
       </div>
 
       {availableTabs.length > 1 && (

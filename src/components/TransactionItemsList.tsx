@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Receipt, Camera, Search, Filter, ArrowUpDown } from 'lucide-react'
+import { Plus, Receipt, Camera, Search, Filter, ArrowUpDown, Sparkles } from 'lucide-react'
 import { ItemDisposition, TransactionItemFormData } from '@/types'
 import ItemEntryForm from './ItemEntryForm'
 import ItemDetail from '@/pages/ItemDetail'
@@ -56,6 +56,7 @@ interface TransactionItemsListProps {
   enableDisposition?: boolean
   enableSku?: boolean
   onSetSpaceId?: (spaceId: string | null, selectedIds: string[], selectedItems: TransactionItemFormData[]) => Promise<void> | void
+  onAiSearch?: () => void
   sentinelId?: string // ID of sentinel element to track sticky behavior
   context?: 'transaction' | 'space'
 }
@@ -92,6 +93,7 @@ export default function TransactionItemsList({
   enableDisposition = true,
   enableSku = true,
   onSetSpaceId,
+  onAiSearch,
   sentinelId = 'transaction-items-sentinel',
   context = 'transaction'
 }: TransactionItemsListProps) {
@@ -1414,7 +1416,7 @@ export default function TransactionItemsList({
               <button
                 type="button"
                 onClick={() => {
-                  if (onAddExistingItems || onCreateFromList) {
+                  if (onAddExistingItems || onCreateFromList || onAiSearch) {
                     setShowAddItemMenu(prev => !prev)
                   } else {
                     setIsAddingItem(true)
@@ -1425,7 +1427,7 @@ export default function TransactionItemsList({
                 <Plus className="h-4 w-4" />
                 Add Item
               </button>
-              {(onAddExistingItems || onCreateFromList) && showAddItemMenu && (
+              {(onAddExistingItems || onCreateFromList || onAiSearch) && showAddItemMenu && (
                 <div className="add-item-menu absolute top-full left-0 mt-1 w-[min(14rem,calc(100vw-2rem))] bg-white border border-gray-200 rounded-md shadow-lg z-10">
                   <div className="py-1">
                     <button
@@ -1448,6 +1450,19 @@ export default function TransactionItemsList({
                         className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
                       >
                         Add existing
+                      </button>
+                    )}
+                    {onAiSearch && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onAiSearch()
+                          setShowAddItemMenu(false)
+                        }}
+                        className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                      >
+                        <Sparkles className="h-4 w-4 text-primary-500" />
+                        AI Search
                       </button>
                     )}
                     {onCreateFromList && (
