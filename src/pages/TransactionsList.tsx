@@ -94,50 +94,41 @@ const escapeCsvValue = (value: string): string => {
   return value
 }
 
-const buildTransactionsCsv = (items: Transaction[], categories: BudgetCategory[]) => {
-  const header = [
-    'Transaction ID',
-    'Transaction Date',
-    'Source',
-    'Canonical Source',
-    'Transaction Type',
-    'Payment Method',
-    'Amount',
-    'Budget Category',
-    'Category ID',
-    'Notes',
-    'Reimbursement Type',
-    'Status',
-    'Receipt Emailed',
-    'Tax Rate Pct',
-    'Subtotal',
-    'Created At',
-    'Project ID',
-  ]
-  const rows = items.map(transaction => {
-    const categoryName = getBudgetCategoryDisplayName(transaction, categories) ?? ''
-    return [
-      transaction.transactionId ?? '',
-      transaction.transactionDate ?? '',
-      transaction.source ?? '',
-      getCanonicalTransactionTitle(transaction) ?? '',
-      transaction.transactionType ?? '',
-      transaction.paymentMethod ?? '',
-      transaction.amount ?? '',
-      categoryName,
-      transaction.categoryId ?? '',
-      transaction.notes ?? '',
-      transaction.reimbursementType ?? '',
-      transaction.status ?? '',
-      transaction.receiptEmailed ? 'true' : 'false',
-      transaction.taxRatePct != null ? String(transaction.taxRatePct) : '',
-      transaction.subtotal ?? '',
-      transaction.createdAt ?? '',
-      transaction.projectId ?? '',
-    ].map(value => escapeCsvValue(String(value)))
-  })
+interface CsvFieldConfig {
+  key: string
+  label: string
+  getValue: (transaction: TransactionType, categories: BudgetCategory[]) => string
+  defaultSelected: boolean
+}
 
-  return [header.map(value => escapeCsvValue(value)).join(','), ...rows.map(row => row.join(','))].join('\n')
+const CSV_FIELDS: CsvFieldConfig[] = [
+  { key: 'transactionId', label: 'Transaction ID', defaultSelected: false, getValue: (t) => t.transactionId ?? '' },
+  { key: 'transactionDate', label: 'Transaction Date', defaultSelected: true, getValue: (t) => t.transactionDate ?? '' },
+  { key: 'source', label: 'Source', defaultSelected: true, getValue: (t) => getCanonicalTransactionTitle(t) ?? '' },
+  { key: 'transactionType', label: 'Transaction Type', defaultSelected: true, getValue: (t) => t.transactionType ?? '' },
+  { key: 'paymentMethod', label: 'Payment Method', defaultSelected: true, getValue: (t) => t.paymentMethod ?? '' },
+  { key: 'amount', label: 'Amount', defaultSelected: true, getValue: (t) => String(t.amount ?? '') },
+  { key: 'budgetCategory', label: 'Budget Category', defaultSelected: true, getValue: (t, cats) => getBudgetCategoryDisplayName(t, cats) ?? '' },
+  { key: 'categoryId', label: 'Category ID', defaultSelected: false, getValue: (t) => t.categoryId ?? '' },
+  { key: 'notes', label: 'Notes', defaultSelected: true, getValue: (t) => t.notes ?? '' },
+  { key: 'reimbursementType', label: 'Reimbursement Type', defaultSelected: false, getValue: (t) => t.reimbursementType ?? '' },
+  { key: 'status', label: 'Status', defaultSelected: false, getValue: (t) => t.status ?? '' },
+  { key: 'receiptEmailed', label: 'Receipt Emailed', defaultSelected: false, getValue: (t) => t.receiptEmailed ? 'true' : 'false' },
+  { key: 'taxRatePct', label: 'Tax Rate Pct', defaultSelected: false, getValue: (t) => t.taxRatePct != null ? String(t.taxRatePct) : '' },
+  { key: 'subtotal', label: 'Subtotal', defaultSelected: false, getValue: (t) => String(t.subtotal ?? '') },
+  { key: 'createdAt', label: 'Created At', defaultSelected: false, getValue: (t) => t.createdAt ?? '' },
+  { key: 'projectId', label: 'Project ID', defaultSelected: false, getValue: (t) => t.projectId ?? '' },
+  { key: 'receiptImages', label: 'Receipt Images', defaultSelected: true, getValue: (t) => (t.receiptImages ?? []).map(img => img.url).join('; ') },
+]
+
+const DEFAULT_SELECTED_FIELDS = new Set(CSV_FIELDS.filter(f => f.defaultSelected).map(f => f.key))
+
+const buildTransactionsCsv = (items: Transaction[], categories: BudgetCategory[], selectedFields: CsvFieldConfig[]) => {
+  const header = selectedFields.map(f => f.label)
+  const rows = items.map(transaction =>
+    selectedFields.map(f => escapeCsvValue(String(f.getValue(transaction, categories))))
+  )
+  return [header.map(v => escapeCsvValue(v)).join(','), ...rows.map(row => row.join(','))].join('\n')
 }
 
 interface TransactionsListProps {
@@ -265,6 +256,8 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     | 'amount-asc'
   >(() => parseSortMode(searchParams.get('txSort')))
   const [showSortMenu, setShowSortMenu] = useState(false)
+  const [showExportModal, setShowExportModal] = useState(false)
+  const [selectedExportFields, setSelectedExportFields] = useState<Set<string>>(() => new Set(DEFAULT_SELECTED_FIELDS))
   const [selectedTxIds, setSelectedTxIds] = useState<Set<string>>(new Set())
   const isSyncingFromUrlRef = useRef(false)
   const hasRestoredScrollRef = useRef(false)
@@ -738,9 +731,11 @@ export default function TransactionsList({ projectId: propProjectId, transaction
   const allSelected = selectedTxIds.size > 0 && selectedTxIds.size === filteredTransactions.length
 
   const handleExportCsv = useCallback(() => {
-    if (!transactions.length) return
-    const sortedTransactions = sortTransactionsByMode(transactions, sortMode)
-    const csv = buildTransactionsCsv(sortedTransactions, budgetCategories)
+    if (!filteredTransactions.length) return
+    const fields = CSV_FIELDS.filter(f => selectedExportFields.has(f.key))
+    if (fields.length === 0) return
+    const sortedTransactions = sortTransactionsByMode(filteredTransactions, sortMode)
+    const csv = buildTransactionsCsv(sortedTransactions, budgetCategories, fields)
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -752,7 +747,8 @@ export default function TransactionsList({ projectId: propProjectId, transaction
     link.click()
     document.body.removeChild(link)
     URL.revokeObjectURL(url)
-  }, [transactions, sortMode, budgetCategories, projectId])
+    setShowExportModal(false)
+  }, [filteredTransactions, sortMode, budgetCategories, projectId, selectedExportFields])
 
   const availableSources = useMemo(() => {
     const titles = transactions
@@ -1588,9 +1584,9 @@ export default function TransactionsList({ projectId: propProjectId, transaction
           {/* Search Bar - wraps onto its own line on mobile */}
           {/* Export Button */}
           <button
-            onClick={handleExportCsv}
+            onClick={() => setShowExportModal(true)}
             className="inline-flex items-center justify-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 transition-colors duration-200 flex-shrink-0"
-            title="Export all transactions to CSV"
+            title="Export transactions to CSV"
           >
             <FileDown className="h-4 w-4 mr-2" />
             Export
@@ -1771,6 +1767,82 @@ export default function TransactionsList({ projectId: propProjectId, transaction
           </button>
         </div>
       ) : null}
+
+      {showExportModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Export Transactions"
+        >
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-medium text-gray-900">Export Transactions</h3>
+              <p className="text-sm text-gray-500 mt-1">
+                {filteredTransactions.length} transaction{filteredTransactions.length !== 1 ? 's' : ''} will be exported
+              </p>
+            </div>
+            <div className="px-6 py-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm font-medium text-gray-700">Select Fields</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedExportFields(prev =>
+                      prev.size === CSV_FIELDS.length
+                        ? new Set(DEFAULT_SELECTED_FIELDS)
+                        : new Set(CSV_FIELDS.map(f => f.key))
+                    )
+                  }}
+                  className="text-sm text-primary-600 hover:text-primary-700 font-medium"
+                >
+                  {selectedExportFields.size === CSV_FIELDS.length ? 'Reset to Default' : 'Select All'}
+                </button>
+              </div>
+              <div className="space-y-2 max-h-72 overflow-y-auto">
+                {CSV_FIELDS.map(field => (
+                  <label key={field.key} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedExportFields.has(field.key)}
+                      onChange={() => {
+                        setSelectedExportFields(prev => {
+                          const next = new Set(prev)
+                          if (next.has(field.key)) {
+                            next.delete(field.key)
+                          } else {
+                            next.add(field.key)
+                          }
+                          return next
+                        })
+                      }}
+                      className="h-4 w-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                    />
+                    <span className="text-sm text-gray-700">{field.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowExportModal(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleExportCsv}
+                disabled={selectedExportFields.size === 0}
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+              >
+                Export
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
